@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>HomeHub · MobileNet diagnostic</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; background: #1d1f1a; color: #f3f1e7; min-height: 100vh; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 32px 24px; }
+  h1 { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+  .sub { font-size: 14px; color: #c0bca8; margin: 0 0 24px; }
+  .card { background: #2a2c23; border: 1px solid #3d4033; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #3a3d31; border: 1px solid #54573f; }
+  .pill.ok { background: #1c4326; border-color: #2e7d3e; color: #7ed09b; }
+  .pill.err { background: #4c1d1d; border-color: #b03030; color: #ff8a8a; }
+  .pill.idle { background: #2c2e26; border-color: #404334; color: #c0bca8; }
+  .btn { background: #b0622c; color: white; border: 0; padding: 10px 18px; border-radius: 999px; font-weight: 700; cursor: pointer; font-size: 14px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.secondary { background: transparent; border: 1px solid #54573f; color: #f3f1e7; }
+  pre { background: #14150f; padding: 14px; border-radius: 12px; overflow-x: auto; font-size: 12px; line-height: 1.6; max-height: 320px; color: #d9d4bf; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .progress { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #d48450, #8a4421); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.5; } }
+  img.sample { max-width: 100%; border-radius: 12px; margin-top: 8px; max-height: 320px; object-fit: contain; background: #14150f; }
+  .label-conf { display: inline-block; min-width: 50px; text-align: right; padding-right: 10px; font-variant-numeric: tabular-nums; font-weight: 700; }
+  .bar { display: inline-block; height: 8px; background: linear-gradient(90deg, #b0622c, #e7ad7a); border-radius: 4px; margin-right: 8px; vertical-align: middle; }
+  a { color: #d48450; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>HomeHub · diagnostic</h1>
+  <p class="sub">Tests whether the on-device MobileNet model loads and recognises a sample vegetable image — entirely in this browser, no server.</p>
+
+  <div class="card">
+    <div class="row">
+      <span id="tfjs-pill" class="pill idle"><span class="progress"></span> TF.js</span>
+      <span id="model-pill" class="pill idle"><span class="progress"></span> MobileNet</span>
+      <span id="accel-pill" class="pill idle">accelerator ?</span>
+      <span id="plantnet-pill" class="pill idle">🌿 PlantNet (bridge) ?</span>
+      <span id="banglaveg-pill" class="pill idle">🌿 BanglaVegNet index ?</span>
+    </div>
+    <pre id="log">Loading TF.js runtime…</pre>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content: space-between; align-items: flex-start;">
+      <div>
+        <strong style="font-size: 15px;">Test image: Tomato (wikimedia, free reuse)</strong>
+        <p class="sub" style="margin: 4px 0 8px;">Click the button to load this image into MobileNet. Expect "Tomato" or "Garden Tomato" near the top. Score should be ≥ 0.4.</p>
+      </div>
+      <button id="run" class="btn" disabled>Run MobileNet</button>
+    </div>
+    <img id="preview" class="sample" alt="Sample vegetable" />
+    <pre id="result" style="margin-top: 14px;">Results will appear here.</pre>
+  </div>
+
+  <div class="card">
+    <strong style="font-size: 15px;">ImageNet vegetable coverage (MobileNet v2)</strong>
+    <p class="sub" style="margin: 8px 0 0;">MobileNet recognises <em>some</em> Indian kitchen veg (the ones below). Anything else will fall through to PlantNet (next page will use that).</p>
+    <pre>broccoli · cauliflower · cucumber · bell pepper · mushroom
+lemon · orange · banana · corn · butternut/acorn squash · zucchini · pumpkin
+
+NOT in ImageNet (relies on PlantNet):
+tomato · onion · garlic · ginger · potato · eggplant/brinjal
+okra/bhindi · bitter gourd · bottle gourd · pointed gourd
+snake gourd · ridge gourd · yardlong bean · drumstick
+cabbage · spinach · coriander · chili · lime · capsicum</pre>
+  </div>
+</div>
+
+<script type="module">
+const log = (m) => { document.getElementById('log').textContent += '\n' + m; };
+const setPill = (id, state, text) => {
+  const el = document.getElementById(id);
+  el.className = 'pill ' + state;
+  el.textContent = text;
+};
+
+(async () => {
+  // Bridge probe — quick HTTP get to see if PlantNet path is reachable.
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch('http://localhost:8789/api/plantnet/status', { signal: ctrl.signal });
+    clearTimeout(t);
+    const d = await r.json();
+    setPill('plantnet-pill', 'ok', `🌿 PlantNet: configured=${d.configured}, ${d.usedToday}/${d.quota}`);
+    log(`Bridge: PlantNet ${d.configured ? 'configured' : 'MISSING KEY'}, ${d.usedToday}/${d.quota} used today`);
+  } catch (e) {
+    setPill('plantnet-pill', 'err', '🌿 PlantNet: bridge unreachable');
+    log(`Bridge: NOT reachable — ${e.message}. PlantNet tier will fall through.`);
+  }
+
+  // BanglaVegNet reference index probe — find the chunk in the served HTML.
+  try {
+    const html = await (await fetch('/')).text();
+    const matches = [...html.matchAll(/(?:src|href)="([^"]*\.js)"/g)].map(m => m[1]);
+    const bvChunk = matches.find(u => u.includes('banglaveg'));
+    if (bvChunk) {
+      const r = await fetch(bvChunk);
+      const bytes = (await r.arrayBuffer()).byteLength;
+      setPill('banglaveg-pill', 'ok', `🌿 BanglaVegNet: ${(bytes/1024).toFixed(0)} KB chunk`);
+      log(`BanglaVegNet chunk: ${bvChunk} — ${(bytes/1024).toFixed(0)} KB (lazy-loads on first scan)`);
+    } else {
+      setPill('banglaveg-pill', 'err', '🌿 BanglaVegNet: chunk not found');
+      log('BanglaVegNet: no chunk matched in home page');
+    }
+  } catch (e) {
+    setPill('banglaveg-pill', 'err', '🌿 BanglaVegNet: probe failed');
+    log(`BanglaVegNet probe failed: ${e.message}`);
+  }
+
+  // Load TF.js + MobileNet.
+  log('Importing @tensorflow/tfjs…');
+  const tf = await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+  await tf.ready();
+  const accel = tf.getBackend();
+  setPill('accel-pill', 'ok', `accel: ${accel}`);
+  setPill('tfjs-pill', 'ok', 'TF.js ready');
+  log(`TF.js backend: ${accel}`);
+
+  log('Importing @tensorflow-models/mobilenet (downloading model ~16 MB on first run)…');
+  const t0 = performance.now();
+  const mobilenet = await import('https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.esm.js');
+  const m = await mobilenet.load({ version: 2, alpha: 1.0 });
+  const ms = Math.round(performance.now() - t0);
+  setPill('model-pill', 'ok', `MobileNet v2 ready (${ms}ms)`);
+  log(`MobileNet loaded in ${ms}ms. Ready to classify.`);
+
+  document.getElementById('run').disabled = false;
+  document.getElementById('preview').src = 'https://upload.wikimedia.org/wikipedia/commons/8/89/Tomato_je.jpg';
+
+  document.getElementById('run').onclick = async () => {
+    const t = performance.now();
+    const img = document.getElementById('preview');
+    if (!img.complete) await new Promise(r => img.onload = r);
+    const preds = await m.classify(img, 5);
+    const took = Math.round(performance.now() - t);
+    const out = document.getElementById('result');
+    out.textContent = `Classified in ${took}ms\n\n`;
+    for (const p of preds) {
+      const pct = (p.probability * 100).toFixed(1);
+      const bar = '█'.repeat(Math.round(p.probability * 30));
+      out.textContent += `${pct.padStart(5)}%  ${bar}  ${p.className}\n`;
+    }
+  };
+})().catch((e) => {
+  log('ERROR: ' + e.message);
+  console.error(e);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+import type { Recipe, StockItem, RecipeIngredient } from '../types';
+import {
+  formatBaseValue,
+  subtractBase,
+  toBaseUnit,
+  unitDimension,
+  convertScoop,
+  type UnitDimension,
+} from './units';
+
+export interface DeductionResult {
+  ingredient: RecipeIngredient;
+  stockItem: StockItem;
+  /** Amount deducted (in base units of the ingredient's dimension). */
+  deductedBase: number;
+  /** Stock quantity after deduction (base units). */
+  remainingBase: number;
+  /** Human-readable summary of what was deducted, e.g. "150 g", "1.5 pcs". */
+  deductedLabel: string;
+  /**
+   * All stock items that could plausibly match this ingredient, ranked by score.
+   * When length > 1, the UI should let the user pick which one to deduct from.
+   */
+  candidates: StockItem[];
+}
+
+export interface SkippedIngredient {
+  ingredient: RecipeIngredient;
+  reason: 'not-in-stock' | 'unit-mismatch';
+  /**
+   * Stock items that name-matched but were rejected (e.g. unit mismatch).
+   * Surfaced to the UI so the user can see what was found.
+   */
+  candidates: StockItem[];
+}
+
+/**
+ * Normalize a name for fuzzy comparison: lowercase, trim, strip punctuation,
+ * collapse whitespace. Common alternative names are also mapped.
+ */
+function normalize(s: string): string {
+  return s.trim().toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Small alias table for very common cross-name matches.
+const NAME_ALIASES: Record<string, string> = {
+  palak: 'spinach',
+};
+
+function alias(s: string): string {
+  return NAME_ALIASES[s] ?? s;
+}
+
+/** Is `a` a plural form of `b` or vice versa? Handles English +s / +es. */
+function isPluralPair(a: string, b: string): boolean {
+  if (a === b) return true;
+  // apples ↔ apple, tomatoes ↔ tomato
+  if (a + 's' === b || b + 's' === a) return true;
+  if (a + 'es' === b || b + 'es' === a) return true;
+  return false;
+}
+
+interface Candidate {
+  item: StockItem;
+  /** Higher = better match. */
+  score: number;
+}
+
+/**
+ * Score a single stock candidate against an ingredient.
+ * Returns null if it doesn't match.
+ *
+ * Matching rules (deliberately strict so we don't wrongly deduct from
+ * unrelated items like "Aloo gobi" when the recipe just needs "Aloo"):
+ *   • exact (normalized + aliased) match         → 1000
+ *   • simple plural pair ("tomato" ↔ "tomatoes") → 500
+ * Substring matching is intentionally NOT used — it caused false positives.
+ */
+function scoreCandidate(needle: string, hay: string): number | null {
+  if (needle === hay) return 1000;
+  if (isPluralPair(needle, hay)) return 500;
+  return null;
+}
+
+/**
+ * Find ALL stock items that could match this ingredient, sorted best first.
+ * Use this when you want to let the user pick the right one.
+ */
+export function findCandidatesForIngredient(
+  ingredient: RecipeIngredient,
+  stock: StockItem[],
+): StockItem[] {
+  const needle = alias(normalize(ingredient.name));
+  if (!needle) return [];
+
+  const out: Candidate[] = [];
+  for (const it of stock) {
+    const hay = alias(normalize(it.name));
+    if (!hay) continue;
+    const base = scoreCandidate(needle, hay);
+    if (base === null) continue;
+    // Same-priority tiebreaker: prefer length-closest.
+    const score = base - Math.abs(hay.length - needle.length);
+    out.push({ item: it, score });
+  }
+  out.sort((a, b) => b.score - a.score);
+  return out.map((c) => c.item);
+}
+
+/**
+ * Find the best-matching stock item for an ingredient by name.
+ * Returns the top-ranked candidate, or null if nothing matches.
+ */
+export function findMatchingStockItem(
+  ingredient: RecipeIngredient,
+  stock: StockItem[],
+): StockItem | null {
+  const all = findCandidatesForIngredient(ingredient, stock);
+  return all[0] ?? null;
+}
+
+export interface RecipeDeductionPlan {
+  recipe: Recipe;
+  peopleCooked: number;
+  /** Multiplier applied to each ingredient quantity. */
+  multiplier: number;
+  deductions: DeductionResult[];
+  skipped: SkippedIngredient[];
+}
+
+/**
+ * Compute what would happen if this recipe were cooked for `peopleCooked` people.
+ * Pure — does not modify state. Useful for live preview in the UI.
+ *
+ * Each deduction carries its `candidates` list so the UI can offer a picker
+ * when multiple stock items match the same ingredient (ambiguous).
+ */
+export function planRecipeDeduction(
+  recipe: Recipe,
+  peopleCooked: number,
+  stock: StockItem[],
+): RecipeDeductionPlan {
+  const multiplier = recipe.baseServings > 0 ? peopleCooked / recipe.baseServings : 0;
+  const deductions: DeductionResult[] = [];
+  const skipped: SkippedIngredient[] = [];
+
+  for (const ing of recipe.ingredients) {
+    const candidates = findCandidatesForIngredient(ing, stock);
+    const match = candidates[0] ?? null;
+    if (!match) {
+      skipped.push({ ingredient: ing, reason: 'not-in-stock', candidates: [] });
+      continue;
+    }
+
+    // Resolve both sides to a COMMON dimension. When the recipe measures in
+    // spoons ("2 tbsp oil") and the stock is held in grams, the ingredient is
+    // converted with its density so the two can actually be compared — this is
+    // what used to fail for 55% of the catalogue.
+    const ingRaw = toBaseUnit(ing.quantity * multiplier, ing.unit);
+    const stkRaw = toBaseUnit(match.quantity, match.unit);
+    if (!ingRaw || !stkRaw || ingRaw.dimension === 'unknown' || stkRaw.dimension === 'unknown') {
+      skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
+      continue;
+    }
+
+    let ingDim: UnitDimension = ingRaw.dimension;
+    let ingValue = ingRaw.value;
+    let stkDim = stkRaw.dimension;
+
+    // Get BOTH sides into a shared dimension. The conversion has to be
+    // symmetric: if the recipe measures in spoons we convert the ingredient,
+    // but if the STOCK is what we hold in spoons, we must convert the stock
+    // instead. One-way conversion made "2 cups of flour" deduct 1 cup and
+    // leave 1 — but "1 cup stock, 1 cup recipe" left 240, because the ml
+    // value was written back onto a scoop-denominated item untouched.
+    if (ingDim === 'scoop' && stkDim !== 'scoop') {
+      const converted = convertScoop(ingValue, ing.name, stkDim);
+      if (converted === null) {
+        skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
+        continue;
+      }
+      ingValue = converted;
+      ingDim = stkDim;
+    } else if (stkDim === 'scoop' && ingDim !== 'scoop') {
+      const converted = convertScoop(stkRaw.value, ing.name, ingDim);
+      if (converted === null) {
+        skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
+        continue;
+      }
+      stkRaw.value = converted;
+      stkDim = ingDim;
+    }
+
+    // A non-finite amount means malformed data, not a real deduction. Skip it
+    // rather than letting NaN propagate: subtractBase would return NaN, and
+    // the row would then fail `quantity > 0` and be deleted from the kitchen.
+    if (!Number.isFinite(ingValue) || !Number.isFinite(stkRaw.value)) {
+      skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
+      continue;
+    }
+
+    const ingBase = { value: ingValue, dimension: ingDim };
+    const stkBase = { value: stkRaw.value, dimension: stkDim };
+
+    const newStock = subtractBase(stkBase.value, ingBase.value);
+    deductions.push({
+      ingredient: ing,
+      stockItem: match,
+      deductedBase: Math.min(ingBase.value, stkBase.value),
+      remainingBase: newStock,
+      deductedLabel: formatBaseValue(Math.min(ingBase.value, stkBase.value), ingDim),
+      candidates,
+    });
+  }
+
+  return { recipe, peopleCooked, multiplier, deductions, skipped };
+}

@@ -1,0 +1,33 @@
+# ── dependencies ────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── build output ────────────────────────────────────────────────────────
+dist/
+build/
+*.tsbuildinfo
+
+# TypeScript/Vite emit these next to the sources; they are generated.
+vite.config.js
+vite.config.d.ts
+
+# ── SECRETS ─────────────────────────────────────────────────────────────
+# Every .env variant is ignored EXCEPT the committed template. `bridge/shift /.env`
+# holds MINIMAX_ACCESS_TOKEN and PLANTNET_API_KEY — real, paid credentials.
+.env
+.env.*
+!.env.example
+
+# ── local tooling / machine-specific ────────────────────────────────────
+# 39 MB compiled Cloudflare binary. Install it with brew, don't ship it.
+tunnel/
+!tunnel/.gitkeep
+plists/
+watchdog.sh
+.mavis/
+.DS_Store
+*.log
+npm-debug.log*
+.vscode/
+.idea/

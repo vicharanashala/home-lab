@@ -1,0 +1,17 @@
+{
+  "name": "homehub-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "HomeHub HouseBot bridge — MiniMax chat + vision + PlantNet proxy.",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "sharp": "^0.33.5"
+  }
+}
