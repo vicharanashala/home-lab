@@ -13,6 +13,7 @@ import { parseGroceryList } from '../utils/groceryListParser';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { applyAgentActions } from '../utils/agentActions';
 import { DishIcon } from '../components/icons/DishIcons';
+import { ThemeToggle } from '../components/ThemeToggle';
 import { PhotoAttachButton, AttachedImageChip, usePhotoAttach } from '../components/PhotoAttach';
 
 type Msg = {
@@ -1056,6 +1057,8 @@ export function HouseBotPage() {
         >
           <span style={{ fontSize: 15, lineHeight: 1 }}>←</span> Home
         </button>
+
+        <ThemeToggle variant="onGradient" />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div

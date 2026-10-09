@@ -23,6 +23,7 @@ import type { MealSuggestion } from '../utils/mealSuggest';
 import { SuggestSheet } from '../components/SuggestSheet';
 import { TasteMatchCard } from '../components/TasteMatchCard';
 import type { TasteMatch } from '../components/TasteMatchCard';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner'];
 const SLOT_META: Record<MealSlot, { emoji: string; label: string }> = {
@@ -372,6 +373,7 @@ export default function MealPlanPage() {
             </p>
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            <ThemeToggle />
             {planned < TOTAL_SLOTS && (
               <button
                 onClick={suggestWholeWeek}

@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { useState, ReactNode } from 'react';
 import { AddGroceryModal } from './AddGroceryModal';
 import { AddStockModal } from './AddStockModal';
+import { ThemeToggle } from './ThemeToggle';
 
 interface Props {
   title: string;
@@ -44,6 +45,7 @@ export function TopBar({ title, subtitle, rightSlot, hideAddButton }: Props) {
               </p>
             )}
           </div>
+          <ThemeToggle />
           <button
             onClick={() => navigate('/settings')}
             aria-label="Settings"

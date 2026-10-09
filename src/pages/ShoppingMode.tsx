@@ -4,6 +4,7 @@ import { ChevronLeft, ShoppingCart, Check, Trash2, CircleCheck } from 'lucide-re
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
 import { CategoryIcon } from '../components/icons/AppIcons';
+import { ThemeToggle } from '../components/ThemeToggle';
 import { getCategory, CATEGORY_LIST } from '../utils/categories';
 import type { CategoryId } from '../types';
 
@@ -36,6 +37,9 @@ export function ShoppingModePage() {
   if (grocery.length === 0) {
     return (
       <div className="mx-auto max-w-lg px-4 py-10 text-center">
+        <div className="flex justify-end mb-3">
+          <ThemeToggle />
+        </div>
         <span className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-sage-100 dark:bg-sage-900/30 text-sage-600 dark:text-sage-300 mb-4">
           <ShoppingCart size={34} />
         </span>
@@ -68,9 +72,12 @@ export function ShoppingModePage() {
         <h1 className="font-display text-2xl font-extrabold text-sage-900 dark:text-cream-50">
           Shopping
         </h1>
-        <span className="text-sm font-bold text-sage-700 dark:text-sage-300 tabular-nums">
-          {done.length}/{grocery.length}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-sage-700 dark:text-sage-300 tabular-nums">
+            {done.length}/{grocery.length}
+          </span>
+          <ThemeToggle />
+        </div>
       </div>
 
       <div className="h-2 rounded-full bg-sage-100 dark:bg-ink-700 overflow-hidden mb-4">

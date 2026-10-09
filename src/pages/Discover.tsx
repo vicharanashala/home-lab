@@ -23,6 +23,7 @@ import {
 import { useStore } from '../store/useStore';
 import { substitutionsForRecipe } from '../utils/substitutions';
 import { DishIcon } from '../components/icons/DishIcons';
+import { ThemeToggle } from '../components/ThemeToggle';
 import clsx from 'clsx';
 import type { MealLog, Recipe, StockItem } from '../types';
 
@@ -222,9 +223,14 @@ export function DiscoverPage() {
         <div className="absolute -right-12 -top-12 w-56 h-56 rounded-full bg-white/10 blur-sm" />
         <div className="absolute left-1/3 -top-6 w-24 h-24 rounded-full bg-butter-300/30 dark:bg-butter-400/10 blur-2xl" />
         <div className="relative">
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-xs font-semibold mb-3 ring-1 ring-white/20">
-            <Sparkles size={14} />
-            Discover · powered by ML
+          <div className="flex items-start justify-between gap-3">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 backdrop-blur px-3 py-1 text-xs font-semibold mb-3 ring-1 ring-white/20">
+              <Sparkles size={14} />
+              Discover · powered by ML
+            </div>
+            {/* On this gradient header the toggle needs its own light-on-dark
+                treatment, so it isn't given the default sage/ink chrome. */}
+            <ThemeToggle variant="onGradient" />
           </div>
           <h1 className="font-display text-3xl sm:text-4xl font-extrabold leading-[1.1] tracking-tight">
             Try something new.
