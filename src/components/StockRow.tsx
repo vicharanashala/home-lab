@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Minus, Plus, Pencil, Trash2, AlertTriangle, Calendar, Archive, Refrigerator } from 'lucide-react';
+import { Minus, Plus, Pencil, Trash2, AlertTriangle, Calendar, Archive, Refrigerator, ShoppingCart } from 'lucide-react';
 import clsx from 'clsx';
 import type { StockItem } from '../types';
 import { getCategory } from '../utils/categories';
@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
-  const { incrementStock, removeStock, toast, settings } = useStore();
+  const { incrementStock, removeStock, toast, settings, grocery, addGrocery } = useStore();
   const [bumpKey, setBumpKey] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const cat = getCategory(item.category);
@@ -32,6 +32,26 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
   const allergenHits = detectAllergensInName(item.name, settings.allergies);
   const showDietWarn = settings.dietaryPreference !== 'no-preference' && dietConflict;
   const showAllergenWarn = allergenHits.length > 0;
+
+  /** Already on the open list? Then the button has nothing to add. */
+  const onGrocery = grocery.some(
+    (g) => !g.purchased && g.name.trim().toLowerCase() === item.name.trim().toLowerCase(),
+  );
+
+  /**
+   * Put this item on the shopping list without hunting for it. Seeds a
+   * sensible quantity — roughly what you'd buy to replace what's on hand, so
+   * the list says "2 kg" rather than a bare name.
+   */
+  const addToGrocery = () => {
+    const qty = Math.max(1, Math.ceil(item.lowStockThreshold || 1));
+    addGrocery({
+      name: item.name,
+      quantity: `${qty} ${item.unit}`,
+      category: item.category,
+    });
+    toast(`Added ${item.name} to your list`, 'success');
+  };
 
   const expiryChip = (() => {
     if (bucket === 'expired') {
@@ -169,6 +189,18 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
           >
             <Plus size={16} />
           </button>
+          {/* Most useful when something is low or about to expire — that's
+              exactly when you want it on the list rather than in the fridge. */}
+          {!compact && !onGrocery && (
+            <button
+              onClick={addToGrocery}
+              aria-label={`Add ${item.name} to grocery list`}
+              title="Add to grocery list"
+              className="btn-icon bg-sage-50 text-sage-700 hover:bg-sage-100"
+            >
+              <ShoppingCart size={16} />
+            </button>
+          )}
           {onEdit && (
             <button
               onClick={() => onEdit(item)}

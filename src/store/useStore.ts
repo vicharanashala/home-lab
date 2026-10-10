@@ -169,6 +169,11 @@ export interface UseStore extends AppState {
   setMealPlanSlot: (day: MealPlanDay, slot: MealSlot, entry: MealPlanEntry | null) => void;
   /** Clear all three slots for one day. */
   clearMealPlanDay: (day: MealPlanDay) => void;
+  /**
+   * Copy one day's meals onto another. Entries are cloned rather than shared
+   * so editing the copy can't quietly mutate the original day.
+   */
+  copyMealPlanDay: (from: MealPlanDay, to: MealPlanDay) => void;
   /** Clear the whole week. */
   clearMealPlan: () => void;
   /** Record the household's composition (adults + kids by age). */
@@ -486,6 +491,23 @@ const clearMealPlanDay: UseStore['clearMealPlanDay'] = (day) => {
     ...s,
     app: { ...s.app, mealPlan: { ...currentMealPlan(), [day]: emptyDayPlan() } },
   }));
+};
+
+const copyMealPlanDay: UseStore['copyMealPlanDay'] = (from, to) => {
+  if (from === to) return;
+  setState((s) => {
+    const plan = currentMealPlan();
+    const src = plan[from];
+    if (!src) return s;
+    // Clone each entry so the two days never share an object. createdAt is
+    // refreshed because this is a new plan for a different day.
+    const cloned = { ...emptyDayPlan() } as typeof emptyDayPlan extends () => infer R ? R : never;
+    for (const slot of ['breakfast', 'lunch', 'dinner'] as const) {
+      const e = src[slot];
+      if (e) cloned[slot] = { ...e, createdAt: Date.now() };
+    }
+    return { ...s, app: { ...s.app, mealPlan: { ...plan, [to]: cloned } } };
+  });
 };
 
 /** Marks the one-run household survey as done so it stops nagging. */
@@ -875,6 +897,7 @@ export function useStore(): UseStore {
     mealPlan: currentMealPlan(),
     setMealPlanSlot,
     clearMealPlanDay,
+    copyMealPlanDay,
     clearMealPlan,
     completeHouseholdSurvey,
     toasts: snap.toasts,

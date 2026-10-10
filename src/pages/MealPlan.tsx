@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays, Check, Trash2, X, ShoppingCart, ChefHat, Sparkles,
-  Store, Users, ChevronRight, CircleCheck, Timer,
+  Store, Users, ChevronRight, CircleCheck, Timer, Copy,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore, MEAL_PLAN_DAYS, MEAL_PLAN_DAY_LABELS } from '../store/useStore';
@@ -76,7 +76,7 @@ function useRecipeEmbeddings() {
 export default function MealPlanPage() {
   const {
     recipes: builtIn, stock, grocery, mealPlan, mealLogs, settings,
-    setMealPlanSlot, clearMealPlanDay, clearMealPlan, addGrocery, toast,
+    setMealPlanSlot, clearMealPlanDay, copyMealPlanDay, clearMealPlan, addGrocery, toast,
   } = useStore();
   const csvRecipes = useCsvRecipes();
   const embeddings = useRecipeEmbeddings();
@@ -101,6 +101,8 @@ export default function MealPlanPage() {
   // ── suggestions ──────────────────────────────────────────────────────
   // Which slot the suggestion sheet is open for, and how many times the user
   // has asked to reshuffle. `null` means the sheet is closed.
+  // Which day the Copy day picker is copying FROM.
+  const [copyFrom, setCopyFrom] = useState<MealPlanDay | null>(null);
   const [suggestFor, setSuggestFor] = useState<EditKey | null>(null);
   const [suggestNonce, setSuggestNonce] = useState(0);
   const [suggestBusy, setSuggestBusy] = useState(false);
@@ -666,15 +668,26 @@ export default function MealPlanPage() {
                 })}
               </ul>
               )}
-              {dayCount > 0 && (
+              <div className="mt-1.5 flex items-center gap-3">
+                {dayCount > 0 && (
+                  <button
+                    onClick={() => clearMealPlanDay(day)}
+                    aria-label={`Clear ${MEAL_PLAN_DAY_LABELS[day]}`}
+                    className="text-[11px] font-semibold text-sage-400 hover:text-tomato-600 dark:text-ink-500 dark:hover:text-tomato-300"
+                  >
+                    Clear day
+                  </button>
+                )}
+                {/* Repeat a good day rather than re-picking every dish. */}
                 <button
-                  onClick={() => clearMealPlanDay(day)}
-                  aria-label={`Clear ${MEAL_PLAN_DAY_LABELS[day]}`}
-                  className="mt-1.5 text-[11px] font-semibold text-sage-400 hover:text-tomato-600 dark:text-ink-500 dark:hover:text-tomato-300"
+                  onClick={() => setCopyFrom(day)}
+                  aria-label={`Copy ${MEAL_PLAN_DAY_LABELS[day]} to another day`}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-sage-500 hover:text-sage-700 dark:text-ink-400 dark:hover:text-sage-300"
                 >
-                  Clear day
+                  <Copy size={11} />
+                  Copy day
                 </button>
-              )}
+              </div>
             </li>
           );
         })}
@@ -704,6 +717,50 @@ export default function MealPlanPage() {
           onAddAll={addAllToGrocery}
           onClose={() => setShowShopping(false)}
         />
+      )}
+
+      {copyFrom && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <button
+            onClick={() => setCopyFrom(null)}
+            aria-label="Cancel"
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Copy ${MEAL_PLAN_DAY_LABELS[copyFrom]} to`}
+            className="relative w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl bg-white dark:bg-ink-800 shadow-pop p-5 pb-[calc(var(--hh-nav-space,0rem)+0.5rem)] sm:pb-5"
+          >
+            <h2 className="font-display text-lg font-bold text-sage-900 dark:text-cream-50">
+              Copy {MEAL_PLAN_DAY_LABELS[copyFrom]} to…
+            </h2>
+            <p className="mt-0.5 text-xs text-sage-500 dark:text-ink-400">
+              This replaces whatever is planned for that day.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {MEAL_PLAN_DAYS.filter((d) => d !== copyFrom).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => {
+                    copyMealPlanDay(copyFrom, d);
+                    toast(`${MEAL_PLAN_DAY_LABELS[copyFrom]} copied to ${MEAL_PLAN_DAY_LABELS[d]}`, 'success');
+                    setCopyFrom(null);
+                  }}
+                  className="rounded-xl border border-sage-200 dark:border-ink-700 px-3 py-2.5 text-sm font-semibold text-sage-800 dark:text-cream-100 hover:bg-sage-50 dark:hover:bg-ink-700 transition"
+                >
+                  {MEAL_PLAN_DAY_LABELS[d]}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setCopyFrom(null)}
+              className="mt-3 w-full rounded-xl py-2.5 text-xs font-bold text-sage-600 hover:bg-sage-50 dark:text-ink-300 dark:hover:bg-ink-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
 
       {suggestFor && (
