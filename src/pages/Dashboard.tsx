@@ -52,6 +52,15 @@ export function Dashboard() {
     return () => window.removeEventListener('homehub:open-end-of-day', open);
   }, []);
 
+  // Let other pages deep-link straight into the meal logger. The taste-match
+  // card uses this: it tells the user it needs logged meals, so it should also
+  // offer the button that fixes it rather than being a dead end.
+  useEffect(() => {
+    const open = () => setOpenMeal(true);
+    window.addEventListener('homehub:open-log-meal', open);
+    return () => window.removeEventListener('homehub:open-log-meal', open);
+  }, []);
+
   const today = format(new Date(), 'EEEE, MMM d');
   const displayName = settings.userName?.trim();
   const title = displayName ? `${timeOfDayGreeting(displayName)} 👋` : `${timeOfDayGreeting()} 👋`;

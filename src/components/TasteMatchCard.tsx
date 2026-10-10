@@ -1,4 +1,5 @@
-import { Sparkles, Info } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Sparkles, Info, Utensils } from 'lucide-react';
 import clsx from 'clsx';
 
 export interface TasteMatch {
@@ -30,7 +31,16 @@ export function TasteMatchCard({
   loading?: boolean;
   isDark?: boolean;
 }) {
+  const navigate = useNavigate();
   const pct = match ? Math.round(match.score * 100) : null;
+
+  // The card tells the user it needs logged meals — so it should also offer
+  // the button that fixes that, rather than leaving a dead end. Navigate first,
+  // then fire the event on the next tick so the Dashboard listener exists.
+  const logAMeal = () => {
+    navigate('/');
+    setTimeout(() => window.dispatchEvent(new CustomEvent('homehub:open-log-meal')), 120);
+  };
 
   // Colour tracks the score, but the thresholds are about how close the dishes
   // are — not about how "good" they are.
@@ -76,6 +86,17 @@ export function TasteMatchCard({
                 ? "We'll measure how close those dishes are to what you normally cook."
                 : 'HomeHub needs a few logged meals with a recipe before it can learn what you like.'}
           </p>
+          {/* Only offer the shortcut where it actually helps — while loading,
+              or once the week is filled, there's nothing to nudge. */}
+          {!loading && !hasTasteProfile && (
+            <button
+              onClick={logAMeal}
+              className="mt-2.5 w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-sage-700 hover:bg-sage-800 text-white text-xs font-bold py-2 transition active:scale-[.98]"
+            >
+              <Utensils size={13} />
+              Log a meal
+            </button>
+          )}
         </>
       ) : (
         <>
