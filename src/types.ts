@@ -107,6 +107,12 @@ export interface MealLog {
   recipeId?: string;
   /** How many servings this meal was sized for. */
   servings?: number;
+  /**
+   * Did the user actually enjoy it? This is the ONLY honest training signal
+   * the taste model has — cooking a dish says nothing about liking it (you
+   * cook leftovers, you cook for guests). Undefined means "not rated".
+   */
+  liked?: boolean;
 }
 
 export interface RecipeIngredient {

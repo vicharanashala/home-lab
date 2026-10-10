@@ -12,6 +12,8 @@ import {
   BookOpen,
   AlertCircle,
   Check,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import clsx from 'clsx';
@@ -98,6 +100,9 @@ export function LogMealModal({ open, onClose, initialMealType }: Props) {
   const [peopleCooked, setPeopleCooked] = useState<number>(2);
   /** User-picked stock item per ingredient (when matching is ambiguous). */
   const [pickedStock, setPickedStock] = useState<Record<string, string>>({});
+  // The taste model needs a label. Cooking a dish says nothing about liking
+  // it, so we ask — once, optionally, on the recipe path where it matters.
+  const [liked, setLiked] = useState<boolean | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Reset when opened
@@ -170,6 +175,7 @@ export function LogMealModal({ open, onClose, initialMealType }: Props) {
       peopleCooked,
       notes: notes.trim() || undefined,
       pickedStockByIngredient: pickedStock,
+      liked,
     });
     onClose();
   };
@@ -472,6 +478,47 @@ export function LogMealModal({ open, onClose, initialMealType }: Props) {
 
             {touched && !recipe && (
               <p className="text-xs text-tomato-600 dark:text-tomato-300">Pick a recipe to continue.</p>
+            )}
+
+            {/* Did you actually enjoy it? This is the only honest label the
+                taste model can learn from — "you cooked it" says nothing. */}
+            {recipe && (
+              <div>
+                <label className="label">Did you enjoy it?</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLiked(liked === true ? undefined : true)}
+                    aria-pressed={liked === true}
+                    className={clsx(
+                      'inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold border transition-all active:scale-95',
+                      liked === true
+                        ? 'bg-sage-600 text-white border-sage-600 shadow-soft'
+                        : 'bg-white dark:bg-ink-800 text-sage-700 dark:text-cream-100 border-sage-200 dark:border-ink-700 hover:bg-sage-50 dark:hover:bg-ink-700',
+                    )}
+                  >
+                    <ThumbsUp size={14} />
+                    Yes, loved it
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLiked(liked === false ? undefined : false)}
+                    aria-pressed={liked === false}
+                    className={clsx(
+                      'inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold border transition-all active:scale-95',
+                      liked === false
+                        ? 'bg-tomato-600 text-white border-tomato-600 shadow-soft'
+                        : 'bg-white dark:bg-ink-800 text-sage-700 dark:text-cream-100 border-sage-200 dark:border-ink-700 hover:bg-sage-50 dark:hover:bg-ink-700',
+                    )}
+                  >
+                    <ThumbsDown size={14} />
+                    Not really
+                  </button>
+                </div>
+                <p className="mt-1.5 text-[11px] text-sage-500 dark:text-ink-400">
+                  Optional — but this is how HomeHub learns what you actually like.
+                </p>
+              </div>
             )}
           </>
         )}

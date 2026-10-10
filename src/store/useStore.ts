@@ -113,7 +113,16 @@ export interface UseStore extends AppState {
   /** Wipes grocery + stock and resets onboarding. Atomic — survives StrictMode. */
   clearAllData: () => void;
   // Meal logs
-  addMealLog: (input: { mealType: MealType; description: string; notes?: string }) => MealLog;
+  addMealLog: (input: {
+    mealType: MealType;
+    description: string;
+    notes?: string;
+    /** Attaching a recipe and a liked/not-liked verdict is what lets the
+     *  taste model learn; both stay optional. */
+    recipeId?: string;
+    servings?: number;
+    liked?: boolean;
+  }) => MealLog;
   removeMealLog: (id: string) => void;
   /**
    * Logs a meal from a recipe and atomically deducts matching stock items
@@ -128,6 +137,8 @@ export interface UseStore extends AppState {
     peopleCooked: number;
     notes?: string;
     pickedStockByIngredient?: Record<string, string>;
+    /** "Did you enjoy it?" — the label the taste model trains on. */
+    liked?: boolean;
   }) => {
     log: MealLog;
     usedCount: number;
@@ -384,6 +395,9 @@ const addMealLog: UseStore['addMealLog'] = (input) => {
     description: input.description.trim(),
     createdAt: Date.now(),
     notes: input.notes?.trim() || undefined,
+    recipeId: input.recipeId,
+    servings: input.servings,
+    liked: input.liked,
   };
   setState((s) => ({ ...s, app: { ...s.app, mealLogs: [entry, ...s.app.mealLogs] } }));
   return entry;
@@ -591,6 +605,7 @@ const logMealFromRecipe: UseStore['logMealFromRecipe'] = (input) => {
     notes: input.notes?.trim() || undefined,
     recipeId: recipe.id,
     servings: input.peopleCooked,
+    liked: input.liked,
   };
 
   setState((s) => ({

@@ -200,11 +200,10 @@ export default function MealPlanPage() {
     const defaults = suggestedServings(household);
     let filled = 0;
     const taken = new Set<string>();
-    // Per-dish similarity, not just a week average — the card breaks the week
-    // down so it's clear WHICH dishes drove the score. A dish with no taste
-    // score (no profile, or the model hadn't loaded) is kept with null so the
-    // user still sees it listed rather than silently vanishing.
-    const breakdown: { name: string; score: number | null }[] = [];
+    // One confidence figure per dish, summed into the single accuracy number.
+    // dishConfidence works with or without a taste profile, so this is never
+    // empty — the board always has a real number to show.
+    const confidences: number[] = [];
     for (const day of MEAL_PLAN_DAYS) {
       for (const slot of SLOTS) {
         if (mealPlan[day]?.[slot]) continue;
@@ -227,10 +226,7 @@ export default function MealPlanPage() {
         const pick = picks[0];
         if (!pick) continue;
         taken.add(pick.recipe.id);
-        breakdown.push({
-          name: pick.recipe.name,
-          score: typeof pick.taste === 'number' ? pick.taste : null,
-        });
+        confidences.push(pick.confidence);
         const entry: MealPlanEntry = {
           name: pick.recipe.name,
           recipeId: pick.recipe.id,
@@ -243,20 +239,13 @@ export default function MealPlanPage() {
       }
     }
 
-    // Only publish a score we can actually defend. No taste profile means no
-// headline number — but the dishes still get listed, unscored, so the card is
-    // never blank and never invents a percentage.
-    const scored = breakdown.filter((d) => d.score !== null);
+    // One number for the whole list — always present, never a placeholder.
     setTasteMatch(
-      breakdown.length > 0
+      confidences.length > 0
         ? {
-            score: scored.length
-              ? scored.reduce((a, d) => a + (d.score as number), 0) / scored.length
-              : null,
-            dishes: scored.length,
-            breakdown: [...breakdown].sort(
-              (a, b) => (b.score ?? -1) - (a.score ?? -1),
-            ),
+            score: confidences.reduce((a, b) => a + b, 0) / confidences.length,
+            dishes: confidences.length,
+            fromTasteProfile: hasTasteProfile,
           }
         : null,
     );
@@ -269,7 +258,7 @@ export default function MealPlanPage() {
     );
   }, [
     catalogue, stock, mealLogs, embeddings, mealPlan, settings.dietaryPreference,
-    settings.allergies, household, setMealPlanSlot, toast,
+    settings.allergies, household, hasTasteProfile, setMealPlanSlot, toast,
   ]);
 
   const openEditor = (day: MealPlanDay, slot: MealSlot) => {

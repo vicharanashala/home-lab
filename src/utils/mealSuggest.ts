@@ -22,6 +22,8 @@ import type {
 } from '../types';
 import { recipesUsingExpiringStock } from './expiryRecipes';
 import { conflictsDiet, detectAllergensInName } from './diet';
+import { trainTasteModel, predict, samplesFromLogs, MIN_SAMPLES } from './tasteModel';
+import type { TrainedTasteModel } from './tasteModel';
 
 /** Fraction of suggestions that should be deliberately off-taste. */
 export const DEFAULT_ADVENTURE_MIX = 0.25;
@@ -45,6 +47,12 @@ export interface MealSuggestion {
   coverage: number;
   have: number;
   total: number;
+  /**
+   * How good a bet this dish is, 0..1 — and crucially, computable even with no
+   * meal history at all. This is what the single accuracy percentage is built
+   * from, so the UI never has to show a placeholder instead of a number.
+   */
+  confidence: number;
 }
 
 export interface SuggestInput {
@@ -174,6 +182,52 @@ function stockCoverage(recipe: Recipe, stock: StockItem[]): { have: number; tota
   return { have, total };
 }
 
+// ── confidence ─────────────────────────────────────────────────────────
+
+/**
+ * How good a bet this dish is, 0..1.
+ *
+ * The user asked for a single accuracy percentage for the whole list, so it
+ * has to be computable on a brand-new install with no meal history at all.
+ * These are the things we genuinely know about a dish before ever asking
+ * anyone what they like:
+ *
+ *   - can they actually cook it right now (ingredients already in stock)
+ *   - does the dish suit the meal it's been planned into
+ *   - is it a complete recipe rather than a name with no detail
+ *   - and, once meals have been logged, how close it is to their taste
+ *
+ * Without a taste profile the last one contributes nothing and its weight is
+ * redistributed across the rest, so the number is always real rather than
+ * padded with a made-up neutral score.
+ *
+ * This is a confidence score, not a probability of enjoyment: we cannot know
+ * whether someone will enjoy a dish until they cook it.
+ */
+export function dishConfidence(args: {
+  recipe: Recipe;
+  coverage: number;
+  slotFit: number;
+  taste: number | null;
+}): number {
+  const { recipe, coverage, slotFit, taste } = args;
+
+  // A recipe with no real ingredients is a stub, not a dish you can cook.
+  const ingCount = recipe.ingredients?.length ?? 0;
+  const completeness = ingCount >= 3 ? 1 : ingCount / 3;
+
+  const parts: [number, number][] = [
+    [Math.min(1, Math.max(0, coverage)), taste === null ? 0.55 : 0.35],
+    [Math.min(1, Math.max(0, slotFit)), taste === null ? 0.25 : 0.15],
+    [completeness, taste === null ? 0.20 : 0.10],
+  ];
+  if (taste !== null) parts.push([Math.min(1, Math.max(0, taste)), 0.40]);
+
+  const totalWeight = parts.reduce((a, [, w]) => a + w, 0);
+  const sum = parts.reduce((a, [v, w]) => a + v * w, 0);
+  return Math.min(1, Math.max(0, totalWeight > 0 ? sum / totalWeight : 0));
+}
+
 // ── ranking ─────────────────────────────────────────────────────────────
 
 export function suggestMeals(input: SuggestInput): MealSuggestion[] {
@@ -183,9 +237,21 @@ export function suggestMeals(input: SuggestInput): MealSuggestion[] {
     limit = 3, nonce = 0, servings,
   } = input;
 
-  if (!catalogue?.length) return [];
+  if (catalogue?.length === 0) return [];
 
   const tasteVec = buildTasteVector(mealLogs, embeddings);
+
+  // Train the personal taste model when the user has given enough explicit
+  // verdicts. Returns null otherwise, and every call site must cope with that
+  // rather than quietly falling back to a confident-looking number.
+  //
+  // Features are the recipe embedding and nothing else: the kitchen signals
+  // are already handled separately in dishConfidence, and mixing them in here
+  // would make the training and prediction feature spaces drift apart.
+  const learned: TrainedTasteModel | null = (() => {
+    const samples = samplesFromLogs(mealLogs, embeddings);
+    return samples.length >= MIN_SAMPLES ? trainTasteModel(samples) : null;
+  })();
 
   // Dishes already on this week's plan are not suggestions.
   const planned = new Set<string>();
@@ -218,7 +284,12 @@ export function suggestMeals(input: SuggestInput): MealSuggestion[] {
     const coverage = have / total;
 
     let taste: number | null = null;
-    if (tasteVec && embeddings) {
+    if (learned && embeddings) {
+      // A trained model beats raw similarity once the user has rated enough
+      // meals — it knows which directions of "taste" actually predict a verdict.
+      const emb = embeddings.get(recipe.id);
+      if (emb && emb.length) taste = predict(learned, emb);
+    } else if (tasteVec && embeddings) {
       const emb = embeddings.get(recipe.id);
       if (emb && emb.length) {
         taste = Math.max(0, Math.min(1, dot(normalize(emb), tasteVec)));
@@ -251,6 +322,7 @@ export function suggestMeals(input: SuggestInput): MealSuggestion[] {
 
     scored.push({
       recipe, score, reason, why, taste, coverage, have, total,
+      confidence: dishConfidence({ recipe, coverage, slotFit: fit, taste }),
     });
   }
 
