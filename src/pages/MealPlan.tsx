@@ -200,10 +200,11 @@ export default function MealPlanPage() {
     const defaults = suggestedServings(household);
     let filled = 0;
     const taken = new Set<string>();
-    // Similarity of each dish we actually chose — this is what the taste
-    // match is computed from. Only dishes that HAVE a taste score (i.e. a
-    // taste profile existed) contribute, so a cold profile never inflates it.
-    const tasteScores: number[] = [];
+    // Per-dish similarity, not just a week average — the card breaks the week
+    // down so it's clear WHICH dishes drove the score. A dish with no taste
+    // score (no profile, or the model hadn't loaded) is kept with null so the
+    // user still sees it listed rather than silently vanishing.
+    const breakdown: { name: string; score: number | null }[] = [];
     for (const day of MEAL_PLAN_DAYS) {
       for (const slot of SLOTS) {
         if (mealPlan[day]?.[slot]) continue;
@@ -226,7 +227,10 @@ export default function MealPlanPage() {
         const pick = picks[0];
         if (!pick) continue;
         taken.add(pick.recipe.id);
-        if (typeof pick.taste === 'number') tasteScores.push(pick.taste);
+        breakdown.push({
+          name: pick.recipe.name,
+          score: typeof pick.taste === 'number' ? pick.taste : null,
+        });
         const entry: MealPlanEntry = {
           name: pick.recipe.name,
           recipeId: pick.recipe.id,
@@ -240,15 +244,22 @@ export default function MealPlanPage() {
     }
 
     // Only publish a score we can actually defend. No taste profile means no
-    // number — the card explains what it needs instead.
-    if (tasteScores.length > 0) {
-      setTasteMatch({
-        score: tasteScores.reduce((a, b) => a + b, 0) / tasteScores.length,
-        dishes: tasteScores.length,
-      });
-    } else {
-      setTasteMatch(null);
-    }
+// headline number — but the dishes still get listed, unscored, so the card is
+    // never blank and never invents a percentage.
+    const scored = breakdown.filter((d) => d.score !== null);
+    setTasteMatch(
+      breakdown.length > 0
+        ? {
+            score: scored.length
+              ? scored.reduce((a, d) => a + (d.score as number), 0) / scored.length
+              : null,
+            dishes: scored.length,
+            breakdown: [...breakdown].sort(
+              (a, b) => (b.score ?? -1) - (a.score ?? -1),
+            ),
+          }
+        : null,
+    );
 
     toast(
       filled > 0

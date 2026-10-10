@@ -1,26 +1,36 @@
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Info, Utensils } from 'lucide-react';
+import { Sparkles, Info, Utensils, TrendingUp, TrendingDown } from 'lucide-react';
 import clsx from 'clsx';
 
+export interface DishConfidence {
+  name: string;
+  /** 0..1 similarity to the taste profile, or null when unscorable. */
+  score: number | null;
+}
+
 export interface TasteMatch {
-  /** 0..1 mean similarity of the suggested dishes to the taste profile. */
-  score: number;
-  /** How many dishes the score covers. */
+  /** 0..1 mean similarity, or null when no dish could be scored at all. */
+  score: number | null;
+  /** How many dishes carried a real score. */
   dishes: number;
+  /** Every dish Fill my week chose, strongest first. */
+  breakdown: DishConfidence[];
 }
 
 /**
- * A small read-out of how close this week's suggestions are to the user's
- * taste profile.
+ * Per-dish confidence for the week that "Fill my week" just built.
  *
- * This is a REAL measurement, not a vibe: the mean cosine similarity between
- * each suggested recipe's embedding and the taste vector built from the user's
- * logged meals. It is a similarity score, not a promise — we have no ground
- * truth about what someone will enjoy until they cook it, and saying
- * "87% accurate" would be inventing a number we cannot back.
+ * The headline number is the mean cosine similarity between each suggested
+ * dish's embedding and the taste vector built from the user's logged meals.
+ * The list underneath breaks that down dish by dish so it's clear WHICH dishes
+ * drove the score — the week average on its own hides a lot.
  *
- * When there is no taste profile yet (no logged meals with a recipe) there is
- * nothing to measure against, so it says so instead of showing a fake figure.
+ * This is a similarity measurement, not a prediction: we have no ground truth
+ * about what someone will enjoy until they cook it. So the wording is "match to
+ * your logged tastes", never "you will like this".
+ *
+ * With no logged meals there is nothing to compare against, so the dishes are
+ * listed with a dash rather than given an invented number.
  */
 export function TasteMatchCard({
   match, hasTasteProfile, loading, isDark,
@@ -32,7 +42,9 @@ export function TasteMatchCard({
   isDark?: boolean;
 }) {
   const navigate = useNavigate();
-  const pct = match ? Math.round(match.score * 100) : null;
+  // A match with nothing scored is NOT a 0% — it's an absence of data. Showing
+  // "0%" there would be a fabricated claim about the user's tastes.
+  const pct = match && match.score !== null ? Math.round(match.score * 100) : null;
 
   // The card tells the user it needs logged meals — so it should also offer
   // the button that fixes that, rather than leaving a dead end. Navigate first,
@@ -50,14 +62,57 @@ export function TasteMatchCard({
     : pct >= 45 ? { ring: 'text-butter-700 dark:text-butter-300', bar: 'bg-butter-500' }
     : { ring: 'text-tomato-600 dark:text-tomato-300', bar: 'bg-tomato-500' };
 
+  // Strongest and weakest scored dishes. Only meaningful once there ARE scores;
+  // with fewer than two dishes there is no spread to describe.
+  const scored = (match?.breakdown || []).filter((d) => d.score !== null);
+  const top = scored.length >= 2 ? scored.slice(0, 2) : scored;
+  const bottom = scored.length >= 4 ? scored.slice(-2).reverse() : [];
+  const wantsLogMeals = !loading && !hasTasteProfile;
+
+  const Row = ({ d, strong }: { d: DishConfidence; strong?: boolean }) => (
+    <li className="flex items-center gap-2 py-[3px]">
+      <span
+        className={clsx(
+          'min-w-0 flex-1 truncate text-[11px]',
+          d.score === null ? 'text-sage-400 dark:text-ink-500' : 'text-sage-800 dark:text-cream-100',
+        )}
+      >
+        {d.name}
+      </span>
+      {d.score === null ? (
+        <span className="shrink-0 text-[10px] text-sage-400 dark:text-ink-500">—</span>
+      ) : (
+        <>
+          <span
+            className={clsx(
+              'shrink-0 text-[10px] font-bold tabular-nums',
+              strong ? 'text-sage-600 dark:text-sage-300' : 'text-sage-500 dark:text-ink-400',
+            )}
+          >
+            {Math.round(d.score * 100)}%
+          </span>
+          <span
+            className={clsx(
+              'h-1 w-8 shrink-0 rounded-full overflow-hidden',
+              isDark ? 'bg-ink-700' : 'bg-sage-100',
+            )}
+          >
+            <span
+              className={clsx('block h-full rounded-full', strong ? 'bg-sage-500' : 'bg-butter-400')}
+              style={{ width: `${Math.max(4, Math.round((d.score ?? 0) * 100))}%` }}
+            />
+          </span>
+        </>
+      )}
+    </li>
+  );
+
   return (
     <div
       aria-label="Taste match"
       className={clsx(
         'rounded-2xl border p-3.5',
-        isDark
-          ? 'border-ink-700 bg-ink-800/70'
-          : 'border-sage-200 bg-sage-50/60',
+        isDark ? 'border-ink-700 bg-ink-800/70' : 'border-sage-200 bg-sage-50/60',
       )}
     >
       <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-sage-500 dark:text-ink-400">
@@ -77,18 +132,16 @@ export function TasteMatchCard({
               ? 'Learning your taste…'
               : hasTasteProfile
                 ? 'Fill your week to find out'
-                : 'Log meals to unlock'}
+                : 'Not enough data yet'}
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-sage-500 dark:text-ink-400">
             {loading
               ? 'Downloading the taste model — it only happens once.'
               : hasTasteProfile
                 ? "We'll measure how close those dishes are to what you normally cook."
-                : 'HomeHub needs a few logged meals with a recipe before it can learn what you like.'}
+                : 'Log a few meals and every dish below gets a real match score.'}
           </p>
-          {/* Only offer the shortcut where it actually helps — while loading,
-              or once the week is filled, there's nothing to nudge. */}
-          {!loading && !hasTasteProfile && (
+          {wantsLogMeals && (
             <button
               onClick={logAMeal}
               className="mt-2.5 w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-sage-700 hover:bg-sage-800 text-white text-xs font-bold py-2 transition active:scale-[.98]"
@@ -102,10 +155,7 @@ export function TasteMatchCard({
         <>
           <div className="mt-1 flex items-baseline gap-1.5">
             <span
-              className={clsx(
-                'font-display text-3xl font-extrabold leading-none',
-                tone?.ring,
-              )}
+              className={clsx('font-display text-3xl font-extrabold leading-none', tone?.ring)}
             >
               {pct}%
             </span>
@@ -114,7 +164,6 @@ export function TasteMatchCard({
             </span>
           </div>
 
-          {/* Bar is a plain proportion, not a judgement. */}
           <div
             className={clsx(
               'mt-2 h-1.5 rounded-full overflow-hidden',
@@ -126,14 +175,71 @@ export function TasteMatchCard({
               style={{ width: `${Math.max(3, pct)}%` }}
             />
           </div>
-
-          <p className="mt-2 flex items-start gap-1 text-[11px] leading-relaxed text-sage-500 dark:text-ink-400">
-            <Info size={10} className="mt-0.5 shrink-0" />
-            <span>How close these dishes are to what you usually cook — not a promise you'll
-            love them all.</span>
-          </p>
         </>
       )}
+
+      {/* Per-dish breakdown. Shown even with no scores so the user can still see
+          what Fill my week picked — just without invented numbers next to it. */}
+      {match && match.breakdown.length > 0 && (
+        <div className="mt-3 border-t border-sage-200/70 pt-2 dark:border-ink-700/70">
+          {top.length > 0 && (
+            <>
+              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-sage-500 dark:text-ink-400">
+                <TrendingUp size={10} />
+                Strongest matches
+              </p>
+              <ul className="mt-1">
+                {top.map((d) => (
+                  <Row key={d.name} d={d} strong />
+                ))}
+              </ul>
+            </>
+          )}
+
+          {bottom.length > 0 && (
+            <>
+              <p className="mt-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-sage-500 dark:text-ink-400">
+                <TrendingDown size={10} />
+                Least sure
+              </p>
+              <ul className="mt-1">
+                {bottom.map((d) => (
+                  <Row key={d.name} d={d} />
+                ))}
+              </ul>
+            </>
+          )}
+
+          {/* With no profile at all, show the rest of the week unscored rather
+              than silently hiding dishes the user just got. */}
+          {!hasTasteProfile && (
+            <>
+              <p className="mt-2 text-[10px] font-bold uppercase tracking-wider text-sage-500 dark:text-ink-400">
+                This week&rsquo;s dishes
+              </p>
+              <ul className="mt-1">
+                {match.breakdown.slice(0, 6).map((d) => (
+                  <Row key={d.name} d={d} />
+                ))}
+              </ul>
+              {match.breakdown.length > 6 && (
+                <p className="mt-1 text-[10px] text-sage-400 dark:text-ink-500">
+                  +{match.breakdown.length - 6} more
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <p className="mt-2.5 flex items-start gap-1 text-[10px] leading-relaxed text-sage-500 dark:text-ink-400">
+        <Info size={10} className="mt-0.5 shrink-0" />
+        <span>
+          {pct === null
+            ? 'No scores until meals are logged — nothing here is guessed.'
+            : 'Match to your logged tastes, not a promise you’ll like every dish.'}
+        </span>
+      </p>
     </div>
   );
 }
