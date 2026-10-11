@@ -158,30 +158,39 @@ export function useVoice(voiceId = 'af_heart'): UseVoice {
 
     const rec = new Ctor();
     rec.lang = 'en-US';
-    rec.continuous = false;      // one utterance, then stop — push-to-talk feel
+    // Stay open until the user taps the mic again. One-shot push-to-talk
+    // meant every question needed three taps: mic, send, mic.
+    rec.continuous = true;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
 
     rec.onstart = () => setListening(true);
     rec.onresult = (e: any) => {
       let interimText = '';
+      let finals = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
         const text = r[0]?.transcript || '';
-        if (r.isFinal) {
-          const trimmed = text.trim();
-          if (trimmed) finalRef.current?.(trimmed);
-        } else {
-          interimText += text;
-        }
+        if (r.isFinal) finals += `${text.trim()} `;
+        else interimText += text;
       }
+      if (finals.trim()) finalRef.current?.(finals.trim());
       setInterim(interimText);
     };
     rec.onerror = (e: any) => {
       const code = e?.error;
+      // A brief silence ends Chrome's recogniser even in continuous mode.
+      // That is not the user stopping, so restart rather than reporting an
+      // error the user can do nothing about.
+      if (code === 'no-speech') {
+        try { rec.start(); } catch { /* already restarting */ }
+        setError(null);
+        setListening(true);
+        return;
+      }
       setError(
         code === 'not-allowed' || code === 'service-not-allowed'
-          ? 'Microphone permission was blocked.'
+          ? 'Microphone is blocked for this site. Tap the padlock in the address bar, set Microphone to Allow, then try again.'
           : code === 'no-speech'
             ? "I didn't catch that."
             : code
