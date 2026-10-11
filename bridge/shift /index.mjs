@@ -237,7 +237,9 @@ const RATE_BUCKETS = {
 // Matching on the full path silently classified EVERY route as 'normal',
 // leaving the paid endpoints on the loose limit.
 const AI_PATHS = [
-  /^\/(analyze|overwatch|plantnet|minimax|housebot)\b/,
+  // `voice` synthesises locally and is CPU-bound, so it belongs with the
+  // expensive bucket rather than the cheap one.
+  /^\/(analyze|overwatch|plantnet|minimax|housebot|voice)\b/,
 ];
 
 const rateState = new Map(); // ip -> { windowStart, count }
@@ -3452,6 +3454,67 @@ function addDays(iso, n) {
 }
 
 // ─── health ────────────────────────────────────────────────────────────
+
+// ── voice ─────────────────────────────────────────────────────────────────
+// Text-to-speech, synthesised on this machine by Kokoro (see ~/tools/tts).
+// No API key, no per-use cost, and it works with the network unplugged.
+// The bridge is the right place for this even though nothing secret is
+// involved: the model and its Python runtime live outside the repo, so the
+// frontend just asks for audio and never has to know where it came from.
+
+const TTS_DAEMON = process.env.HOMEHUB_TTS_URL || 'http://127.0.0.1:8790';
+
+app.post('/api/voice/speak', async (req, res) => {
+  const text = String(req.body?.text ?? '').trim();
+  if (!text) {
+    return res.status(400).json({ error: 'bad_request', message: 'text is required' });
+  }
+  // Long answers would take a while to synthesise and produce a huge file.
+  const capped = text.slice(0, 1200);
+  const voice = String(req.body?.voice ?? 'af_heart').replace(/[^a-z_]/gi, '') || 'af_heart';
+
+  // Talks to the warm Kokoro daemon, which holds the model in memory. Calling
+  // the CLI instead would pay ~9s of model load on every single reply.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 45_000);
+  try {
+    const upstream = await fetch(`${TTS_DAEMON}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: capped, voice }),
+      signal: ac.signal,
+    });
+    if (!upstream.ok) {
+      const detail = await upstream.text().catch(() => '');
+      console.error('[voice] daemon returned', upstream.status, detail.slice(0, 200));
+      return res.status(503).json({
+        error: 'tts_unavailable',
+        message: 'Local voice engine is not running; the app will use the browser voice.',
+      });
+    }
+    const wav = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(wav);
+  } catch (err) {
+    console.error('[voice] synthesis failed:', err?.message || err);
+    return res.status(503).json({
+      error: 'tts_unavailable',
+      message: 'Local voice engine is not reachable; the app will use the browser voice.',
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+app.get('/api/voice/health', async (_req, res) => {
+  try {
+    const upstream = await fetch(`${TTS_DAEMON}/health`);
+    return res.status(upstream.ok ? 200 : 503).json(await upstream.json());
+  } catch {
+    return res.status(503).json({ ok: false });
+  }
+});
 
 app.get('/healthz', (_req, res) => res.json({
   ok: true,

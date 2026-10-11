@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { bridgeHeaders } from '../utils/bridgeToken';
 
 /**
  * Voice input and output for House Bot.
@@ -36,6 +37,17 @@ interface SpeechRecognitionLike {
   onerror: ((e: any) => void) | null;
   onend: (() => void) | null;
   onstart: (() => void) | null;
+}
+
+/**
+ * Where the bridge lives. Mirrors HouseBot's resolution: an explicitly
+ * configured base wins, otherwise we use our own origin — correct in every
+ * mode, since production is served by the bridge itself.
+ */
+function bridgeBase(): string {
+  const configured = (import.meta as any).env?.VITE_API_BASE_URL || '';
+  if (configured) return configured;
+  return typeof window !== 'undefined' ? window.location.origin : '';
 }
 
 function recognitionCtor(): (new () => SpeechRecognitionLike) | null {
@@ -82,6 +94,10 @@ export interface UseVoice {
   canSpeak: boolean;
   /** Set when the user muted replies, or speech failed. */
   error: string | null;
+  /** Which engine produced the last spoken reply. */
+  engine: 'neural' | 'browser' | null;
+  /** True while a reply is being synthesised. */
+  speaking: boolean;
   startListening: (onFinal: (text: string) => void) => void;
   stopListening: () => void;
   /** Read text aloud. Resolves when playback finishes. */
@@ -90,12 +106,33 @@ export interface UseVoice {
   cancel: () => void;
 }
 
-export function useVoice(): UseVoice {
+/** Play raw WAV bytes. Resolves when playback ends. */
+function playWav(blob: Blob): Promise<void> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const el = new Audio(url);
+    const done = () => {
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+    el.addEventListener('ended', done, { once: true });
+    el.addEventListener('error', done, { once: true });
+    // Autoplay can be refused before any user gesture. Tapping the read-aloud
+    // toggle IS that gesture, so this normally succeeds; if it doesn't, fall
+    // back rather than leaving the user with silence and no explanation.
+    el.play().catch(done);
+  });
+}
+
+export function useVoice(voiceId = 'af_heart'): UseVoice {
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [engine, setEngine] = useState<'neural' | 'browser' | null>(null);
+  const [speaking, setSpeaking] = useState(false);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
   const finalRef = useRef<((text: string) => void) | null>(null);
+  const abortRef = useRef<AbortController>(new AbortController());
   const canListen = speechRecognitionSupported();
   const canSpeak = speechSynthesisSupported();
 
@@ -169,37 +206,70 @@ export function useVoice(): UseVoice {
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    abortRef.current.abort();
+    abortRef.current = new AbortController();
+    setSpeaking(false);
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
   }, []);
 
+  /**
+   * Read text aloud.
+   *
+   * Prefers the local Kokoro daemon (a real neural voice, free, offline) and
+   * silently falls back to the browser's synthesiser if it isn't running. The
+   * fallback matters: the daemon lives outside the repo, so anyone who cloned
+   * this without it must still get working audio.
+   */
   const speak = useCallback((text: string) => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    if (typeof window === 'undefined') return;
     const clean = (text || '').replace(/[*_`#]/g, '').replace(/\s+/g, ' ').trim();
     if (!clean) return;
 
-    // Cancel anything already speaking — otherwise replies queue up and the
-    // user hears the previous answer twice.
-    window.speechSynthesis.cancel();
+    window.speechSynthesis?.cancel();
 
-    const utter = new SpeechSynthesisUtterance(clean);
-    utter.lang = 'en-US';
-    utter.rate = 1.02;   // system voices are a touch slow at 1.0
-    utter.pitch = 1.0;
-    const voice = chooseVoice();
-    if (voice) utter.voice = voice;
+    setSpeaking(true);
+    const token = { cancelled: false };
 
-    // Some browsers load voices asynchronously; re-pick once they arrive.
-    if (!voice && window.speechSynthesis.onvoiceschanged !== null) {
-      window.speechSynthesis.addEventListener(
-        'voiceschanged',
-        () => { const v = chooseVoice(); if (v) utter.voice = v; },
-        { once: true },
-      );
-    }
-    window.speechSynthesis.speak(utter);
-  }, []);
+    (async () => {
+      const base = bridgeBase();
+      if (base) {
+        try {
+          const res = await fetch(`${base}/api/voice/speak`, {
+            method: 'POST',
+            // The bridge is token-gated even for voice — it fronts the paid
+            // APIs, and an open /api/voice would be a free TTS service for
+            // anyone who found the tunnel URL.
+            headers: bridgeHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ text: clean.slice(0, 1200), voice: voiceId }),
+            signal: abortRef.current.signal,
+          });
+          if (res.ok) {
+            const blob = await res.blob();
+            if (!token.cancelled) {
+              setEngine('neural');
+              await playWav(blob);
+              if (!token.cancelled) setSpeaking(false);
+              return;
+            }
+          }
+        } catch {
+          // Daemon not running, or the request was aborted. Fall through.
+        }
+      }
+      if (token.cancelled) return;
+      setEngine('browser');
+      const utter = new SpeechSynthesisUtterance(clean);
+      utter.lang = 'en-US';
+      utter.rate = 1.02;   // system voices are a touch slow at 1.0
+      const voice = chooseVoice();
+      if (voice) utter.voice = voice;
+      utter.onend = () => setSpeaking(false);
+      utter.onerror = () => setSpeaking(false);
+      window.speechSynthesis.speak(utter);
+    })();
+  }, [voiceId]);
 
   const cancel = useCallback(() => {
     stopListening();
@@ -213,7 +283,7 @@ export function useVoice(): UseVoice {
   }, []);
 
   return {
-    listening, interim, canListen, canSpeak, error,
+    listening, interim, canListen, canSpeak, error, engine, speaking,
     startListening, stopListening, speak, stopSpeaking, cancel,
   };
 }
