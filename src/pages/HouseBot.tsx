@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart } from 'lucide-react';
+import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { STARTER_RECIPES } from '../data/recipes';
 import { INDIAN_RECIPES } from '../data/indianRecipes';
@@ -15,6 +15,7 @@ import { applyAgentActions } from '../utils/agentActions';
 import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhotoAttachButton, AttachedImageChip, usePhotoAttach } from '../components/PhotoAttach';
+import { useVoice } from '../hooks/useVoice';
 
 type Msg = {
   from: 'me' | 'bot';
@@ -468,6 +469,27 @@ export function HouseBotPage() {
   const [webMode, setWebMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attach = usePhotoAttach();
+  const voice = useVoice();
+  // Whether replies are read aloud. Off by default: people don't always want
+  // a kitchen that talks back.
+  const [speakReplies, setSpeakReplies] = useState(false);
+
+  // Speak the newest bot reply once it has finished streaming. Keyed off the
+  // message timestamp rather than the stream handler so it works for every
+  // path that can produce a reply (streaming, the recipe generator, web
+  // fallback) instead of only one of them.
+  const lastSpokenTsRef = useRef<number>(0);
+  useEffect(() => {
+    if (!speakReplies) return;
+    const last = [...messages].reverse().find((m) => m.from === 'bot' && m.text.trim());
+    if (!last) return;
+    if (last.ts <= lastSpokenTsRef.current) return;
+    lastSpokenTsRef.current = last.ts;
+    voice.speak(last.text);
+    // voice.speak is stable (useCallback with no deps); including it would be
+    // harmless but makes this effect look like it re-runs on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, speakReplies]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Aborts the in-flight streaming fetch if the component unmounts (user
   // navigates away mid-stream). Without this, setState calls would fire
@@ -980,6 +1002,7 @@ export function HouseBotPage() {
         @keyframes hb-pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(134, 239, 172, 0.45); } 70% { box-shadow: 0 0 0 12px rgba(134, 239, 172, 0); } 100% { box-shadow: 0 0 0 0 rgba(134, 239, 172, 0); } }
         @keyframes hb-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
         @keyframes hb-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        @keyframes hb-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
         @keyframes hb-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
         @keyframes hb-gradient-shift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
         .hb-msg { animation: hb-fade-up 0.32s cubic-bezier(0.16, 1, 0.3, 1) both; }
@@ -1617,6 +1640,97 @@ export function HouseBotPage() {
           zIndex: 2,
         }}
       >
+        {/* Voice status strip: only visible when something is actually
+            happening, so it never adds permanent chrome to the composer. */}
+        {(voice.listening || voice.interim || voice.error) && (
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 720,
+              margin: '0 auto 6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              color: voice.error ? '#fca5a5' : '#cbd5e1',
+            }}
+          >
+            {voice.listening && (
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#ef4444',
+                  animation: 'hb-pulse 1.1s ease-in-out infinite',
+                }}
+              />
+            )}
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {voice.error || (voice.interim ? `\u201c${voice.interim}\u201d` : 'Listening\u2026 tap the mic to stop')}
+            </span>
+            <button
+              type="button"
+              onClick={voice.cancel}
+              aria-label="Cancel voice"
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(148,163,184,0.3)',
+                color: '#cbd5e1',
+                borderRadius: 999,
+                padding: '3px 10px',
+                fontSize: 11,
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* Read replies aloud toggle. Free (browser TTS), so it costs
+            nothing to leave available. */}
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 720,
+            margin: '0 auto 6px',
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const next = !speakReplies;
+              setSpeakReplies(next);
+              if (!next) voice.stopSpeaking();
+              if (next && !voice.canSpeak) {
+                toast('This browser cannot read replies aloud', 'warning');
+              }
+            }}
+            aria-pressed={speakReplies}
+            aria-label={speakReplies ? 'Stop reading replies aloud' : 'Read replies aloud'}
+            title={speakReplies ? 'Stop reading replies aloud' : 'Read replies aloud'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              borderRadius: 999,
+              border: '1px solid rgba(148,163,184,0.28)',
+              background: speakReplies ? 'rgba(34,197,94,0.16)' : 'transparent',
+              color: speakReplies ? '#86efac' : '#94a3b8',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            {speakReplies ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            {speakReplies ? 'Reading aloud' : 'Read aloud'}
+          </button>
+        </div>
+
         <div
           style={{
             width: '100%',
@@ -1722,6 +1836,63 @@ export function HouseBotPage() {
           >
             <Globe size={16} />
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!voice.canListen) {
+                toast('This browser can\u2019t listen — try Chrome or Safari', 'warning');
+                return;
+              }
+              if (voice.listening) {
+                voice.stopListening();
+              } else {
+                voice.cancel();
+                voice.startListening((text) => {
+                  // Put it in the box rather than sending it. Kitchen actions
+                  // are destructive enough ("delete the spinach") that the
+                  // user should always see what was heard before it happens.
+                  setInput((prev) => (prev ? `${prev.trim()} ${text}` : text));
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                });
+              }
+            }}
+            aria-label={voice.listening ? 'Stop listening' : 'Speak your message'}
+            title={
+              voice.canListen
+                ? voice.listening
+                  ? 'Stop listening'
+                  : 'Speak your message'
+                : 'Voice input needs Chrome or Safari'
+            }
+            aria-pressed={voice.listening}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: '50%',
+              border: 'none',
+              background: voice.listening ? 'rgba(239,68,68,0.85)' : 'rgba(51, 65, 85, 0.6)',
+              color: 'white',
+              display: 'grid',
+              placeItems: 'center',
+              cursor: voice.canListen ? 'pointer' : 'not-allowed',
+              flexShrink: 0,
+              boxShadow: voice.listening
+                ? '0 0 22px rgba(239,68,68,0.6), 0 4px 14px rgba(0,0,0,0.3)'
+                : 'none',
+              transition: 'transform 160ms ease, box-shadow 240ms ease',
+            }}
+            {...(voice.listening ? { className: 'hb-send-ready' } : {})}
+            onMouseEnter={(e) => {
+              if (!voice.canListen) return;
+              e.currentTarget.style.transform = 'scale(1.08)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+            }}
+          >
+            {voice.listening ? <MicOff size={16} strokeWidth={2.5} /> : <Mic size={16} strokeWidth={2.5} />}
+          </button>
+
           <button
             type="button"
             onClick={() => void handleSend()}
