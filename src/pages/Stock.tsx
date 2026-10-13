@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { CATEGORY_LIST } from '../utils/categories';
+import { useScrollFade } from '../hooks/useScrollFade';
 import type { CategoryId, StockItem, StockLocation } from '../types';
 import { EmptyState } from '../components/EmptyState';
 import { daysUntil } from '../utils/date';
@@ -86,6 +87,8 @@ export function StockPage() {
     }
     return [...list].sort((a, b) => a.name.localeCompare(b.name));
   }, [stock, statusFilter, locationFilter, category, search, expiringSoonIds]);
+
+  const catFadeRef = useScrollFade<HTMLDivElement>();
 
   return (
     <>
@@ -173,7 +176,7 @@ export function StockPage() {
               Category
             </span>
           </div>
-          <div className="scroll-fade-x flex items-center gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div ref={catFadeRef} className="scroll-fade-x flex items-center gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={() => setCategory('all')}
               className={clsx(

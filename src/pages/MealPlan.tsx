@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useScrollFade } from '../hooks/useScrollFade';
 import {
   CalendarDays, Check, Trash2, X, ShoppingCart, ChefHat, Sparkles,
   Store, Users, ChevronRight, CircleCheck, Timer, Copy,
@@ -344,6 +345,8 @@ export default function MealPlanPage() {
     return { have, total: preview.ingredients.length };
   }, [preview, stock]);
 
+  const catFadeRef = useScrollFade<HTMLDivElement>();
+
   return (
     <div className="mx-auto max-w-6xl px-3 sm:px-4 pb-8 pt-3 sm:pt-4 grid grid-cols-1 lg:grid-cols-[minmax(0,42rem)_17rem] lg:gap-8 lg:items-start">
       {/* On a phone the read-out sits above the plan; on a wide screen it
@@ -422,7 +425,7 @@ export default function MealPlanPage() {
           <p className="text-[11px] text-butter-800/80 dark:text-butter-300/80 mb-2.5">
             You have {rescues[0].uses.length === 1 ? 'something' : 'things'} expiring in the next 3 days.
           </p>
-          <div className="scroll-fade-x flex gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div ref={catFadeRef} className="scroll-fade-x flex gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {rescues.map((r) => (
               <button
                 key={r.recipe.id}

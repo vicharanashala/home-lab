@@ -168,15 +168,22 @@
    * other 9 existed. The fade reads as "there is more this way".
    * Phone-only: on desktop the strips fit, so a fade would only mislead.
    */
-  .scroll-fade-x {
+  /* The fade is driven by data-fade, set by useScrollFade, so it only
+     appears on an edge that genuinely has more content past it. The previous
+     rule always masked the right edge (dimming the last chip even when
+     nothing was hidden) and a media query removed it entirely above 640px —
+     which is exactly where the Stock category row overflowed the most. */
+  .scroll-fade-x[data-fade='right'] {
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%);
     mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%);
   }
-  @media (min-width: 640px) {
-    .scroll-fade-x {
-      -webkit-mask-image: none;
-      mask-image: none;
-    }
+  .scroll-fade-x[data-fade='left'] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 34px);
+    mask-image: linear-gradient(to right, transparent, #000 34px);
+  }
+  .scroll-fade-x[data-fade='both'] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 34px, #000 calc(100% - 34px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent, #000 34px, #000 calc(100% - 34px), transparent 100%);
   }
 
   /* Stat tile hover lift */

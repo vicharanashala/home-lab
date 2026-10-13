@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useScrollFade } from '../hooks/useScrollFade';
 import { useStore } from '../store/useStore';
 import { useNavigate } from 'react-router-dom';
 import { TopBar } from '../components/TopBar';
@@ -71,6 +72,8 @@ export function GroceryPage() {
     toast(`Cleared ${n} purchased item${n === 1 ? '' : 's'}`, 'info');
   };
 
+  const catFadeRef = useScrollFade<HTMLDivElement>();
+
   return (
     <>
       <TopBar title="Grocery List" subtitle={`${pendingCount} to buy · ${purchasedCount} done`} />
@@ -115,7 +118,7 @@ export function GroceryPage() {
               Category
             </span>
           </div>
-          <div className="scroll-fade-x flex items-center gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div ref={catFadeRef} className="scroll-fade-x flex items-center gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={() => setCategory('all')}
               className={clsx(
