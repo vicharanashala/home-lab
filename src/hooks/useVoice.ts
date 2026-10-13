@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { useStore } from '../store/useStore';
+import { requestMicrophone, speechRecognitionSupported } from '../utils/micPermission';
+import type { MicGate } from '../utils/micPermission';
+
+export { speechRecognitionSupported };
 
 /**
  * Voice input and output for House Bot.
@@ -57,10 +61,6 @@ function recognitionCtor(): (new () => SpeechRecognitionLike) | null {
   return w.SpeechRecognition || w.webkitSpeechRecognition || null;
 }
 
-export function speechRecognitionSupported(): boolean {
-  return !!recognitionCtor();
-}
-
 export function speechSynthesisSupported(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window;
 }
@@ -92,6 +92,26 @@ export interface UseVoice {
   interim: string;
   /** False when this browser has no speech recognition. */
   canListen: boolean;
+  /**
+   * WHICH layer is refusing the mic. Callers must branch on this rather than
+   * on `canListen` alone: collapsing them is what made a fully-permitted
+   * Chrome report "Voice input needs Chrome or Safari".
+   */
+  micState: MicGate;
+  /**
+   * Ask for the mic, flip the switch, and start listening once the flip has
+   * actually landed. Resolves true when the microphone is usable.
+   *
+   * The start is deferred on purpose. Calling startListening() straight after
+   * updateSettings() would invoke the callback from the render that captured
+   * `permitted === false` — React has not re-rendered yet — so the grant would
+   * succeed and the recogniser would still refuse. Parking the intent and
+   * letting the effect below fire guarantees the start runs against a callback
+   * built from the new setting.
+   */
+  enableMicrophone: (onFinal: (text: string) => void) => Promise<boolean>;
+  /** True while a permission prompt is open from the mic button. */
+  micBusy: boolean;
   canSpeak: boolean;
   /** Set when the user muted replies, or speech failed. */
   error: string | null;
@@ -130,11 +150,21 @@ function storedVoice(): string {
 }
 
 export function useVoice(voiceId = storedVoice()): UseVoice {
-  const { settings } = useStore();
+  const { settings, updateSettings, toast } = useStore();
   // Respect the Settings switch even on a browser that would happily allow
-  // the mic: turning it off must actually mean off.
-  const permitted = settings.microphoneEnabled !== false;
-  const canListen = permitted && speechRecognitionSupported();
+  // the mic: turning it off must actually mean off. `=== true` matches the
+  // Settings card exactly, so an absent key means off in both places rather
+  // than the card reading it as off and this hook reading it as on.
+  const permitted = settings.microphoneEnabled === true;
+  const hasRecognition = speechRecognitionSupported();
+  // Name the refusing layer instead of collapsing every failure into "no".
+  const micState: MicGate = !hasRecognition
+    ? 'unsupported'
+    : !permitted
+      ? 'off'
+      : 'ready';
+  const canListen = micState === 'ready';
+  const [micBusy, setMicBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +172,8 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
   const [speaking, setSpeaking] = useState(false);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
   const finalRef = useRef<((text: string) => void) | null>(null);
+  /** A start requested by enableMicrophone, waiting for the setting to flip. */
+  const pendingStartRef = useRef<((text: string) => void) | null>(null);
   const abortRef = useRef<AbortController>(new AbortController());
   const canSpeak = speechSynthesisSupported();
 
@@ -154,12 +186,12 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
 
   const startListening = useCallback((onFinal: (text: string) => void) => {
     const Ctor = recognitionCtor();
-    if (!permitted) {
-      setError('Microphone is off. Switch it on in Settings.');
-      return;
-    }
     if (!Ctor) {
       setError('This browser cannot listen. Try Chrome or Safari.');
+      return;
+    }
+    if (!permitted) {
+      setError('The microphone is switched off. Turn it on in Settings, then tap the mic again.');
       return;
     }
     setError(null);
@@ -225,7 +257,11 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
       // start() throws if called while already running; treat as a no-op.
       setError('Could not start the microphone.');
     }
-  }, []);
+    // `permitted` MUST be a dependency. With an empty array this callback was
+    // frozen at its mount value, so switching the microphone on in Settings
+    // re-rendered the button as usable but every tap still hit the stale
+    // "off" branch and refused. That is the dead end this is fixing.
+  }, [permitted]);
 
   const stopSpeaking = useCallback(() => {
     abortRef.current.abort();
@@ -298,6 +334,51 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
     stopSpeaking();
   }, [stopListening, stopSpeaking]);
 
+  /**
+   * Turn the microphone on in one step: ask the browser, verify the grant, and
+   * only then flip our switch. Returns whether House Bot can listen.
+   *
+   * This exists so the mic button can fix itself. Sending a user to Settings
+   * to flip a switch, then returning to a button that may or may not notice,
+   * is how a permitted Chrome ended up looking broken.
+   */
+  const enableMicrophone = useCallback(async (onFinal: (text: string) => void): Promise<boolean> => {
+    if (!speechRecognitionSupported()) {
+      setError('This browser cannot listen. Try Chrome or Safari.');
+      return false;
+    }
+    setMicBusy(true);
+    try {
+      const res = await requestMicrophone();
+      if (!res.ok) {
+        setError(res.reason ?? 'The microphone is blocked.');
+        toast(res.reason ?? 'The microphone is blocked.', 'warning');
+        // Never leave the switch reading "on" while the mic is unusable.
+        updateSettings({ microphoneEnabled: false });
+        return false;
+      }
+      setError(null);
+      // Park the intent and let the effect below start it, so the recogniser is
+      // launched by a callback built AFTER the setting flipped. Calling
+      // startListening() from here would reuse the current render's closure,
+      // which still holds permitted === false, and refuse all over again.
+      pendingStartRef.current = onFinal;
+      updateSettings({ microphoneEnabled: true });
+      return true;
+    } finally {
+      setMicBusy(false);
+    }
+  }, [toast, updateSettings]);
+
+  // Start the parked recognition once the switch has genuinely flipped.
+  useEffect(() => {
+    const onFinal = pendingStartRef.current;
+    if (!onFinal) return;
+    if (micState !== 'ready') return;
+    pendingStartRef.current = null;
+    startListening(onFinal);
+  }, [micState, startListening]);
+
   // Never leave the mic hot when the page goes away.
   useEffect(() => () => {
     try { recRef.current?.abort(); } catch { /* noop */ }
@@ -306,6 +387,7 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
 
   return {
     listening, interim, canListen, canSpeak, error, engine, speaking,
+    micState, micBusy, enableMicrophone,
     startListening, stopListening, speak, stopSpeaking, cancel,
   };
 }

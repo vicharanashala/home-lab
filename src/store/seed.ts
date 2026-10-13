@@ -18,5 +18,10 @@ export const seedState = (): AppState => ({
     dietaryPreference: 'no-preference',
     allergies: [],
     theme: 'system',
+    // Explicit, not omitted. Leaving this key out made the value `undefined`,
+    // which the Settings card read as OFF while the voice hook read it as ON —
+    // the switch said "Microphone off" on a mic that was live. One rule now:
+    // absent or false means off, and only an explicit true enables it.
+    microphoneEnabled: false,
   },
 });

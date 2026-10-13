@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Mic, MicOff, ShieldAlert, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
-
-type MicPermission = 'granted' | 'denied' | 'prompt' | 'unknown';
+import { micPermissionState, requestMicrophone, watchMicPermission } from '../utils/micPermission';
+import type { MicPermission } from '../utils/micPermission';
 
 /**
  * Microphone switch for House Bot.
@@ -21,71 +21,40 @@ type MicPermission = 'granted' | 'denied' | 'prompt' | 'unknown';
  */
 export function MicrophoneCard() {
   const { settings, updateSettings, toast } = useStore();
-  const on = !!settings.microphoneEnabled;
+  // `=== true`, not truthiness: this and useVoice must resolve an absent key
+  // the same way, or the card says "off" while House Bot is live.
+  const on = settings.microphoneEnabled === true;
   const [perm, setPerm] = useState<MicPermission>('unknown');
   const [busy, setBusy] = useState(false);
 
   const enabled = on;
 
   const refresh = useCallback(async () => {
-    if (typeof navigator === 'undefined') return;
-    try {
-      const st = await (navigator as any).permissions?.query?.({ name: 'microphone' });
-      if (st) {
-        setPerm(st.state as MicPermission);
-        st.onchange = () => setPerm(st.state as MicPermission);
-      }
-    } catch {
-      setPerm('unknown'); // Safari throws for microphone; not an error here.
-    }
+    setPerm(await micPermissionState());
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh, enabled]);
+  useEffect(() => {
+    void refresh();
+    // The user can flip the padlock without reloading; follow it live so the
+    // card never shows a stale "blocked".
+    return watchMicPermission(setPerm);
+  }, [refresh, enabled]);
 
   const turnOn = async () => {
     setBusy(true);
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setPerm('denied');
-        toast('This device cannot record audio', 'warning');
-        return;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Release it at once — holding the mic here would leave a recording
-      // indicator on and would fight House Bot for the device.
-      stream.getTracks().forEach((t) => t.stop());
-
-      // Re-read the permission rather than assuming the grant took. If the
-      // browser still reports a block, leave the switch OFF: a setting that
-      // says "on" while the mic is unusable just moves the confusion from the
-      // settings page to House Bot.
-      let state: MicPermission = 'granted';
-      try {
-        const st = await (navigator as any).permissions?.query?.({ name: 'microphone' });
-        if (st?.state) state = st.state as MicPermission;
-      } catch { /* Safari throws for microphone; trust the grant */ }
-
-      if (state === 'denied') {
-        setPerm('denied');
+      // Shared with House Bot's mic button, so the two can never disagree
+      // about what "on" means or how a blocked microphone is explained.
+      const res = await requestMicrophone();
+      setPerm(res.state);
+      if (!res.ok) {
+        // Never leave the switch looking on when the browser said no.
         updateSettings({ microphoneEnabled: false });
-        toast('Still blocked — allow the microphone from the padlock icon', 'warning');
+        toast(res.reason ?? 'Microphone blocked', 'warning');
         return;
       }
-
-      setPerm(state);
       updateSettings({ microphoneEnabled: true });
       toast('Microphone on — House Bot can listen now', 'success');
-    } catch (err) {
-      const name = (err as { name?: string })?.name || '';
-      setPerm(name === 'NotFoundError' ? 'denied' : 'denied');
-      // Never leave the switch looking on when the browser said no.
-      updateSettings({ microphoneEnabled: false });
-      toast(
-        name === 'NotFoundError'
-          ? 'No microphone found on this device'
-          : 'Microphone blocked — allow it from the padlock icon, then try again',
-        'warning',
-      );
     } finally {
       setBusy(false);
       void refresh();
