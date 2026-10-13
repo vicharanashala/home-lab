@@ -103,6 +103,9 @@ export function MicrophoneCard() {
   // needed the padlock steps. A block has to be explained whether or not the
   // switch happens to be on.
   const blocked = perm === 'denied';
+  /** On AND actually usable. The pill, the knob and aria-checked must all
+   *  agree, or the switch contradicts itself on screen. */
+  const effective = on && !blocked;
 
   return (
     <section className="card p-5">
@@ -127,7 +130,7 @@ export function MicrophoneCard() {
         onClick={() => (on ? turnOff() : void turnOn())}
         className={clsx(
           'w-full flex items-center gap-3 rounded-2xl p-3 text-left border transition-all active:scale-[.98] disabled:opacity-60',
-          on && !blocked
+          effective
             ? 'bg-sage-50 dark:bg-sage-900/30 border-sage-200 dark:border-sage-800'
             : blocked
               ? 'bg-tomato-50/60 dark:bg-tomato-900/20 border-tomato-200 dark:border-tomato-800'
@@ -137,19 +140,19 @@ export function MicrophoneCard() {
         <span
           className={clsx(
             'w-9 h-9 rounded-xl grid place-items-center shrink-0',
-            on && !blocked
+            effective
               ? 'bg-sage-600 text-white'
               : blocked
                 ? 'bg-tomato-100 dark:bg-tomato-900/40 text-tomato-700 dark:text-tomato-300'
                 : 'bg-sage-100 dark:bg-ink-700 text-sage-600 dark:text-ink-200',
           )}
         >
-          {blocked ? <ShieldAlert size={16} /> : on ? <Mic size={16} /> : <MicOff size={16} />}
+          {blocked ? <ShieldAlert size={16} /> : effective ? <Mic size={16} /> : <MicOff size={16} />}
         </span>
 
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm text-sage-900 dark:text-cream-50">
-            {busy ? 'Waiting for permission…' : on ? 'Microphone on' : 'Microphone off'}
+            {busy ? 'Waiting for permission…' : effective ? 'Microphone on' : 'Microphone off'}
           </div>
           <div
             className={clsx(
@@ -171,19 +174,22 @@ export function MicrophoneCard() {
           aria-hidden="true"
           className={clsx(
             'shrink-0 w-9 h-5 rounded-full p-0.5 transition-colors',
-            on && !blocked ? 'bg-sage-600' : blocked ? 'bg-tomato-500' : 'bg-sage-200 dark:bg-ink-700',
+            effective ? 'bg-sage-600' : blocked ? 'bg-tomato-500' : 'bg-sage-200 dark:bg-ink-700',
           )}
         >
+          {/* Position tracks the EFFECTIVE state, not the stored one. Keying
+              the knob off `on` alone put it on the right while the pill was
+              red, so a blocked mic looked switched on. */}
           <span
             className={clsx(
               'block w-4 h-4 rounded-full bg-white shadow-soft transition-transform',
-              on ? 'translate-x-4' : 'translate-x-0',
+              effective ? 'translate-x-4' : 'translate-x-0',
             )}
           />
         </span>
       </button>
 
-      {on && !blocked && (
+      {effective && (
         <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-sage-600 dark:text-sage-300">
           <Check size={12} />
           Ready — look for the mic button in House Bot.
