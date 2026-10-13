@@ -44,6 +44,7 @@ import {
 import { canVibrate, hapticSuccess } from '../utils/haptics';
 import { FoodTrainerModal } from '../components/FoodTrainerModal';
 import { MicrophoneCard } from '../components/MicrophoneCard';
+import { VoicePickerCard } from '../components/VoicePickerCard';
 import { countByLabel } from '../utils/foodTrainer';
 import { headCount, suggestedPortionId, PORTION_LEVELS } from '../utils/portions';
 
@@ -544,6 +545,7 @@ export function SettingsPage() {
           </ul>
 
           <MicrophoneCard />
+          <VoicePickerCard />
 
           {/* Try-it-out buttons */}
           <div className="mt-4 pt-4 border-t border-sage-100 dark:border-ink-700">

@@ -124,7 +124,11 @@ function playWav(blob: Blob): Promise<void> {
   });
 }
 
-export function useVoice(voiceId = 'af_heart'): UseVoice {
+function storedVoice(): string {
+  try { return localStorage.getItem('homehub.voice') || 'hf_alpha'; } catch { return 'hf_alpha'; }
+}
+
+export function useVoice(voiceId = storedVoice()): UseVoice {
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState('');
   const [error, setError] = useState<string | null>(null);
