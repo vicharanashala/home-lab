@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridgeHeaders } from '../utils/bridgeToken';
+import { useStore } from '../store/useStore';
 
 /**
  * Voice input and output for House Bot.
@@ -129,6 +130,11 @@ function storedVoice(): string {
 }
 
 export function useVoice(voiceId = storedVoice()): UseVoice {
+  const { settings } = useStore();
+  // Respect the Settings switch even on a browser that would happily allow
+  // the mic: turning it off must actually mean off.
+  const permitted = settings.microphoneEnabled !== false;
+  const canListen = permitted && speechRecognitionSupported();
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +143,6 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
   const recRef = useRef<SpeechRecognitionLike | null>(null);
   const finalRef = useRef<((text: string) => void) | null>(null);
   const abortRef = useRef<AbortController>(new AbortController());
-  const canListen = speechRecognitionSupported();
   const canSpeak = speechSynthesisSupported();
 
   const stopListening = useCallback(() => {
@@ -149,6 +154,10 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
 
   const startListening = useCallback((onFinal: (text: string) => void) => {
     const Ctor = recognitionCtor();
+    if (!permitted) {
+      setError('Microphone is off. Switch it on in Settings.');
+      return;
+    }
     if (!Ctor) {
       setError('This browser cannot listen. Try Chrome or Safari.');
       return;

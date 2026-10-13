@@ -92,6 +92,10 @@ export interface AppSettings {
   /** Who eats at home. Drives the default portion size for planned recipes.
    *  Optional so saves written before this existed still load. */
   household?: HouseholdProfile;
+  /** Whether House Bot may use the microphone. Distinct from the browser's own
+   *  permission: turning this off is instant and always allowed, whereas a
+   *  browser grant cannot be revoked from code. */
+  microphoneEnabled?: boolean;
 }
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'sweet';

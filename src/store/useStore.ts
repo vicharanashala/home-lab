@@ -46,6 +46,7 @@ const loadFromStorage = (): AppState | null => {
       allergies: parsed.settings.allergies ?? [],
       theme: parsed.settings.theme ?? 'system',
       showChainHq: parsed.settings.showChainHq ?? false,
+      microphoneEnabled: parsed.settings.microphoneEnabled ?? false,
     };
     // Note: `hasSeenConsents` is intentionally NOT defaulted — if it's missing
     // from localStorage we know the user existed before this feature shipped,
@@ -811,6 +812,7 @@ const clearAllData = () => {
         expiringSoonDays: 3,
         theme: 'system',
         showChainHq: false,
+        microphoneEnabled: false,
       },
     },
   }));

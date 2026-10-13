@@ -1,101 +1,108 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Mic, MicOff, Check, ShieldAlert } from 'lucide-react';
+import { Mic, MicOff, ShieldAlert, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
 
-type MicState = 'granted' | 'denied' | 'prompt' | 'unsupported';
+type MicPermission = 'granted' | 'denied' | 'prompt' | 'unknown';
 
 /**
- * Microphone permission, managed properly.
+ * Microphone switch for House Bot.
  *
- * Speech recognition is the only part of HomeHub that needs a device
- * permission, and Chrome *remembers* a denial for the whole origin — so
- * after one accidental "Block" the mic simply never works again and the only
- * symptom is a failure inside House Bot. This card makes it fixable: it shows
- * the current state and asks for the mic from Settings, where the user can
- * see what they are agreeing to.
+ * Two separate things are in play and the card keeps them distinct:
+ *
+ *  - THIS toggle (settings.microphoneEnabled). Ours. Flipping it is instant,
+ *    always works, and is what House Bot actually obeys.
+ *  - The browser's own grant. Theirs. Once denied it is remembered for the
+ *    whole origin and cannot be cleared from code — only from the padlock
+ *    menu — so the card has to say so plainly rather than looking broken.
+ *
+ * Turning the toggle on therefore *asks* for the browser grant. If the browser
+ * refuses, the switch snaps back off instead of pretending it worked.
  */
 export function MicrophoneCard() {
-  const { toast } = useStore();
-  const [state, setState] = useState<MicState>('prompt');
+  const { settings, updateSettings, toast } = useStore();
+  const on = !!settings.microphoneEnabled;
+  const [perm, setPerm] = useState<MicPermission>('unknown');
   const [busy, setBusy] = useState(false);
+
+  const enabled = on;
 
   const refresh = useCallback(async () => {
     if (typeof navigator === 'undefined') return;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setState('unsupported');
-      return;
-    }
     try {
-      // Not supported in every browser; where it is missing we fall back to
-      // simply trying getUserMedia when the user asks.
-      const status = await (navigator as any).permissions?.query?.({ name: 'microphone' });
-      if (status) {
-        setState(status.state as MicState);
-        status.onchange = () => setState(status.state as MicState);
+      const st = await (navigator as any).permissions?.query?.({ name: 'microphone' });
+      if (st) {
+        setPerm(st.state as MicPermission);
+        st.onchange = () => setPerm(st.state as MicPermission);
       }
     } catch {
-      /* Safari throws on permissions.query for microphone — leave as-is */
+      setPerm('unknown'); // Safari throws for microphone; not an error here.
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh, enabled]);
 
-  const request = useCallback(async () => {
+  const turnOn = async () => {
     setBusy(true);
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setPerm('denied');
+        toast('This device cannot record audio', 'warning');
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Release it immediately. Holding the mic open here would show a
-      // recording indicator for no reason and fight House Bot for the device.
+      // Release it at once — holding the mic here would leave a recording
+      // indicator on and would fight House Bot for the device.
       stream.getTracks().forEach((t) => t.stop());
-      // Deliberately NOT re-reading navigator.permissions here. On browsers
-      // where permissions.query for microphone is unreliable (Safari) or lags,
-      // that would immediately overwrite the successful grant and flip the
-      // card back to blocked — which is exactly the confusion this card is
-      // meant to remove.
-      setState('granted');
-      toast('Microphone ready — you can talk to House Bot now', 'success');
+
+      // Re-read the permission rather than assuming the grant took. If the
+      // browser still reports a block, leave the switch OFF: a setting that
+      // says "on" while the mic is unusable just moves the confusion from the
+      // settings page to House Bot.
+      let state: MicPermission = 'granted';
+      try {
+        const st = await (navigator as any).permissions?.query?.({ name: 'microphone' });
+        if (st?.state) state = st.state as MicPermission;
+      } catch { /* Safari throws for microphone; trust the grant */ }
+
+      if (state === 'denied') {
+        setPerm('denied');
+        updateSettings({ microphoneEnabled: false });
+        toast('Still blocked — allow the microphone from the padlock icon', 'warning');
+        return;
+      }
+
+      setPerm(state);
+      updateSettings({ microphoneEnabled: true });
+      toast('Microphone on — House Bot can listen now', 'success');
     } catch (err) {
       const name = (err as { name?: string })?.name || '';
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        setState('denied');
-        toast('Microphone was blocked — allow it in the padlock menu, then tap again', 'warning');
-      } else if (name === 'NotFoundError') {
-        setState('unsupported');
-        toast('No microphone found on this device', 'warning');
-      } else {
-        setState('prompt');
-        toast('Could not ask for the microphone just now', 'warning');
-      }
+      setPerm(name === 'NotFoundError' ? 'denied' : 'denied');
+      // Never leave the switch looking on when the browser said no.
+      updateSettings({ microphoneEnabled: false });
+      toast(
+        name === 'NotFoundError'
+          ? 'No microphone found on this device'
+          : 'Microphone blocked — allow it from the padlock icon, then try again',
+        'warning',
+      );
     } finally {
       setBusy(false);
+      void refresh();
     }
-  }, [refresh, toast]);
-
-  const LABELS: Record<MicState, { title: string; blurb: string; tone: string }> = {
-    granted: {
-      title: 'Microphone allowed',
-      blurb: 'Tap the mic in House Bot to talk to it.',
-      tone: 'text-sage-700 dark:text-sage-300',
-    },
-    prompt: {
-      title: 'Allow microphone',
-      blurb: 'Needed to talk to House Bot. Audio is sent to the speech recogniser and never stored by HomeHub.',
-      tone: 'text-sage-500 dark:text-ink-300',
-    },
-    denied: {
-      title: 'Microphone is blocked',
-      blurb: 'Tap the padlock in the address bar, set Microphone to Allow, then come back and tap this again.',
-      tone: 'text-tomato-600 dark:text-tomato-300',
-    },
-    unsupported: {
-      title: 'No microphone available',
-      blurb: 'This device or browser cannot record audio.',
-      tone: 'text-tomato-600 dark:text-tomato-300',
-    },
   };
-  const info = LABELS[state];
-  const done = state === 'granted';
+
+  const turnOff = () => {
+    updateSettings({ microphoneEnabled: false });
+    toast('Microphone off', 'info');
+  };
+
+  // Deliberately NOT `on && ...`: when the browser has blocked the mic the
+  // switch is off, so gating on `on` meant the card fell back to the generic
+  // "your browser will ask permission" copy at exactly the moment the user
+  // needed the padlock steps. A block has to be explained whether or not the
+  // switch happens to be on.
+  const blocked = perm === 'denied';
 
   return (
     <section className="card p-5">
@@ -106,21 +113,23 @@ export function MicrophoneCard() {
         <div>
           <h3 className="font-display font-bold text-base text-sage-900 dark:text-cream-50">Microphone</h3>
           <p className="text-xs text-sage-500 dark:text-ink-300">
-            Talk to House Bot by voice.
+            Let House Bot listen when you talk to it.
           </p>
         </div>
       </div>
 
       <button
         type="button"
-        onClick={request}
-        disabled={busy || state === 'unsupported'}
-        aria-label={done ? 'Microphone allowed' : 'Allow microphone'}
+        role="switch"
+        aria-checked={on && !blocked}
+        aria-label="Microphone"
+        disabled={busy}
+        onClick={() => (on ? turnOff() : void turnOn())}
         className={clsx(
           'w-full flex items-center gap-3 rounded-2xl p-3 text-left border transition-all active:scale-[.98] disabled:opacity-60',
-          done
+          on && !blocked
             ? 'bg-sage-50 dark:bg-sage-900/30 border-sage-200 dark:border-sage-800'
-            : state === 'denied' || state === 'unsupported'
+            : blocked
               ? 'bg-tomato-50/60 dark:bg-tomato-900/20 border-tomato-200 dark:border-tomato-800'
               : 'bg-white dark:bg-ink-800 border-sage-200 dark:border-ink-700',
         )}
@@ -128,37 +137,58 @@ export function MicrophoneCard() {
         <span
           className={clsx(
             'w-9 h-9 rounded-xl grid place-items-center shrink-0',
-            done
+            on && !blocked
               ? 'bg-sage-600 text-white'
-              : state === 'denied' || state === 'unsupported'
+              : blocked
                 ? 'bg-tomato-100 dark:bg-tomato-900/40 text-tomato-700 dark:text-tomato-300'
                 : 'bg-sage-100 dark:bg-ink-700 text-sage-600 dark:text-ink-200',
           )}
         >
-          {state === 'denied' || state === 'unsupported' ? (
-            <ShieldAlert size={16} />
-          ) : done ? (
-            <Check size={16} />
-          ) : (
-            <MicOff size={16} />
-          )}
+          {blocked ? <ShieldAlert size={16} /> : on ? <Mic size={16} /> : <MicOff size={16} />}
         </span>
 
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm text-sage-900 dark:text-cream-50">
-            {busy ? 'Asking your browser…' : info.title}
+            {busy ? 'Waiting for permission…' : on ? 'Microphone on' : 'Microphone off'}
           </div>
-          <div className={clsx('text-[11px] mt-0.5 leading-snug', info.tone)}>
-            {info.blurb}
+          <div
+            className={clsx(
+              'text-[11px] mt-0.5 leading-snug',
+              blocked ? 'text-tomato-600 dark:text-tomato-300' : 'text-sage-500 dark:text-ink-300',
+            )}
+          >
+            {blocked
+              ? 'Your browser is blocking it. Tap the padlock in the address bar, set Microphone to Allow, then switch this on again.'
+              : on
+                ? 'House Bot will listen while you talk. Audio is never stored by HomeHub.'
+                : blocked
+                  ? 'Your browser is blocking the microphone, so switching this on cannot work yet.'
+                  : 'Switch on to talk to House Bot. Your browser will ask permission.'}
           </div>
         </div>
 
-        {state === 'prompt' && !busy && (
-          <span className="shrink-0 rounded-lg bg-sage-700 px-2.5 py-1 text-[11px] font-bold text-white">
-            Allow
-          </span>
-        )}
+        <span
+          aria-hidden="true"
+          className={clsx(
+            'shrink-0 w-9 h-5 rounded-full p-0.5 transition-colors',
+            on && !blocked ? 'bg-sage-600' : blocked ? 'bg-tomato-500' : 'bg-sage-200 dark:bg-ink-700',
+          )}
+        >
+          <span
+            className={clsx(
+              'block w-4 h-4 rounded-full bg-white shadow-soft transition-transform',
+              on ? 'translate-x-4' : 'translate-x-0',
+            )}
+          />
+        </span>
       </button>
+
+      {on && !blocked && (
+        <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-sage-600 dark:text-sage-300">
+          <Check size={12} />
+          Ready — look for the mic button in House Bot.
+        </p>
+      )}
     </section>
   );
 }
