@@ -11,6 +11,7 @@ export interface VoiceGroup {
 }
 
 const FALLBACK_GROUPS: VoiceGroup[] = [
+  { label: 'Mixed (recommended)', voices: ['mixed'] },
   { label: 'Indian / Hindi (female)', voices: ['hf_alpha', 'hf_beta'] },
   { label: 'Indian / Hindi (male)', voices: ['hm_omega', 'hm_psi'] },
   { label: 'American (female)', voices: ['af_heart', 'af_bella', 'af_nicole', 'af_sarah', 'af_sky'] },
@@ -20,6 +21,7 @@ const FALLBACK_GROUPS: VoiceGroup[] = [
 ];
 
 const PRETTY: Record<string, string> = {
+  mixed: 'Indian dishes, English words',
   hf_alpha: 'Aditi', hf_beta: 'Priya',
   hm_omega: 'Arjun', hm_psi: 'Kabir',
   af_heart: 'Ava', af_bella: 'Bella', af_nicole: 'Nina', af_sarah: 'Sarah', af_sky: 'Skye',
@@ -140,10 +142,10 @@ export function VoicePickerCard() {
       </div>
 
       <p className="mt-3 text-[11px] leading-relaxed text-sage-500 dark:text-ink-400">
-        The Hindi voices say dish names the way they&rsquo;re actually said in a
-        kitchen — &ldquo;palak paneer&rdquo; and &ldquo;samosa&rdquo; land far closer
-        than with an American voice. Common Indian dish names are also respelled
-        automatically so they aren&rsquo;t mangled.
+        <strong className="text-sage-700 dark:text-cream-100">Mixed</strong> says
+        Indian dish names with an Indian voice (&ldquo;dal makhani&rdquo;) and the
+        surrounding English with an English one. Pick a single voice instead if
+        you&rsquo;d rather hear one consistent tone throughout.
       </p>
     </section>
   );

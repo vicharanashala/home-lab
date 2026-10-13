@@ -125,7 +125,7 @@ function playWav(blob: Blob): Promise<void> {
 }
 
 function storedVoice(): string {
-  try { return localStorage.getItem('homehub.voice') || 'hf_alpha'; } catch { return 'hf_alpha'; }
+  try { return localStorage.getItem('homehub.voice') || 'mixed'; } catch { return 'mixed'; }
 }
 
 export function useVoice(voiceId = storedVoice()): UseVoice {
