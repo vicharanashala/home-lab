@@ -479,11 +479,21 @@ export function HouseBotPage() {
   // path that can produce a reply (streaming, the recipe generator, web
   // fallback) instead of only one of them.
   const lastSpokenTsRef = useRef<number>(0);
+  // Armed only after the user has opted in, so enabling doesn't recite history.
+  const armedRef = useRef(false);
   useEffect(() => {
     if (!speakReplies) return;
     const last = [...messages].reverse().find((m) => m.from === 'bot' && m.text.trim());
     if (!last) return;
     if (last.ts <= lastSpokenTsRef.current) return;
+    // Flipping the toggle on would otherwise immediately read out the whole
+    // welcome message, which is a paragraph long and not what anyone wants
+    // when they are enabling speech for the FIRST reply.
+    if (!armedRef.current) {
+      lastSpokenTsRef.current = last.ts; // mark seen, don't speak it
+      armedRef.current = true;
+      return;
+    }
     lastSpokenTsRef.current = last.ts;
     voice.speak(last.text);
     // voice.speak is stable (useCallback with no deps); including it would be
@@ -1728,6 +1738,22 @@ export function HouseBotPage() {
           >
             {speakReplies ? <Volume2 size={13} /> : <VolumeX size={13} />}
             {speakReplies ? 'Reading aloud' : 'Read aloud'}
+            {speakReplies && (
+              <span
+                className="ml-1 rounded-full px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide"
+                style={{
+                  background: voice.engine === 'neural' ? 'rgba(34,197,94,0.2)' : 'rgba(248,113,113,0.2)',
+                  color: voice.engine === 'neural' ? '#86efac' : '#fca5a5',
+                }}
+                title={
+                  voice.engine === 'neural'
+                    ? 'Using the local Kokoro neural voice'
+                    : 'Fell back to the browser voice — the local voice engine is not reachable'
+                }
+              >
+                {voice.engine === 'neural' ? 'Neural' : voice.engine === 'browser' ? 'Fallback' : '—'}
+              </span>
+            )}
           </button>
         </div>
 
