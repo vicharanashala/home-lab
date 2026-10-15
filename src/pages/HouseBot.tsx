@@ -1677,7 +1677,18 @@ export function HouseBotPage() {
                 }}
               />
             )}
-            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                // An error must wrap. Clipping it with an ellipsis cut off
+                // exactly the part the user needs — the "allow the mic" steps
+                // — leaving a truncated sentence they could not act on.
+                ...(voice.error
+                  ? { whiteSpace: 'normal', overflow: 'visible' }
+                  : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }),
+              }}
+            >
               {voice.error || (voice.interim ? `\u201c${voice.interim}\u201d` : 'Listening\u2026 tap the mic to stop')}
             </span>
             <button

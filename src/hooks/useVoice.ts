@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { useStore } from '../store/useStore';
-import { requestMicrophone, speechRecognitionSupported } from '../utils/micPermission';
+import { blockedReason, requestMicrophone, speechRecognitionSupported } from '../utils/micPermission';
 import type { MicGate } from '../utils/micPermission';
 
 export { speechRecognitionSupported };
@@ -235,7 +235,9 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
       }
       setError(
         code === 'not-allowed' || code === 'service-not-allowed'
-          ? 'Microphone is blocked for this site. Tap the padlock in the address bar, set Microphone to Allow, then try again.'
+          // Same wording as the Settings card and the grant path, so the fix
+          // is identical no matter which surface reports the block.
+          ? blockedReason()
           : code === 'no-speech'
             ? "I didn't catch that."
             : code

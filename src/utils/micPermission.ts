@@ -48,8 +48,23 @@ export async function micPermissionState(): Promise<MicPermission> {
   return 'unknown';
 }
 
-const BLOCKED =
-  'Your browser is blocking the microphone. Tap the padlock in the address bar, set Microphone to Allow, then try again.';
+/**
+ * Why the mic is blocked, in terms the user can act on.
+ *
+ * The site is named on purpose. Chrome remembers a microphone decision PER
+ * ORIGIN, so "allow it in Chrome" is ambiguous when the app has been opened
+ * on a Tailscale hostname, on localhost, and on a LAN address — allowing one
+ * does nothing for the others, and the failure looks identical every time.
+ */
+export function blockedReason(): string {
+  const host = typeof window !== 'undefined' ? window.location.host : 'this site';
+  return (
+    `Your browser is blocking the microphone for ${host}. ` +
+    'Click the padlock icon just left of the address, set Microphone to Allow, ' +
+    'then tap the mic again. If it already says Block, use Reset permissions — ' +
+    'Chrome will not ask again once it has remembered a block.'
+  );
+}
 
 export interface MicRequest {
   ok: boolean;
@@ -103,7 +118,7 @@ export async function requestMicrophone(): Promise<MicRequest> {
     if (name === 'NotFoundError') {
       return { ok: false, state: 'denied', reason: 'No microphone found on this device.' };
     }
-    return { ok: false, state: 'denied', reason: BLOCKED };
+    return { ok: false, state: 'denied', reason: blockedReason() };
   }
 
   // Release immediately: holding the track would leave a recording indicator
@@ -111,6 +126,6 @@ export async function requestMicrophone(): Promise<MicRequest> {
   stream.getTracks().forEach((t) => t.stop());
 
   const state = await micPermissionState();
-  if (state === 'denied') return { ok: false, state, reason: BLOCKED };
+  if (state === 'denied') return { ok: false, state, reason: blockedReason() };
   return { ok: true, state };
 }
