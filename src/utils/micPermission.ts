@@ -62,7 +62,7 @@ export function blockedReason(): string {
     `Your browser is blocking the microphone for ${host}. ` +
     'Click the padlock icon just left of the address, set Microphone to Allow, ' +
     'then tap the mic again. If it already says Block, use Reset permissions — ' +
-    'Chrome will not ask again once it has remembered a block.'
+    'browsers will not ask again once they have remembered a block.'
   );
 }
 

@@ -9,7 +9,7 @@
 # Set HH_NO_OPEN=1 to start everything without opening a browser.
 
 set -u
-ROOT="/Users/adhyathmika/Desktop/homehub-bundle"
+ROOT="/Users/adhyathmika/homehub"
 URL="https://narayana.tailac25b4.ts.net"
 BRIDGE_PORT=8789
 VOICE_PORT=8790

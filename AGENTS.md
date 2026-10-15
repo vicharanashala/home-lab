@@ -17,7 +17,7 @@ uncommitted and gets lost or forgotten.
 ### How
 
 ```bash
-cd /Users/adhyathmika/Desktop/homehub-bundle
+cd /Users/adhyathmika/homehub
 git add -A
 git commit -m "<clear description of what changed and why>"
 ```
