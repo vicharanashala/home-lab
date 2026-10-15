@@ -93,6 +93,17 @@ export interface Toast {
   undo?: () => void;
 }
 
+/** What an import actually brought in, so the UI can report it honestly. */
+export interface ImportSummary {
+  grocery: number;
+  stock: number;
+  mealLogs: number;
+  recipes: number;
+}
+
+/** Bumped when the backup format changes, so an old file is rejected loudly. */
+export const BACKUP_VERSION = 1;
+
 export interface UseStore extends AppState {
   // Grocery
   addGrocery: (input: {
@@ -113,6 +124,16 @@ export interface UseStore extends AppState {
   updateSettings: (patch: Partial<AppSettings>) => void;
   /** Wipes grocery + stock and resets onboarding. Atomic — survives StrictMode. */
   clearAllData: () => void;
+  /**
+   * Replaces the user's data from an exported backup file.
+   *
+   * This is the only way data crosses between two browser origins. Storage is
+   * per-origin, so the same app reached at a Tailscale hostname and at
+   * localhost holds two completely separate copies — with no way for one to
+   * read the other. An export/import pair is what makes that survivable, and
+   * it is also the only backup of a household's data that exists at all.
+   */
+  importAppData: (raw: string) => { ok: true; counts: ImportSummary } | { ok: false; error: string };
   // Meal logs
   addMealLog: (input: {
     mealType: MealType;
@@ -820,6 +841,99 @@ const clearAllData = () => {
 
 const toast: UseStore['toast'] = (message, kind, undo) => pushToast(message, kind, undo);
 
+/* -------------------------------------------------------------------------- */
+/*  Backup: export / import                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Shape written by the Download button. */
+export interface BackupFile {
+  app: string;
+  version: number;
+  exportedAt: string;
+  data: Pick<AppState, 'grocery' | 'stock' | 'mealLogs' | 'recipes' | 'mealPlan' | 'settings'>;
+}
+
+/** The whole backup as a downloadable string. */
+export const exportAppData = (): string => {
+  const app = getState().app;
+  const file: BackupFile = {
+    app: 'homehub',
+    version: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    data: {
+      grocery: app.grocery,
+      stock: app.stock,
+      mealLogs: app.mealLogs,
+      recipes: app.recipes,
+      mealPlan: app.mealPlan,
+      settings: app.settings,
+    },
+  };
+  return JSON.stringify(file, null, 2);
+};
+
+const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+
+const importAppData: UseStore['importAppData'] = (raw) => {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "That file isn't valid JSON — it may not be a HomeHub backup." };
+  }
+
+  const data = parsed?.data;
+  if (!data || typeof data !== 'object') {
+    return { ok: false, error: 'No HomeHub data found in that file.' };
+  }
+  if (parsed.app !== 'homehub') {
+    return { ok: false, error: "That file wasn't exported by HomeHub." };
+  }
+  if (typeof parsed.version !== 'number' || parsed.version > BACKUP_VERSION) {
+    return {
+      ok: false,
+      error: `That backup is from a newer version of HomeHub (v${parsed.version}). Update the app first.`,
+    };
+  }
+
+  // Keep the built-in recipe set as a floor: a backup with no recipes would
+  // otherwise leave the Log-a-meal picker empty on a fresh install.
+  const imported: Recipe[] = arr<Recipe>(data.recipes);
+  const recipes = imported.length ? imported : BUILT_IN_RECIPES;
+
+  const grocery = arr<GroceryItem>(data.grocery);
+  const stock = arr<StockItem>(data.stock);
+  const mealLogs = arr<MealLog>(data.mealLogs);
+  const settings = (data.settings && typeof data.settings === 'object'
+    ? data.settings
+    : {}) as AppSettings;
+
+  setState((s) => ({
+    ...s,
+    app: {
+      grocery,
+      stock,
+      mealLogs,
+      recipes,
+      mealPlan: (data.mealPlan as AppState['mealPlan']) ?? emptyMealPlan(),
+      // Onboarding flags are NOT restored: a person who has just imported
+      // their kitchen should not be thrown back through the welcome flow, but
+      // consent state belongs to this browser, not to the file.
+      settings: { ...s.app.settings, ...settings },
+    },
+  }));
+
+  return {
+    ok: true,
+    counts: {
+      grocery: grocery.length,
+      stock: stock.length,
+      mealLogs: mealLogs.length,
+      recipes: recipes.length,
+    },
+  };
+};
+
 const setConsents: UseStore['setConsents'] = (patch) => {
   setState((s) => ({
     ...s,
@@ -890,6 +1004,7 @@ export function useStore(): UseStore {
     removeStock,
     updateSettings,
     clearAllData,
+    importAppData,
     addMealLog,
     removeMealLog,
     logMealFromRecipe,

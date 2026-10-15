@@ -60,9 +60,9 @@ export function blockedReason(): string {
   const host = typeof window !== 'undefined' ? window.location.host : 'this site';
   return (
     `Your browser is blocking the microphone for ${host}. ` +
-    'Click the padlock icon just left of the address, set Microphone to Allow, ' +
-    'then tap the mic again. If it already says Block, use Reset permissions — ' +
-    'browsers will not ask again once they have remembered a block.'
+    'Click the padlock icon just left of the address, set Microphone to Allow, then tap the mic again. ' +
+    'If it already says Block, use Reset permissions — browsers will not ask again once they have remembered a block. ' +
+    'If it stays blocked, open HomeHub at http://localhost:8789 instead: that is a different address, so the browser will ask you instead of refusing outright.'
   );
 }
 

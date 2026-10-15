@@ -22,6 +22,7 @@ import {
   Users,
   Minus,
   Archive,
+  Download,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import clsx from 'clsx';
@@ -44,6 +45,7 @@ import {
 import { canVibrate, hapticSuccess } from '../utils/haptics';
 import { FoodTrainerModal } from '../components/FoodTrainerModal';
 import { MicrophoneCard } from '../components/MicrophoneCard';
+import { DataTransferCard } from '../components/DataTransferCard';
 import { VoicePickerCard } from '../components/VoicePickerCard';
 import { countByLabel } from '../utils/foodTrainer';
 import { headCount, suggestedPortionId, PORTION_LEVELS } from '../utils/portions';
@@ -811,6 +813,25 @@ export function SettingsPage() {
               Train
             </button>
           </div>
+        </section>
+
+        {/* Data transfer */}
+        <section className="card p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="w-9 h-9 rounded-xl bg-sage-100 dark:bg-sage-900/40 text-sage-700 dark:text-sage-300 grid place-items-center">
+              <Download size={18} />
+            </span>
+            <div>
+              <h3 className="font-display font-bold text-base text-sage-900 dark:text-cream-50">
+                Your data
+              </h3>
+              <p className="text-xs text-sage-500 dark:text-ink-300">
+                Take your kitchen with you — to another browser, another device,
+                or another address.
+              </p>
+            </div>
+          </div>
+          <DataTransferCard />
         </section>
 
         {/* Backups */}
