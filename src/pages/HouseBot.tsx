@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
+import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart, Volume2, VolumeX } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { STARTER_RECIPES } from '../data/recipes';
 import { INDIAN_RECIPES } from '../data/indianRecipes';
@@ -1873,81 +1873,6 @@ export function HouseBotPage() {
           >
             <Globe size={16} />
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (voice.listening) {
-                voice.stopListening();
-                return;
-              }
-              const onHeard = (text: string) => {
-                // Put it in the box rather than sending it. Kitchen actions
-                // are destructive enough ("delete the spinach") that the
-                // user should always see what was heard before it happens.
-                setInput((prev) => (prev ? `${prev.trim()} ${text}` : text));
-                requestAnimationFrame(() => textareaRef.current?.focus());
-              };
-              voice.cancel();
-              // Our switch being off is not a dead end: turn it on right here
-              // instead of telling the user to go and find Settings. Only a
-              // genuinely unsupported browser is a dead button.
-              if (voice.micState === 'off') {
-                void voice.enableMicrophone(onHeard);
-              } else if (voice.micState === 'unsupported') {
-                toast('This browser can\u2019t listen — try Chrome or Safari', 'warning');
-              } else {
-                voice.startListening(onHeard);
-              }
-            }}
-            aria-label={
-              voice.listening
-                ? 'Stop listening'
-                : voice.micState === 'off'
-                  ? 'Turn on the microphone'
-                  : voice.micState === 'unsupported'
-                    ? 'Voice input is not supported by this browser'
-                    : 'Speak your message'
-            }
-            title={
-              voice.listening
-                ? 'Stop listening'
-                : voice.micState === 'off'
-                  ? 'Microphone is switched off \u2014 tap to turn it on'
-                  : voice.micState === 'unsupported'
-                    ? 'Voice input needs Chrome or Safari'
-                    : 'Speak your message'
-            }
-            aria-pressed={voice.listening}
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: '50%',
-              border: 'none',
-              background: voice.listening ? 'rgba(239,68,68,0.85)' : 'rgba(51, 65, 85, 0.6)',
-              color: 'white',
-              display: 'grid',
-              placeItems: 'center',
-              // Clickable in 'off' too — it turns the mic on. Only a browser
-              // with no speech recognition is genuinely inert.
-              cursor: voice.micState === 'unsupported' ? 'not-allowed' : 'pointer',
-              flexShrink: 0,
-              boxShadow: voice.listening
-                ? '0 0 22px rgba(239,68,68,0.6), 0 4px 14px rgba(0,0,0,0.3)'
-                : 'none',
-              transition: 'transform 160ms ease, box-shadow 240ms ease',
-            }}
-            {...(voice.listening ? { className: 'hb-send-ready' } : {})}
-            onMouseEnter={(e) => {
-              if (voice.micState === 'unsupported') return;
-              e.currentTarget.style.transform = 'scale(1.08)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-            }}
-          >
-            {voice.listening ? <MicOff size={16} strokeWidth={2.5} /> : <Mic size={16} strokeWidth={2.5} />}
-          </button>
-
           <button
             type="button"
             onClick={() => void handleSend()}
