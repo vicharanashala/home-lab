@@ -2594,6 +2594,184 @@ app.get('/api/housebot/status', async (_req, res) => {
   res.json(await houseBotStatus());
 });
 
+/* --------------------------------------------------------------------------
+   Reading a meal off a photo.
+
+   Two very different jobs share one endpoint because the plumbing is
+   identical — the prompt is what differs:
+
+     dish       a photo of the food that was cooked -> name the dishes
+     handwritten  a photo of a written recipe card -> transcribe it
+
+   The bridge returns the model's reading as structured JSON, but the app
+   ALWAYS shows it back for confirmation before anything is saved. A
+   misread dish name silently landing in the meal log would poison the taste
+   model and the taste match score with no obvious way to spot it later, so
+   the human stays in the loop by design rather than as a nicety.
+   -------------------------------------------------------------------------- */
+
+const RECIPE_READ_PROMPT = `You are reading a photo for a home kitchen app.
+
+Depending on the "mode" field:
+- "dish": identify every dish visible in the photo. Use the common English
+  name plus the Indian name when the dish is Indian (for example
+  "Palak paneer (spinach curry)").
+- "handwritten": transcribe the handwritten recipe exactly as written,
+  including quantities. If a quantity is illegible, write "?" for it rather
+  than guessing.
+
+Reply with ONLY a JSON object, no prose and no code fence:
+
+{
+  "summary": "one short line naming the dish or the recipe",
+  "items": ["each dish or ingredient, one per line"],
+  "steps": ["each instruction, in order"],
+  "confidence": 0.0-1.0,
+  "uncertain": ["anything you could not read clearly"]
+}
+
+If you cannot tell what the photo shows, set "summary" to "" and return empty
+arrays rather than inventing something.`;
+
+app.post('/api/minimax/read-recipe', upload.single('image'), async (req, res) => {
+  if (!MINIMAX_ACCESS_TOKEN || !MINIMAX_API_URL) {
+    return res.status(503).json({
+      ok: false,
+      error: 'minimax_not_configured',
+      message: 'MINIMAX_ACCESS_TOKEN / MINIMAX_API_URL missing in the bridge .env',
+    });
+  }
+  const file = req.file;
+  if (!file) return res.status(400).json({ ok: false, error: 'no_image' });
+
+  const dims = sniffImageDimensions(file.buffer);
+  if (dims && (dims.w < 64 || dims.h < 64)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'image_too_small',
+      message: `That photo is only ${dims.w}×${dims.h} px. Try again with a larger photo.`,
+      width: dims.w, height: dims.h,
+    });
+  }
+
+  const mode = req.body?.mode === 'handwritten' ? 'handwritten' : 'dish';
+
+  // Upscale: handwriting in particular is lost at phone-photo resolution
+  // once it is downscaled to fit a model's input.
+  let b64 = file.buffer.toString('base64');
+  let mime = file.mimetype || 'image/jpeg';
+  try {
+    const meta = await sharp(file.buffer).metadata();
+    if (meta.width && meta.height && (meta.width < 1400 || meta.height < 1400)) {
+      const f = 2;
+      const up = await sharp(file.buffer)
+        .resize({
+          width: Math.round((meta.width || 1000) * f),
+          height: Math.round((meta.height || 1000) * f),
+          withoutEnlargement: false,
+        })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+      b64 = up.toString('base64');
+    }
+  } catch (e) {
+    console.error('[read-recipe] upscale failed:', e?.message);
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), MINIMAX_TIMEOUT_MS);
+  const t0 = Date.now();
+
+  try {
+    const upstream = await fetch(MINIMAX_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${MINIMAX_ACCESS_TOKEN}`,
+      },
+      body: JSON.stringify({
+        model: MINIMAX_MODEL,
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: `mode: ${mode}\n\n${RECIPE_READ_PROMPT}` },
+            { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
+          ],
+        }],
+      }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+
+    const rawText = await upstream.text();
+    if (!upstream.ok) {
+      return res.status(upstream.status).json({
+        ok: false,
+        error: 'minimax_error',
+        status: upstream.status,
+        message: rawText.slice(0, 200),
+      });
+    }
+
+    let parsed;
+    try { parsed = JSON.parse(rawText); } catch { parsed = null; }
+    const text = Array.isArray(parsed?.content)
+      ? parsed.content.find((c) => c?.type === 'text')?.text ?? ''
+      : '';
+
+    if (!text) {
+      return res.json({ ok: false, error: 'minimax_empty', ms: Date.now() - t0 });
+    }
+
+    // The model is asked for bare JSON but will occasionally wrap it in a
+    // fence or add a sentence, so recover rather than discarding a good read.
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.json({
+        ok: false,
+        error: 'unreadable_response',
+        message: text.slice(0, 300),
+        ms: Date.now() - t0,
+      });
+    }
+    let data;
+    try { data = JSON.parse(jsonMatch[0]); } catch {
+      return res.json({ ok: false, error: 'unreadable_response', message: text.slice(0, 300) });
+    }
+
+    const items = Array.isArray(data.items) ? data.items.filter(Boolean).map(String) : [];
+    const steps = Array.isArray(data.steps) ? data.steps.filter(Boolean).map(String) : [];
+    if (!data.summary && !items.length) {
+      return res.json({
+        ok: false,
+        error: 'nothing_recognised',
+        message: 'The model could not tell what is in this photo.',
+        ms: Date.now() - t0,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      mode,
+      summary: String(data.summary || '').trim(),
+      items,
+      steps,
+      confidence: typeof data.confidence === 'number' ? data.confidence : null,
+      uncertain: Array.isArray(data.uncertain) ? data.uncertain.filter(Boolean).map(String) : [],
+      ms: Date.now() - t0,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    return res.status(502).json({
+      ok: false,
+      error: 'minimax_unreachable',
+      message: err?.message ?? String(err),
+    });
+  }
+});
+
 app.post('/api/housebot/chat', async (req, res) => {
   const { message, history, context, image } = req.body || {};
   if (!message || typeof message !== 'string') {

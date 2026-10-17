@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * Shared-secret header for bridge API calls.
  *
@@ -12,8 +13,13 @@ type ViteEnv = { VITE_BRIDGE_TOKEN?: string };
 
 function readToken(): string {
   try {
-    const env = (import.meta as unknown as { env?: ViteEnv }).env;
-    return env?.VITE_BRIDGE_TOKEN || '';
+    // This MUST be the literal `import.meta.env.VITE_BRIDGE_TOKEN` form with
+    // no optional chaining. Vite substitutes that exact pattern at build time
+    // and nothing else: a cast, or `import.meta.env?.KEY`, both type-check and
+    // read naturally but are never replaced, so the token silently vanished
+    // from the bundle and every bridge call came back 401 — which is how
+    // photo recognition and the food classifier failed with no visible cause.
+    return import.meta.env.VITE_BRIDGE_TOKEN || '';
   } catch {
     return '';
   }

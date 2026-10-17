@@ -152,7 +152,8 @@ export async function findNearbyStoresWithReport(
 
 function readApiBase(): string | null {
   try {
-    // @ts-expect-error import.meta.env is provided by Vite at build time
+    // The @ts-expect-error here became unused once vite/client types were
+    // loaded, so `import.meta.env` is now properly typed.
     const v = import.meta.env?.VITE_API_BASE_URL as string | undefined;
     return v && v.length > 0 ? v.replace(/\/$/, '') : null;
   } catch {

@@ -21,6 +21,7 @@ import type { MealType } from '../types';
 import { planRecipeDeduction } from '../utils/recipeMatch';
 import { formatBaseValue, unitDimension } from '../utils/units';
 import { AutocompleteInput, type Suggestion } from './AutocompleteInput';
+import { MealPhotoButton } from './MealPhotoButton';
 import { DishIcon } from './icons/DishIcons';
 
 interface Props {
@@ -549,6 +550,10 @@ export function LogMealModal({ open, onClose, initialMealType }: Props) {
               {touched && !canSubmitQuick && (
                 <p className="mt-1 text-xs text-tomato-600 dark:text-tomato-300">Tell us what you cooked.</p>
               )}
+
+              {/* Photograph it instead of typing. The reading always comes
+                  back for confirmation before it touches the meal log. */}
+              <MealPhotoButton onConfirm={setDescription} />
             </div>
 
             {/* Quick picks */}
