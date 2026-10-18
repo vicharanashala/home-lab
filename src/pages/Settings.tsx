@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   User,
   Salad,
@@ -23,6 +23,7 @@ import {
   Minus,
   Archive,
   Download,
+  Stethoscope,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import clsx from 'clsx';
@@ -547,6 +548,13 @@ export function SettingsPage() {
           </ul>
 
           <MicrophoneCard />
+          <Link
+            to="/mic-check"
+            className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-sage-600 hover:text-sage-800 dark:text-ink-300 dark:hover:text-cream-100"
+          >
+            <Stethoscope size={13} />
+            Microphone not working? Run the check
+          </Link>
           <VoicePickerCard />
 
           {/* Try-it-out buttons */}

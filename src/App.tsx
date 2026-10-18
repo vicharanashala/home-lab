@@ -13,6 +13,7 @@ import { GroceryPage } from './pages/Grocery';
 import { StockPage } from './pages/Stock';
 import { AlertsPage } from './pages/Alerts';
 import { HouseBotPage } from './pages/HouseBot';
+import { MicDiagnostics } from './pages/MicDiagnostics';
 import { useTheme } from './hooks/useTheme';
 import { useConsentSync } from './hooks/useConsentSync';
 import {
@@ -161,6 +162,7 @@ export default function App() {
                 <Route path="/meal-plan" element={<MealPlanPage />} />
                 <Route path="/shopping" element={<ShoppingModePage />} />
                 <Route path="/house-bot" element={<HouseBotPage />} />
+                <Route path="/mic-check" element={<MicDiagnostics />} />
                 <Route path="*" element={<Dashboard />} />
               </Routes>
             </Suspense>
