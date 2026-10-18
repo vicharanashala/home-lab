@@ -27,6 +27,7 @@ export function SpeakYourPlan({ onApply }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<SpokenPlan | null>(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [typed, setTyped] = useState('');
 
   const whisper = useWhisperSTT(model, language);
 
@@ -206,6 +207,58 @@ export function SpeakYourPlan({ onApply }: Props) {
           </select>
         </div>
       )}
+
+      {/* Typing or dictating the day, for when the browser's microphone is
+          unusable. macOS dictation (press the dictation key twice) types into
+          this box like any other field, so the whole feature keeps working
+          even where Chrome refuses to hand a page the microphone. */}
+      <details className="mt-2">
+        <summary className="text-[11px] font-semibold text-sage-600 dark:text-sage-300 cursor-pointer">
+          Type or dictate the day instead
+        </summary>
+        <div className="mt-1.5">
+          <textarea
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            rows={2}
+            aria-label="Type or dictate the meals for this day"
+            placeholder="breakfast oats with milk, lunch vegetable rice, dinner chicken curry"
+            className="input w-full text-xs resize-none"
+          />
+          <div className="flex gap-1.5 mt-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                const parsed = parseSpokenPlan(typed);
+                if (!parsed.breakfast && !parsed.lunch && !parsed.dinner) {
+                  setError(
+                    typed.trim()
+                      ? 'Could not tell which meal that was for. Include "breakfast", "lunch" or "dinner".'
+                      : 'Type the day first, or dictate into this box.',
+                  );
+                  return;
+                }
+                setError(null);
+                setDraft(parsed);
+              }}
+              disabled={!typed.trim()}
+              className="btn-primary flex-1 !py-1.5 text-xs disabled:opacity-50"
+            >
+              Fill the day
+            </button>
+            <button
+              type="button"
+              onClick={() => setTyped('')}
+              className="btn-secondary !py-1.5 text-xs"
+            >
+              Clear
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-sage-500 dark:text-ink-400">
+            Works with dictation too — press the dictation key twice and speak.
+          </p>
+        </div>
+      </details>
     </div>
   );
 }
