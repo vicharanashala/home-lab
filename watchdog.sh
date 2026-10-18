@@ -52,18 +52,6 @@ start_bridge() {
       > /tmp/hh_bridge.log 2>&1 < /dev/null & )
 }
 
-# A second instance on 8777, the port Whisper Pad uses.
-#
-# WHY: a browser's microphone grant is stored PER ORIGIN, and the port is part
-# of the origin. The user has already granted the microphone to
-# http://localhost:8777 for Whisper Pad, so serving HomeHub there too means the
-# mic works immediately in HomeHub with no padlock fiddling and no new prompt.
-# 8789 stays as it is because that is what Tailscale Serve proxies to.
-start_bridge_voice() {
-  ( cd "$BRIDGE_DIR" && PORT=8777 nohup "$NODE_BIN" index.mjs \
-      > /tmp/hh_bridge_8777.log 2>&1 < /dev/null & )
-}
-
 start_voice() {
   ( cd "$HOME" && nohup "$TTS_PY" "$TTS_SERVER" "$VOICE_PORT" \
       > /tmp/tts_daemon.log 2>&1 < /dev/null & )
@@ -87,17 +75,6 @@ while true; do
     start_bridge
     sleep 5
     if listening "$BRIDGE_PORT"; then log "bridge back up"; else log "bridge FAILED"; fi
-  fi
-
-  # ── Voice-capable origin ─────────────────────────────────────────────────
-  # Same app on 8777 so the microphone grant Whisper Pad already has applies
-  # here too. Skipped if that port is taken, which is fine — it just means
-  # Whisper Pad is running.
-  if ! listening "8777"; then
-    log "starting the 8777 voice origin"
-    start_bridge_voice
-    sleep 4
-    if listening "8777"; then log "8777 up"; else log "8777 failed (port may be in use)"; fi
   fi
 
   # ── Voice daemon ─────────────────────────────────────────────────────────
