@@ -31,3 +31,7 @@ watchdog.sh
 npm-debug.log*
 .vscode/
 .idea/
+
+# On-device Whisper runtime (~67 MB of ONNX wasm). Copied in by
+# scripts/setup-whisper-vendor.sh; the worklet that feeds it IS tracked.
+public/whisper/vendor/

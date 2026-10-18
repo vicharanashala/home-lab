@@ -7,6 +7,7 @@ import {
 import clsx from 'clsx';
 import { useStore, MEAL_PLAN_DAYS, MEAL_PLAN_DAY_LABELS } from '../store/useStore';
 import { AutocompleteInput } from '../components/AutocompleteInput';
+import { SpeakYourPlan } from '../components/SpeakYourPlan';
 import type { Suggestion } from '../components/AutocompleteInput';
 import { findCandidatesForIngredient } from '../utils/recipeMatch';
 import { suggestCategory } from '../utils/categorySuggest';
@@ -691,6 +692,35 @@ export default function MealPlanPage() {
                   Copy day
                 </button>
               </div>
+
+              {/* Say the whole day out loud instead of picking each slot. */}
+              {dayOpen && (
+                <SpeakYourPlan
+                  onApply={(plan) => {
+                    let filled = 0;
+                    (['breakfast', 'lunch', 'dinner'] as const).forEach((slot) => {
+                      const name = plan[slot]?.trim();
+                      if (!name) return;               // never mentioned: leave alone
+                      const existing = dayPlan?.[slot];
+                      setMealPlanSlot(day, slot, {
+                        name,
+                        slot,
+                        // Keep the portion size this day already used rather than
+                        // resetting it; default to a small household.
+                        servings: existing?.servings ?? 2,
+                        createdAt: Date.now(),
+                      });
+                      filled++;
+                    });
+                    toast(
+                      filled
+                        ? `Added ${filled} meal${filled === 1 ? '' : 's'} by voice`
+                        : 'Nothing was recognised to add',
+                      filled ? 'success' : 'warning',
+                    );
+                  }}
+                />
+              )}
             </li>
           );
         })}

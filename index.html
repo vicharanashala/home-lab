@@ -10,6 +10,20 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="HomeHub" />
+    <!-- The on-device Whisper engine is a prebuilt bundle that imports the ONNX
+         runtime by BARE specifier. A bundler cannot resolve those, so they are
+         mapped here to the vendored copies instead of a CDN. Without this the
+         import fails outright with "Failed to resolve module specifier
+         onnxruntime-web/webgpu" and voice input never starts. Paths are
+         absolute because they must resolve from any route, not just "/". -->
+    <script type="importmap">
+      {
+        "imports": {
+          "onnxruntime-web/webgpu": "/whisper/vendor/ort/ort.webgpu.bundle.min.mjs",
+          "onnxruntime-common": "/whisper/vendor/ort/ort.bundle.min.mjs"
+        }
+      }
+    </script>
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="format-detection" content="telephone=no" />
     <meta name="description" content="HomeHub — simple household management for groceries and kitchen stock." />
