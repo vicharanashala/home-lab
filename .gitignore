@@ -24,7 +24,6 @@ vite.config.d.ts
 tunnel/
 !tunnel/.gitkeep
 plists/
-watchdog.sh
 .mavis/
 .DS_Store
 *.log
