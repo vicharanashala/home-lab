@@ -501,7 +501,14 @@ export function SettingsPage() {
             </div>
           </div>
           <ul className="space-y-2">
-            {(Object.keys(CONSENT_ICONS) as Array<keyof UserConsents>).map((k) => {
+            {(Object.keys(CONSENT_ICONS) as Array<keyof UserConsents>)
+              // The microphone has its own card right below this list, and
+              // that one asks the browser and tells the truth. A second switch
+              // here only wrote a flag, so it read OFF while the mic was live
+              // and turned ON without ever prompting. One switch, and it is
+              // the real one.
+              .filter((k) => k !== 'microphone')
+              .map((k) => {
               const Icon = CONSENT_ICONS[k];
               const { title, blurb } = CONSENT_LABELS[k];
               const on = consents[k];

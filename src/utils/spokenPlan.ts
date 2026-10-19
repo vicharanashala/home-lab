@@ -45,10 +45,29 @@ const NOISE = new Set([
   'of', 'it', 'in', 'on', 'at', 'get', 'got', 'like', 'about',
 ]);
 
+/**
+ * Connectors that put the dish BEFORE the meal word: "dal makhani FOR
+ * dinner", "dal as dinner".
+ *
+ * Without this, "dal makhani for dinner and rice for lunch" filed the rice
+ * under dinner and lost the lunch entirely — the text after a meal word was
+ * always taken as that meal's dish, so the second meal's dish swallowed the
+ * first meal's slot.
+ */
+const PRE_CONNECTOR_RE = /\b(?:for|as|to be|will be|will have)\s*$/i;
+
+/** A dish the user explicitly did NOT want. "no dal for dinner" is not dal. */
+const NEGATION_RE = /^\s*(?:no|not|without|skip|avoid)\b\s*/i;
+
+/** A time, not a dish: "at 8", "at 8 pm", "8 pm". */
+const TIME_RE =
+  /\b(?:at|around|by|@)\s*\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?\b|\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/gi;
+
 function tidy(text: string): string {
   let out = text
     .toLowerCase()
     .replace(/[.,!?;:"'`]/g, ' ')
+    .replace(TIME_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -90,8 +109,15 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   type Mark = { at: number; slot: PlanSlot; len: number };
   const marks: Mark[] = [];
   for (const { re, slot } of SLOT_WORDS) {
-    const m = re.exec(src);
-    if (m) marks.push({ at: m.index, slot, len: m[0].length });
+    // Match EVERY occurrence of the word, not just the first. "lunch rice,
+    // dinner dal, lunch salad" used to stop at the first "lunch", so the text
+    // after the second one was merged into the dinner dish.
+    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    let m: RegExpExecArray | null;
+    while ((m = global.exec(src)) !== null) {
+      marks.push({ at: m.index, slot, len: m[0].length });
+      if (m.index === global.lastIndex) global.lastIndex += 1;
+    }
   }
   if (!marks.length) return {};
 
@@ -106,18 +132,35 @@ export function parseSpokenPlan(text: string): SpokenPlan {
 
   const out: SpokenPlan = {};
   for (let i = 0; i < unique.length; i++) {
-    const after = unique[i].at + unique[i].len;
+    const mark = unique[i];
+    const after = mark.at + mark.len;
     const nextAt = i + 1 < unique.length ? unique[i + 1].at : src.length;
-    let dish = tidy(src.slice(after, nextAt));
+    const prevEnd = i > 0 ? unique[i - 1].at + unique[i - 1].len : 0;
 
-    // "we will have dal makhani for dinner" puts the meal word LAST. With
-    // nothing after it, the dish is what came before, minus the marker.
-    if (!isMeaningful(dish) && unique.length === 1) {
-      dish = tidy(src.slice(0, unique[i].at));
+    const segAfter = src.slice(after, nextAt);
+    const segBefore = src.slice(prevEnd, mark.at);
+    const hasPrev = i > 0;
+    const hasNext = i + 1 < unique.length;
+
+    // Which side of the meal word holds the dish? "dinner dal" puts it
+    // behind; "dal for dinner" puts it in front. A connector right before the
+    // meal word is the tell. The segment on the other side belongs to the
+    // NEIGHBOURING meal, so it must not be stolen as a fallback.
+    let dish: string;
+    if (PRE_CONNECTOR_RE.test(segBefore)) {
+      dish = tidy(segBefore);
+      if (!isMeaningful(dish) && !hasNext) dish = tidy(segAfter);
+    } else {
+      dish = tidy(segAfter);
+      if (!isMeaningful(dish) && !hasPrev) dish = tidy(segBefore);
     }
 
-    if (isMeaningful(dish) && !out[unique[i].slot]) {
-      out[unique[i].slot] = dish;
+    // "no dal for dinner" is a refusal, not a dish. Leave the slot alone
+    // rather than writing a dish the user said they did not want.
+    if (NEGATION_RE.test(dish)) continue;
+
+    if (isMeaningful(dish) && !out[mark.slot]) {
+      out[mark.slot] = dish;
     }
   }
   return out;

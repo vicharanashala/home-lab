@@ -24,8 +24,9 @@ import { INDIAN_RECIPES } from '../data/indianRecipes';
 /** Built-in catalog = starter recipes + curated Indian recipes. */
 const BUILT_IN_RECIPES = [...STARTER_RECIPES, ...INDIAN_RECIPES] as any;
 import { uid } from '../utils/uid';
-import { findCandidatesForIngredient, planRecipeDeduction } from '../utils/recipeMatch';
+import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimension } from '../utils/recipeMatch';
 import { formatBaseValue, subtractBase, toBaseUnit, unitDimension } from '../utils/units';
+import { DEFAULT_CONSENTS } from '../utils/consent';
 
 const STORAGE_KEY = 'homehub.v1';
 
@@ -52,11 +53,9 @@ const loadFromStorage = (): AppState | null => {
     // from localStorage we know the user existed before this feature shipped,
     // so we want to show the consent modal on their next launch.
     if (parsed.settings.hasSeenConsents === true) {
-      parsed.settings.consents = parsed.settings.consents ?? {
-        haptics: true,
-        notifications: false,
-        location: false,
-        personalization: true,
+      parsed.settings.consents = {
+        ...DEFAULT_CONSENTS,
+        ...(parsed.settings.consents ?? {}),
       };
     }
     // Forward-compatible: mealLogs may not exist on older snapshots.
@@ -177,6 +176,13 @@ export interface UseStore extends AppState {
     peopleCooked: number;
     notes?: string;
     pickedStockByIngredient?: Record<string, string>;
+    /** The meal slot the user picked. Defaults to the recipe's own type. */
+    mealType?: MealType;
+    /**
+     * Resolved recipes, for entries that are not in the store's own list
+     * (the CSV catalogue). When given, these are used for the ingredients.
+     */
+    recipes?: Recipe[];
   }) => {
     log: MealLog;
     usedCount: number;
@@ -574,16 +580,12 @@ function sumDeductionsByStockId(
 
 /** Convert a base-unit remainder back into the stock item's own display unit. */
 function baseToDisplay(remainingBase: number, unit: string): number {
-  const dim = unitDimension(unit);
-  const u = unit.trim().toLowerCase();
-  const factor =
-    dim === 'mass'
-      ? u.startsWith('k') ? 1000 : 1
-      : dim === 'vol'
-      ? u === 'l' || u === 'liter' || u === 'litre' ? 1000 : 1
-      : dim === 'count'
-      ? u === 'dozen' ? 12 : 1
-      : 1;
+  // Derive the factor from the SAME table the rest of the app uses. The old
+  // hand-written list only knew g/kg/ml/L/pcs/dozen, so a stock row measured
+  // in tbsp, oz or litres was divided by 1 and came back as an absurd number:
+  // 10 tbsp minus a 2 tbsp recipe wrote back "120 tbsp".
+  const factor = toBaseUnit(1, unit)?.value ?? 1;
+  if (!Number.isFinite(factor) || factor === 0) return Math.max(0, remainingBase);
   return Math.max(0, remainingBase / factor);
 }
 
@@ -605,17 +607,26 @@ const logMealFromRecipe: UseStore['logMealFromRecipe'] = (input) => {
     if (!pickedId || pickedId === d.stockItem.id) return d;
     const picked = cur.stock.find((s) => s.id === pickedId);
     if (!picked) return d;
-    const ingBase = toBaseUnit(d.ingredient.quantity * plan.multiplier, d.ingredient.unit);
-    const stkBase = toBaseUnit(picked.quantity, picked.unit);
-    if (!ingBase || !stkBase) return d;
-    const ingDim = unitDimension(d.ingredient.unit);
-    const deductedBase = Math.min(ingBase.value, stkBase.value);
+    // Resolve both sides the SAME way the preview did, so the number the
+    // user was shown is the number that gets applied. The old code took a
+    // bare min() across two base values that could be in different
+    // dimensions — a "1 cup" ingredient was compared against a gram stock as
+    // if 240 ml were 240 g.
+    const common = resolveToCommonDimension(
+      d.ingredient.quantity * plan.multiplier,
+      d.ingredient.unit,
+      d.ingredient.name,
+      picked.quantity,
+      picked.unit,
+    );
+    if (!common) return d;
+    const deductedBase = Math.min(common.ingValue, common.stkValue);
     return {
       ...d,
       stockItem: picked,
       deductedBase,
-      remainingBase: subtractBase(stkBase.value, ingBase.value),
-      deductedLabel: formatBaseValue(deductedBase, ingDim),
+      remainingBase: subtractBase(common.stkValue, common.ingValue),
+      deductedLabel: formatBaseValue(deductedBase, common.dimension),
     };
   });
 
@@ -688,8 +699,13 @@ const logMealFromRecipe: UseStore['logMealFromRecipe'] = (input) => {
  */
 const logMealFromRecipes: UseStore['logMealFromRecipes'] = (input) => {
   const cur = getState().app;
+  // Callers may hand us the resolved recipes (the CSV catalogue is not in the
+  // store's own list). Fall back to the store's recipes by id.
+  const resolved = input.recipes?.length
+    ? input.recipes
+    : cur.recipes.filter((r) => input.recipeIds.includes(r.id));
   const recipes = input.recipeIds
-    .map((id) => cur.recipes.find((r) => r.id === id))
+    .map((id) => resolved.find((r) => r.id === id) ?? cur.recipes.find((r) => r.id === id))
     .filter((r): r is NonNullable<typeof r> => Boolean(r));
   if (recipes.length === 0) {
     pushToast('No recipes selected', 'warning');
@@ -751,15 +767,23 @@ const logMealFromRecipes: UseStore['logMealFromRecipes'] = (input) => {
       skippedNames.push(`${ing.name} (unit mismatch)`);
       continue;
     }
-    const dim = unitDimension(ing.unit);
-    const deductedBase = Math.min(ingBase.value, stkBase.value);
+    // Same dimension resolution as the single-recipe path. Comparing a
+    // gram-denominated stock against a "1 cup" ingredient as if 240 ml were
+    // 240 g over-deducted the flour and DELETED the row when the correct
+    // deduction would have left some behind.
+    const common = resolveToCommonDimension(ing.quantity, ing.unit, ing.name, picked.quantity, picked.unit);
+    if (!common) {
+      skippedNames.push(`${ing.name} (unit mismatch)`);
+      continue;
+    }
+    const deductedBase = Math.min(common.ingValue, common.stkValue);
     combinedDeductions.push({
       name: ing.name,
       quantity: ing.quantity,
       unit: ing.unit,
       deductedBase,
-      remainingBase: subtractBase(stkBase.value, ingBase.value),
-      deductedLabel: formatBaseValue(deductedBase, dim),
+      remainingBase: subtractBase(common.stkValue, common.ingValue),
+      deductedLabel: formatBaseValue(deductedBase, common.dimension),
       stockItemId: picked.id,
     });
   }
@@ -785,8 +809,11 @@ const logMealFromRecipes: UseStore['logMealFromRecipes'] = (input) => {
   const description = recipes.map((r) => r.name).join(' + ');
   const mealLog: MealLog = {
     id: uid('meal'),
-    // Use the first recipe's mealType as the default category.
-    mealType: recipes[0].mealType,
+    // The meal the user picked wins. The End-of-day picker shows every
+    // recipe regardless of type, so logging "Breakfast" with a snack recipe
+    // used to file the log as a snack while the toast said "Breakfast
+    // logged" — and the card then still looked unlogged.
+    mealType: input.mealType ?? recipes[0].mealType,
     description,
     createdAt: Date.now(),
     notes: input.notes?.trim() || undefined,
@@ -889,10 +916,32 @@ const importAppData: UseStore['importAppData'] = (raw) => {
   if (parsed.app !== 'homehub') {
     return { ok: false, error: "That file wasn't exported by HomeHub." };
   }
-  if (typeof parsed.version !== 'number' || parsed.version > BACKUP_VERSION) {
+  if (typeof parsed.version !== 'number') {
+    return { ok: false, error: 'That file has no version number — it may not be a HomeHub backup.' };
+  }
+  if (parsed.version > BACKUP_VERSION) {
     return {
       ok: false,
       error: `That backup is from a newer version of HomeHub (v${parsed.version}). Update the app first.`,
+    };
+  }
+  if (parsed.version < BACKUP_VERSION) {
+    return {
+      ok: false,
+      error: `That backup is from an older version of HomeHub (v${parsed.version}). It can't be restored safely.`,
+    };
+  }
+
+  // Every section must actually be there. A file that parses, says
+  // "homehub" and is version 1 but has no `grocery` key used to import an
+  // EMPTY grocery list over the live one — silently, with a success message.
+  const missing = (['grocery', 'stock', 'mealLogs', 'settings'] as const).filter(
+    (k) => !(k in (data as object)),
+  );
+  if (missing.length) {
+    return {
+      ok: false,
+      error: `That backup is missing its ${missing.join(' and ')} — it looks incomplete, so nothing was changed.`,
     };
   }
 
@@ -908,6 +957,21 @@ const importAppData: UseStore['importAppData'] = (raw) => {
     ? data.settings
     : {}) as AppSettings;
 
+  // Onboarding and consent state belong to THIS browser, not to the file.
+  // Spreading the imported settings over the local ones used to carry
+  // another device's `hasSeenConsents`, `consents.microphone` and
+  // `microphoneEnabled` with it — so a device that had never been asked for
+  // the microphone inherited a granted one and never showed the consent
+  // sheet. The Settings card promises "Your onboarding choices and
+  // permissions stay as they are on this device" — now it is true.
+  const {
+    hasSeenWelcome: _ignoredWelcome,
+    hasSeenConsents: _ignoredConsents,
+    consents: _ignoredConsentChoices,
+    microphoneEnabled: _ignoredMic,
+    ...portableSettings
+  } = settings;
+
   setState((s) => ({
     ...s,
     app: {
@@ -916,10 +980,7 @@ const importAppData: UseStore['importAppData'] = (raw) => {
       mealLogs,
       recipes,
       mealPlan: (data.mealPlan as AppState['mealPlan']) ?? emptyMealPlan(),
-      // Onboarding flags are NOT restored: a person who has just imported
-      // their kitchen should not be thrown back through the welcome flow, but
-      // consent state belongs to this browser, not to the file.
-      settings: { ...s.app.settings, ...settings },
+      settings: { ...s.app.settings, ...portableSettings },
     },
   }));
 
@@ -941,11 +1002,13 @@ const setConsents: UseStore['setConsents'] = (patch) => {
       ...s.app,
       settings: {
         ...s.app.settings,
+        // Merge over the STORED object, not a hand-written list of defaults.
+        // The old literal had four keys and no `microphone`, so toggling any
+        // other permission silently deleted a granted microphone — the
+        // Permissions list then said OFF while the mic was live.
         consents: {
-          haptics: s.app.settings.consents?.haptics ?? true,
-          notifications: s.app.settings.consents?.notifications ?? false,
-          location: s.app.settings.consents?.location ?? false,
-          personalization: s.app.settings.consents?.personalization ?? true,
+          ...DEFAULT_CONSENTS,
+          ...s.app.settings.consents,
           ...patch,
         },
       },

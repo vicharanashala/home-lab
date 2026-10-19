@@ -42,8 +42,26 @@ export const expiryBucket = (iso?: string, soonDays = 3): 'expired' | 'soon' | '
   return 'ok';
 };
 
+/**
+ * Make a unit singular without mangling it.
+ *
+ * The old one-liner (`unit.replace(/s$/, '')`) turned "glass" into "glas",
+ * "dashes" into "dashe" and "pinches" into "pinche" — units people actually
+ * type for a kitchen app. English plurals are not just "+s".
+ */
+function singularUnit(unit: string): string {
+  const u = unit.trim();
+  if (!u) return unit;
+  // -es plurals whose stem ends in a sibilant: dashes -> dash, pinches -> pinch.
+  if (/(sh|ch|s|x|z)es$/i.test(u)) return u.slice(0, -2);
+  // A plain -s: grams -> gram, bottles -> bottle, pcs -> pc. Words ending in
+  // "ss" (glass) keep their ending.
+  if (/[^s]s$/i.test(u) && !/(ss|sh|ch|x|z)s$/i.test(u)) return u.slice(0, -1);
+  return u;
+}
+
 export const formatQuantity = (qty: number, unit?: string): string => {
   if (!unit) return `${qty}`;
-  if (qty === 1) return `${qty} ${unit.replace(/s$/, '')}`;
+  if (qty === 1) return `${qty} ${singularUnit(unit)}`;
   return `${qty} ${unit}`;
 };

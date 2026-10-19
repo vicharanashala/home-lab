@@ -129,6 +129,63 @@ export interface RecipeDeductionPlan {
 }
 
 /**
+ * Put an ingredient amount and a stock amount into ONE shared dimension so
+ * the two can be compared honestly.
+ *
+ * The conversion has to be symmetric: if the recipe measures in spoons
+ * ("2 tbsp oil") we convert the ingredient, but if the STOCK is what we hold
+ * in spoons, we must convert the stock instead. One-way conversion made
+ * "2 cups of flour" deduct 1 cup and leave 1 — but "1 cup stock, 1 cup
+ * recipe" left 240, because the ml value was written back onto a
+ * scoop-denominated item untouched.
+ *
+ * Returns null when the two cannot be compared at all: an unknown unit, or
+ * two genuinely different dimensions ("200 g" against "2 pcs") where no
+ * density can bridge them. Callers must treat null as "skip this
+ * ingredient" — comparing across dimensions is how a 200 g bag of flour got
+ * deleted by a recipe that asked for one cup.
+ */
+export function resolveToCommonDimension(
+  ingQuantity: number,
+  ingUnit: string,
+  ingName: string,
+  stkQuantity: number,
+  stkUnit: string,
+): { ingValue: number; stkValue: number; dimension: UnitDimension } | null {
+  const ingRaw = toBaseUnit(ingQuantity, ingUnit);
+  const stkRaw = toBaseUnit(stkQuantity, stkUnit);
+  if (!ingRaw || !stkRaw) return null;
+  if (ingRaw.dimension === 'unknown' || stkRaw.dimension === 'unknown') return null;
+
+  let ingDim: UnitDimension = ingRaw.dimension;
+  let ingValue = ingRaw.value;
+  let stkDim: UnitDimension = stkRaw.dimension;
+  let stkValue = stkRaw.value;
+
+  if (ingDim === 'scoop' && stkDim !== 'scoop') {
+    const converted = convertScoop(ingValue, ingName, stkDim);
+    if (converted === null) return null;
+    ingValue = converted;
+    ingDim = stkDim;
+  } else if (stkDim === 'scoop' && ingDim !== 'scoop') {
+    const converted = convertScoop(stkValue, ingName, ingDim);
+    if (converted === null) return null;
+    stkValue = converted;
+    stkDim = ingDim;
+  } else if (ingDim !== stkDim) {
+    // "200 g" does not cover "2 pcs" — not a quantity question at all.
+    return null;
+  }
+
+  // A non-finite amount means malformed data, not a real deduction. Skip it
+  // rather than letting NaN propagate: subtractBase would return NaN, and the
+  // row would then fail `quantity > 0` and be deleted from the kitchen.
+  if (!Number.isFinite(ingValue) || !Number.isFinite(stkValue)) return null;
+
+  return { ingValue, stkValue, dimension: ingDim };
+}
+
+/**
  * Compute what would happen if this recipe were cooked for `peopleCooked` people.
  * Pure — does not modify state. Useful for live preview in the UI.
  *
@@ -156,51 +213,25 @@ export function planRecipeDeduction(
     // spoons ("2 tbsp oil") and the stock is held in grams, the ingredient is
     // converted with its density so the two can actually be compared — this is
     // what used to fail for 55% of the catalogue.
-    const ingRaw = toBaseUnit(ing.quantity * multiplier, ing.unit);
-    const stkRaw = toBaseUnit(match.quantity, match.unit);
-    if (!ingRaw || !stkRaw || ingRaw.dimension === 'unknown' || stkRaw.dimension === 'unknown') {
+    // Resolve both sides to a COMMON dimension. When the recipe measures in
+    // spoons ("2 tbsp oil") and the stock is held in grams, the ingredient is
+    // converted with its density so the two can actually be compared — this is
+    // what used to fail for 55% of the catalogue.
+    const common = resolveToCommonDimension(
+      ing.quantity * multiplier,
+      ing.unit,
+      ing.name,
+      match.quantity,
+      match.unit,
+    );
+    if (!common) {
       skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
       continue;
     }
 
-    let ingDim: UnitDimension = ingRaw.dimension;
-    let ingValue = ingRaw.value;
-    let stkDim = stkRaw.dimension;
-
-    // Get BOTH sides into a shared dimension. The conversion has to be
-    // symmetric: if the recipe measures in spoons we convert the ingredient,
-    // but if the STOCK is what we hold in spoons, we must convert the stock
-    // instead. One-way conversion made "2 cups of flour" deduct 1 cup and
-    // leave 1 — but "1 cup stock, 1 cup recipe" left 240, because the ml
-    // value was written back onto a scoop-denominated item untouched.
-    if (ingDim === 'scoop' && stkDim !== 'scoop') {
-      const converted = convertScoop(ingValue, ing.name, stkDim);
-      if (converted === null) {
-        skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
-        continue;
-      }
-      ingValue = converted;
-      ingDim = stkDim;
-    } else if (stkDim === 'scoop' && ingDim !== 'scoop') {
-      const converted = convertScoop(stkRaw.value, ing.name, ingDim);
-      if (converted === null) {
-        skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
-        continue;
-      }
-      stkRaw.value = converted;
-      stkDim = ingDim;
-    }
-
-    // A non-finite amount means malformed data, not a real deduction. Skip it
-    // rather than letting NaN propagate: subtractBase would return NaN, and
-    // the row would then fail `quantity > 0` and be deleted from the kitchen.
-    if (!Number.isFinite(ingValue) || !Number.isFinite(stkRaw.value)) {
-      skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
-      continue;
-    }
-
-    const ingBase = { value: ingValue, dimension: ingDim };
-    const stkBase = { value: stkRaw.value, dimension: stkDim };
+    const ingDim: UnitDimension = common.dimension;
+    const ingBase = { value: common.ingValue, dimension: ingDim };
+    const stkBase = { value: common.stkValue, dimension: ingDim };
 
     const newStock = subtractBase(stkBase.value, ingBase.value);
     deductions.push({

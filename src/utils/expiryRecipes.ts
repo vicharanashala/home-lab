@@ -19,7 +19,15 @@ function daysUntil(iso: string | undefined, now: number): number {
   if (!iso) return 9999;
   const t = Date.parse(`${iso}T00:00:00`);
   if (Number.isNaN(t)) return 9999;
-  return Math.max(0, Math.round((t - now) / dayMs));
+  // Compare CALENDAR days, not elapsed milliseconds. Both sides are snapped
+  // to local midnight first: rounding the raw difference made anything
+  // expiring tomorrow read as "today" after midday, and pulled items a whole
+  // day outside the window into the rescue strip. `date.ts` already counts
+  // this the calendar way — the two must agree, or the same item reads
+  // "expires tomorrow" on one screen and "expires today" on another.
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  return Math.round((t - midnight.getTime()) / dayMs);
 }
 
 /**
@@ -42,7 +50,9 @@ export function recipesUsingExpiringStock(
   const now = Date.now();
   const expiring = stock.filter((s) => {
     const d = daysUntil(s.expiryDate, now);
-    return s.expiryDate !== undefined && d <= withinDays && s.quantity > 0;
+    // Already-expired food cannot be rescued, and the calendar count now
+    // returns a negative number for it — so the lower bound matters.
+    return s.expiryDate !== undefined && d >= 0 && d <= withinDays && s.quantity > 0;
   });
   if (expiring.length === 0) return [];
 
@@ -61,7 +71,9 @@ export function recipesUsingExpiringStock(
       have += 1;
       if (hit.expiryDate) {
         const d = daysUntil(hit.expiryDate, now);
-        if (d <= withinDays) {
+        // Only food that is still good counts — anything already past its
+        // date cannot be "rescued" by cooking it.
+        if (d >= 0 && d <= withinDays) {
           uses.push(hit);
           if (d < earliest) earliest = d;
         }

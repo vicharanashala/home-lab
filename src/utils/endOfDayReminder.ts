@@ -43,6 +43,10 @@ export function setReminderEnabled(enabled: boolean): void {
 export function getReminderHour(): number {
   if (typeof localStorage === 'undefined') return DEFAULT_REMINDER_HOUR;
   const raw = localStorage.getItem(STORAGE_KEY_HOUR);
+  // `Number(null)` is 0, not NaN — so an unset hour used to read as midnight
+  // and the "9 PM by default" reminder fired at 00:00 for anyone who had not
+  // touched the slider. Nothing stored means "use the default".
+  if (raw === null || raw === '') return DEFAULT_REMINDER_HOUR;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0 || n > 23) return DEFAULT_REMINDER_HOUR;
   return n;
@@ -67,18 +71,27 @@ export function nextReminderTime(hour: number = getReminderHour()): Date {
   return target;
 }
 
+/** The LOCAL calendar date, 'YYYY-MM-DD'. Not the UTC one — between midnight
+ *  and 05:30 in IST the UTC date is still yesterday, and a "fired today"
+ *  marker written in UTC suppressed the next morning's reminder. */
+function localDateKey(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 /** Did we already fire today? (prevents duplicate if the tab reloads mid-day) */
 function hasFiredToday(): boolean {
   if (typeof localStorage === 'undefined') return false;
   const last = localStorage.getItem(STORAGE_KEY_FIRED);
   if (!last) return false;
-  const today = new Date().toISOString().slice(0, 10);
-  return last === today;
+  return last === localDateKey();
 }
 
 function markFiredToday(): void {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY_FIRED, new Date().toISOString().slice(0, 10));
+  localStorage.setItem(STORAGE_KEY_FIRED, localDateKey());
 }
 
 /** The function the notification calls when the user taps it. */

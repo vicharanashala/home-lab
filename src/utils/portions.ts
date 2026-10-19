@@ -16,7 +16,7 @@
  */
 
 import { findCandidatesForIngredient } from './recipeMatch';
-import { unitDimension } from './units';
+import { convertScoop, toBaseUnit } from './units';
 import type {
   HouseholdProfile,
   MealPlanDay,
@@ -108,6 +108,65 @@ const keyOf = (name: string, unit: string) =>
   `${name.trim().toLowerCase().replace(/\s+/g, ' ')}::${unit.trim().toLowerCase() || 'pcs'}`;
 
 /**
+ * How much of a need the kitchen already covers, expressed in the NEED's own
+ * unit.
+ *
+ * Comparing the two raw numbers is how "1 kg of rice" ended up being
+ * compared against a recipe asking for "500 g": 1 < 500, so the shopping
+ * list told the user to buy rice they already had — and, worse, printed
+ * "have 1g", because the stock's number was shown with the need's unit
+ * beside it. 500 g of rice against a 1 kg need was even worse: 500 >= 1, so
+ * the item was marked covered and left off the shopping list entirely.
+ *
+ * Both sides are converted to a common base unit first, and the result is
+ * converted back into the need's unit so the number shown to the user is
+ * always the one that makes sense next to the unit shown.
+ */
+function coveredAmount(
+  need: number,
+  needUnit: string,
+  ingredientName: string,
+  stockItem: StockItem | undefined,
+): number {
+  if (!stockItem || !(need > 0)) return 0;
+
+  const needBase = toBaseUnit(need, needUnit);
+  const stockBase = toBaseUnit(stockItem.quantity, stockItem.unit);
+  if (!needBase || !stockBase) return 0;
+  // An unknown unit cannot be reasoned about, so treat it as "not covered".
+  if (needBase.dimension === 'unknown' || stockBase.dimension === 'unknown') return 0;
+
+  // Both sides expressed in ONE base unit.
+  let needInCommon = needBase.value;
+  let stockInCommon = stockBase.value;
+
+  if (needBase.dimension === 'scoop' && stockBase.dimension !== 'scoop') {
+    // The recipe measures in spoons, the kitchen holds it in grams/ml —
+    // convert the recipe with the ingredient's density, exactly as
+    // `planRecipeDeduction` does, so the two agree.
+    const converted = convertScoop(needInCommon, ingredientName, stockBase.dimension);
+    if (converted === null) return 0;
+    needInCommon = converted;
+  } else if (stockBase.dimension === 'scoop' && needBase.dimension !== 'scoop') {
+    const converted = convertScoop(stockInCommon, ingredientName, needBase.dimension);
+    if (converted === null) return 0;
+    stockInCommon = converted;
+  } else if (needBase.dimension !== stockBase.dimension) {
+    // 200 g does not meaningfully cover a recipe asking for 2 "pcs".
+    return 0;
+  }
+
+  if (!Number.isFinite(needInCommon) || !Number.isFinite(stockInCommon)) return 0;
+
+  // How many base units make up one unit of the need, so the stock amount
+  // can be expressed back in the need's unit.
+  const perNeedUnit = needInCommon / need;
+  if (!Number.isFinite(perNeedUnit) || perNeedUnit === 0) return 0;
+
+  return stockInCommon / perNeedUnit;
+}
+
+/**
  * Work out everything the week needs, and how much of it the kitchen already
  * has. Only entries with a `recipeId` contribute — a hand-typed dish has no
  * known ingredient list, so guessing at one would put the wrong things on the
@@ -160,17 +219,8 @@ export function buildShoppingList(
     };
     const candidates = findCandidatesForIngredient(probe, stock);
     const stockItem = candidates[0];
-    let have = 0;
-    if (stockItem) {
-      // Only compare when the units are the same dimension — 200g does not
-      // meaningfully cover a recipe asking for 2 "pcs".
-      const sameDim =
-        unitDimension(stockItem.unit) === unitDimension(a.unit) ||
-        unitDimension(stockItem.unit) === 'unknown' ||
-        unitDimension(a.unit) === 'unknown';
-      have = sameDim ? stockItem.quantity : 0;
-    }
-    const covered = have >= a.quantity;
+    const have = coveredAmount(a.quantity, a.unit, a.name, stockItem);
+    const covered = have >= a.quantity - 1e-9;
 
     needs.push({
       name: a.name,

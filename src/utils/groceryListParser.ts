@@ -103,8 +103,6 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
     /^(\d+)\s+(medium|large|small|big|whole)\s+(.+)$/i,
     // "3 cloves", "2 pieces", "1 bunch"
     /^(\d+)\s+(clove|cloves|piece|pieces|pcs|packets?|pack|dozen|bunch|bunches|handful)s?\s+(?:of\s+)?(.+)$/i,
-    // bare integer prefix like "1 onion"
-    /^(\d+)\s+([a-z].{2,})$/i,
   ];
 
   for (const re of patterns) {
@@ -120,6 +118,20 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
       }
     }
   }
+
+  // Bare integer prefix like "1 onion" / "2 onions" — there is no unit
+  // word, so the name is the SECOND group and there is no third one. This
+  // used to sit in the pattern list above, where the code read the unit from
+  // group 2 and the name from group 3: group 3 was empty, so the match was
+  // thrown away and the line fell through with the count still glued to the
+  // name — "2 onions" became an item literally called "2 onions", quantity 1,
+  // which then never matched a stock item called "Onion".
+  const bare = line.match(/^(\d+)\s+([a-z].{2,})$/i);
+  if (bare) {
+    const rest = bare[2].trim();
+    if (rest.length >= 2) return { quantity: bare[1], rest };
+  }
+
   return { quantity: '', rest: line };
 }
 
