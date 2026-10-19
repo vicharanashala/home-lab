@@ -66,7 +66,11 @@ export function ConsentModal() {
     const granted = await requestMicrophonePermission();
     updateSettings({ microphoneEnabled: granted === 'granted' });
     if (granted !== 'granted') {
+      // Clear the stored consent too, not just the live switch. Leaving the
+      // consent on while the microphone is off would show the permission as
+      // granted in Settings long after the browser said no.
       setChoices((c) => ({ ...c, microphone: false }));
+      setConsents({ microphone: false });
     }
   };
 
