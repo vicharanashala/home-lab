@@ -18,6 +18,7 @@ import {
   Bell,
   MapPin,
   Sparkles,
+  Mic,
   Camera,
   Users,
   Minus,
@@ -130,6 +131,7 @@ export function SettingsPage() {
     haptics: Vibrate,
     notifications: Bell,
     location: MapPin,
+    microphone: Mic,
     personalization: Sparkles,
   } as const;
 

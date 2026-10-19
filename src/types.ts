@@ -69,6 +69,10 @@ export interface UserConsents {
   location: boolean;
   /** Smart suggestions based on what the user typically cooks/buys. */
   personalization: boolean;
+  /** House Bot may listen when the user taps the mic. Asked on first run so
+   *  the browser prompt happens at a moment the user expects it, rather than
+   *  the first time they happen to try speaking. */
+  microphone?: boolean;
 }
 
 export interface AppSettings {

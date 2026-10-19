@@ -5,6 +5,7 @@ import {
   MapPin,
   Sparkles,
   Shield,
+  Mic,
   X,
 } from 'lucide-react';
 import { Modal } from './Modal';
@@ -14,6 +15,7 @@ import {
   CONSENT_LABELS,
   DEFAULT_CONSENTS,
   requestGeolocation,
+  requestMicrophonePermission,
   requestNotificationPermission,
 } from '../utils/consent';
 import clsx from 'clsx';
@@ -26,6 +28,7 @@ interface ConsentRow {
 
 const ROWS: ConsentRow[] = [
   { key: 'haptics', Icon: Vibrate },
+  { key: 'microphone', Icon: Mic },
   { key: 'notifications', Icon: Bell, comingSoon: true },
   { key: 'location', Icon: MapPin, comingSoon: true },
   { key: 'personalization', Icon: Sparkles },
@@ -37,7 +40,7 @@ const ROWS: ConsentRow[] = [
  * re-opens it from Settings.
  */
 export function ConsentModal() {
-  const { settings, setConsents, markConsentsSeen } = useStore();
+  const { settings, setConsents, markConsentsSeen, updateSettings } = useStore();
   const [choices, setChoices] = useState<UserConsents>(() => ({
     ...DEFAULT_CONSENTS,
     ...settings.consents,
@@ -48,17 +51,38 @@ export function ConsentModal() {
 
   const close = () => setOpen(false);
 
+  /**
+   * Turn a consent into reality, and only if it actually worked.
+   *
+   * A browser that has already decided says nothing and simply fails, so a
+   * request that returns "denied" must NOT leave the switch reading "on" —
+   * House Bot would then sit waiting for a microphone it will never be given.
+   */
+  const applyConsent = async (key: 'microphone', chosen: boolean) => {
+    if (!chosen) {
+      updateSettings({ microphoneEnabled: false });
+      return;
+    }
+    const granted = await requestMicrophonePermission();
+    updateSettings({ microphoneEnabled: granted === 'granted' });
+    if (granted !== 'granted') {
+      setChoices((c) => ({ ...c, microphone: false }));
+    }
+  };
+
   const handleAcceptAll = async () => {
     const all: UserConsents = {
       haptics: true,
       notifications: true,
       location: true,
       personalization: true,
+      microphone: true,
     };
     setConsents(all);
-    // Trigger browser permission prompts for the two that need them.
+    // Trigger browser permission prompts for the ones that need them.
     if (all.notifications) await requestNotificationPermission();
     if (all.location) await requestGeolocation();
+    await applyConsent('microphone', true);
     markConsentsSeen();
     close();
   };
@@ -67,6 +91,7 @@ export function ConsentModal() {
     setConsents(choices);
     if (choices.notifications) await requestNotificationPermission();
     if (choices.location) await requestGeolocation();
+    await applyConsent('microphone', !!choices.microphone);
     markConsentsSeen();
     close();
   };
@@ -77,6 +102,7 @@ export function ConsentModal() {
       notifications: false,
       location: false,
       personalization: false,
+      microphone: false,
     });
     markConsentsSeen();
     close();

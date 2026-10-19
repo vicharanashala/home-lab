@@ -5,7 +5,32 @@ export const DEFAULT_CONSENTS: UserConsents = {
   notifications: false,
   location: false,
   personalization: true,
+  microphone: false,
 };
+
+/**
+ * Ask the browser for the microphone, the same way notifications and location
+ * are asked. Returns whether it was actually granted, NOT merely whether the
+ * prompt was shown — the caller must know the difference, because a browser
+ * that stays silent has decided the answer already and no amount of re-asking
+ * will change it.
+ */
+export async function requestMicrophonePermission(): Promise<
+  'granted' | 'denied' | 'unavailable'
+> {
+  if (typeof navigator === 'undefined') return 'unavailable';
+  if (!navigator.mediaDevices?.getUserMedia) return 'unavailable';
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Release it immediately. Holding the track would leave a recording
+    // indicator lit and would fight House Bot for the device later.
+    stream.getTracks().forEach((t) => t.stop());
+    return 'granted';
+  } catch {
+    return 'denied';
+  }
+}
 
 /**
  * Request permission to send browser push notifications. Resolves with the
@@ -87,6 +112,10 @@ export const CONSENT_LABELS: Record<keyof UserConsents, { title: string; blurb: 
   location: {
     title: 'Location',
     blurb: 'Find nearby stores and delivery options later. (Coming soon)',
+  },
+  microphone: {
+    title: 'Microphone',
+    blurb: 'Let House Bot listen when you speak. Your voice is never recorded to disk.',
   },
   personalization: {
     title: 'Personalized suggestions',
