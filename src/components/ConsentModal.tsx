@@ -45,11 +45,33 @@ export function ConsentModal() {
     ...DEFAULT_CONSENTS,
     ...settings.consents,
   }));
-  const [open, setOpen] = useState(!settings.hasSeenConsents);
+
+  /**
+   * On a brand-new install three sheets want to open at once: the welcome
+   * flow, the household survey and this one. Stacked, the user gets a dimmed
+   * sheet behind a dimmed sheet and the microphone question — the whole point
+   * of this sheet — is buried under the onboarding.
+   *
+   * Both earlier steps are blocking (neither can be dismissed without
+   * finishing), so waiting for them cannot strand the user. Once they are
+   * done this sheet opens on its own, in front, asking for one thing at a
+   * time the way every other permission flow in the app does.
+   */
+  const onboardingComplete =
+    !!settings.hasSeenWelcome &&
+    !!settings.userName?.trim() &&
+    !!settings.household?.completed;
+
+  // The X button means "not now" — the sheet comes back on the next visit.
+  // Only the accept / decline buttons persist the choice, via
+  // `markConsentsSeen`. So dismissal is local state, separate from the
+  // stored consent.
+  const [dismissed, setDismissed] = useState(false);
+  const open = !dismissed && onboardingComplete;
 
   if (settings.hasSeenConsents) return null;
 
-  const close = () => setOpen(false);
+  const close = () => setDismissed(true);
 
   /**
    * Turn a consent into reality, and only if it actually worked.
