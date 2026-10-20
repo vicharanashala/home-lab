@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Mic, MicOff, ShieldAlert, Check } from 'lucide-react';
+import { ExternalLink, Keyboard, Mic, MicOff, ShieldAlert, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
 import { micHost, micPermissionState, requestMicrophone, watchMicPermission } from '../utils/micPermission';
@@ -163,6 +163,36 @@ export function MicrophoneCard() {
           <Check size={12} />
           Ready — the browser will let HomeHub listen.
         </p>
+      )}
+
+      {blocked && (
+        <div className="mt-3 space-y-2">
+          {/* Two ways forward, because "the browser said no" is a dead end
+              for anyone who does not want to dig through browser settings.
+              The first is a different ADDRESS: Chrome stores a microphone
+              decision per address, so another one may still ask. The second
+              needs no browser permission at all — the keyboard's own dictation
+              writes straight into the text box. */}
+          <a
+            href="http://localhost:8789"
+            className="flex items-center gap-2 rounded-xl border border-sage-200 dark:border-sage-800 bg-white dark:bg-ink-800 px-3 py-2 text-[11px] text-sage-700 dark:text-ink-200 hover:bg-sage-50 dark:hover:bg-sage-900/30"
+          >
+            <ExternalLink size={13} className="shrink-0" />
+            <span>
+              <span className="font-semibold">Try the local address</span> —{' '}
+              http://localhost:8789 is a different address, so Chrome may ask again.
+            </span>
+          </a>
+          <p className="flex items-start gap-2 text-[11px] leading-snug text-sage-600 dark:text-ink-300">
+            <Keyboard size={13} className="mt-0.5 shrink-0" />
+            <span>
+              <span className="font-semibold">Or dictate with your keyboard</span> — in
+              Meal Plan, tap &ldquo;Type or dictate the day instead&rdquo;, click the box and
+              press the keyboard&rsquo;s mic (🌐 Fn twice on Mac, 🎤 on your phone). It needs
+              no browser permission at all.
+            </span>
+          </p>
+        </div>
       )}
     </section>
   );
