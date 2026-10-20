@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { useStore } from '../store/useStore';
-import { blockedReason, requestMicrophone, speechRecognitionSupported } from '../utils/micPermission';
+import { blockedReason, policyAllowsMicrophone, requestMicrophone, speechRecognitionSupported } from '../utils/micPermission';
 import type { MicGate } from '../utils/micPermission';
 
 export { speechRecognitionSupported };
@@ -157,12 +157,18 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
   // than the card reading it as off and this hook reading it as on.
   const permitted = settings.microphoneEnabled === true;
   const hasRecognition = speechRecognitionSupported();
+  // Whether the server's own Permissions-Policy header has disabled the
+  // microphone. Computed once: it can only change if the app is redeployed,
+  // and a reload is needed for that anyway.
+  const policyOk = useMemo(() => policyAllowsMicrophone(), []);
   // Name the refusing layer instead of collapsing every failure into "no".
   const micState: MicGate = !hasRecognition
     ? 'unsupported'
-    : !permitted
-      ? 'off'
-      : 'ready';
+    : policyOk === false
+      ? 'blocked'
+      : !permitted
+        ? 'off'
+        : 'ready';
   const canListen = micState === 'ready';
   const [micBusy, setMicBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -192,6 +198,13 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
     const Ctor = recognitionCtor();
     if (!Ctor) {
       setError('This browser cannot listen. Try Chrome or Safari.');
+      return;
+    }
+    // Checked here as well as in micState: this callback can be invoked
+    // directly by a caller, and a recogniser started against a disabled
+    // microphone fails with 'not-allowed' and no explanation.
+    if (policyAllowsMicrophone() === false) {
+      setError(blockedReason());
       return;
     }
     if (!permitted) {

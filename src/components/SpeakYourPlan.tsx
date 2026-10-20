@@ -125,6 +125,15 @@ export function SpeakYourPlan({ onApply }: Props) {
           </div>
         )}
 
+        {/* The engine's own errors. Without this the panel said "Listening"
+            while every transcription was failing, which looks exactly like a
+            microphone that works and does not. */}
+        {whisper.status.error && (
+          <p className="mt-2 text-[11px] leading-snug text-tomato-600 dark:text-tomato-300 break-words">
+            {whisper.status.error}
+          </p>
+        )}
+
         {whisper.transcript && (
           <p className="mt-2 text-xs italic text-sage-700 dark:text-cream-100 break-words">
             “{whisper.transcript}”
@@ -180,6 +189,15 @@ export function SpeakYourPlan({ onApply }: Props) {
       {whisper.status.ready && (
         <p className="text-[10px] text-sage-500 dark:text-ink-400 mt-1">
           {whisper.status.text}
+        </p>
+      )}
+
+      {/* A model that failed to load is the difference between a microphone
+          that is switched off and one that cannot work, and the user has to
+          be told which one it is. */}
+      {whisper.status.error && !whisper.listening && (
+        <p className="text-[11px] leading-snug text-tomato-600 dark:text-tomato-300 mt-1">
+          {whisper.status.error}
         </p>
       )}
 

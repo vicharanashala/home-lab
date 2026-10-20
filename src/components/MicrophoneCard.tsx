@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, Keyboard, Mic, MicOff, ShieldAlert, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
-import { micHost, micPermissionState, requestMicrophone, watchMicPermission } from '../utils/micPermission';
+import { blockedReason, micPermissionState, policyAllowsMicrophone, requestMicrophone, watchMicPermission } from '../utils/micPermission';
 import type { MicPermission } from '../utils/micPermission';
 
 /**
@@ -71,7 +71,12 @@ export function MicrophoneCard() {
   // "your browser will ask permission" copy at exactly the moment the user
   // needed the padlock steps. A block has to be explained whether or not the
   // switch happens to be on.
-  const blocked = perm === 'denied';
+  //
+  // The Permissions API is not enough on its own: when the SERVER's
+  // Permissions-Policy header disables the microphone, the browser still
+  // reports the permission as "granted" and the card would show "Microphone
+  // on" for a mic that cannot possibly work.
+  const blocked = perm === 'denied' || policyAllowsMicrophone() === false;
   /** On AND actually usable. The pill, the knob and aria-checked must all
    *  agree, or the switch contradicts itself on screen. */
   const effective = on && !blocked;
@@ -130,7 +135,7 @@ export function MicrophoneCard() {
             )}
           >
             {blocked
-              ? `Your browser is blocking the microphone for ${micHost()}. Tap the padlock in the address bar, set Microphone to Allow, then switch this on again.`
+              ? blockedReason()
               : on
                 ? 'House Bot will listen while you talk. Audio is never stored by HomeHub.'
                 : blocked
@@ -165,14 +170,19 @@ export function MicrophoneCard() {
         </p>
       )}
 
-      {blocked && (
+      {blocked && policyAllowsMicrophone() !== false && (
         <div className="mt-3 space-y-2">
           {/* Two ways forward, because "the browser said no" is a dead end
               for anyone who does not want to dig through browser settings.
               The first is a different ADDRESS: Chrome stores a microphone
               decision per address, so another one may still ask. The second
               needs no browser permission at all — the keyboard's own dictation
-              writes straight into the text box. */}
+              writes straight into the text box.
+
+              Both hints are about BROWSER settings, so they are hidden when
+              the block came from the server's own Permissions-Policy header:
+              a different address would be blocked exactly the same way, and
+              sending the user there to repeat a failing step is pointless. */}
           <a
             href="http://localhost:8789"
             className="flex items-center gap-2 rounded-xl border border-sage-200 dark:border-sage-800 bg-white dark:bg-ink-800 px-3 py-2 text-[11px] text-sage-700 dark:text-ink-200 hover:bg-sage-50 dark:hover:bg-sage-900/30"

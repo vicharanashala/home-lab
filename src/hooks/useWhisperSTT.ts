@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { blockedReason } from '../utils/micPermission';
 
 /**
  * On-device speech recognition for the meal plan.
@@ -87,6 +88,23 @@ const IDLE: WhisperStatus = { text: '', progress: null, error: null, ready: fals
 /* -------------------------------------------------------------------------- */
 /*  Pure helpers — exported so they can be tested without a microphone      */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Whisper only understands two-letter ISO 639-1 codes.
+ *
+ * transformers.js throws `Language "en-in" is not supported` for anything
+ * else, and the app's own default — English (India), "en-IN" — is exactly
+ * that. So the microphone captured audio, the model loaded, and then EVERY
+ * transcription died on the language option: the one part of the app that
+ * looked fine was the part that could never work.
+ *
+ * Whisper has a single English model, so the regional variant carries no
+ * meaning for it and the base code is the correct answer.
+ */
+export function whisperLanguage(code: string): string {
+  const base = (code || '').trim().toLowerCase().split(/[-_]/)[0];
+  return base || 'en';
+}
 
 export function rms(audio: Float32Array): number {
   let sum = 0;
@@ -298,7 +316,7 @@ export function useWhisperSTT(
 
         const pipe = await ensureModel();
         const result = await pipe(audio, {
-          language,
+          language: whisperLanguage(language),
           task: 'transcribe',
           temperature: 0,
           no_repeat_ngram_size: 3,
@@ -309,6 +327,12 @@ export function useWhisperSTT(
         textRef.current?.(text);
       } catch (err) {
         console.warn('[whisper] transcription failed:', err);
+        // Surfaced rather than swallowed: a transcription that fails quietly
+        // is a microphone that looks alive and is not.
+        setStatus((s) => ({
+          ...s,
+          error: `Could not transcribe: ${(err as any)?.message || err}`,
+        }));
       }
     }
     drainingRef.current = false;
@@ -386,7 +410,11 @@ export function useWhisperSTT(
           error:
             name === 'NotFoundError'
               ? 'No microphone found on this device.'
-              : 'Your browser is blocking the microphone. Allow it from the padlock icon, then try again.',
+              : name === 'NotReadableError'
+                ? 'Another application is using the microphone. Quit it and try again.'
+                // Shared with House Bot's mic button, so a block is explained
+                // the same way everywhere instead of two different stories.
+                : blockedReason(),
         };
       }
       // The user may have cancelled while the permission prompt was open.

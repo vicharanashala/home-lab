@@ -37,9 +37,10 @@ export function micHost(): string {
  * Why the mic is or is not usable, naming the layer responsible.
  *  - 'off'          our switch is off; the browser may be perfectly fine
  *  - 'unsupported'  this browser has no speech recognition at all
+ *  - 'blocked'      the server's Permissions-Policy disabled the feature
  *  - 'ready'        nothing is in the way
  */
-export type MicGate = 'ready' | 'off' | 'unsupported';
+export type MicGate = 'ready' | 'off' | 'unsupported' | 'blocked';
 
 export function speechRecognitionSupported(): boolean {
   if (typeof window === 'undefined') return false;
@@ -63,6 +64,34 @@ export async function micPermissionState(): Promise<MicPermission> {
 }
 
 /**
+ * Is the microphone switched off by the SERVER's Permissions-Policy header?
+ *
+ * `microphone=()` in a response header disables the feature outright: the
+ * browser never offers a prompt, getUserMedia rejects with NotAllowedError,
+ * and no padlock setting or permission reset can change it. When that is the
+ * cause, telling the user to click the padlock is worse than useless — it
+ * sends them to fix a setting that was never broken.
+ *
+ * Returns null when the browser does not expose the policy API, so callers
+ * can fall back to the generic explanation rather than claiming a cause they
+ * have not actually checked.
+ */
+export function policyAllowsMicrophone(): boolean | null {
+  if (typeof document === 'undefined') return null;
+  const doc = document as Document & {
+    permissionsPolicy?: { allowsFeature?: (f: string) => boolean };
+    featurePolicy?: { allowsFeature?: (f: string) => boolean };
+  };
+  const policy = doc.permissionsPolicy || doc.featurePolicy;
+  if (!policy || typeof policy.allowsFeature !== 'function') return null;
+  try {
+    return policy.allowsFeature('microphone') === true;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Why the mic is blocked, in terms the user can act on.
  *
  * The site is named on purpose. Chrome remembers a microphone decision PER
@@ -71,7 +100,18 @@ export async function micPermissionState(): Promise<MicPermission> {
  * does nothing for the others, and the failure looks identical every time.
  */
 export function blockedReason(): string {
-  const host = typeof window !== 'undefined' ? window.location.host : 'this site';
+  // A server-side policy block is not a browser setting, so the padlock
+  // advice below would send the user somewhere useless. Say what actually
+  // happened instead.
+  if (policyAllowsMicrophone() === false) {
+    return (
+      'HomeHub’s own server told the browser not to allow the microphone ' +
+      '(a Permissions-Policy header with microphone disabled). ' +
+      'This is not a problem with your browser or your Mac — no permission ' +
+      'setting will fix it. Reload the page after the app has been updated.'
+    );
+  }
+  const host = micHost();
   return (
     `Your browser is blocking the microphone for ${host}. ` +
     'Click the padlock icon just left of the address, set Microphone to Allow, then tap the mic again. ' +
@@ -121,7 +161,19 @@ export function watchMicPermission(onChange: (state: MicPermission) => void): ()
  */
 export async function requestMicrophone(): Promise<MicRequest> {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-    return { ok: false, state: 'denied', reason: 'This device cannot record audio.' };
+    // navigator.mediaDevices is undefined in an insecure context (plain http on
+    // a real host, or file://). Saying "this device cannot record audio" made
+    // it sound like the microphone was broken hardware, when in fact the
+    // browser simply refused to expose the API.
+    const insecure = typeof window !== 'undefined' && !window.isSecureContext;
+    return {
+      ok: false,
+      state: 'denied',
+      reason: insecure
+        ? 'This address is not secure, so the browser will not offer a microphone here. ' +
+          'Open HomeHub over https:// or at http://localhost:8789 — both are secure contexts.'
+        : 'This browser cannot record audio.',
+    };
   }
 
   let stream: MediaStream;
@@ -131,6 +183,13 @@ export async function requestMicrophone(): Promise<MicRequest> {
     const name = (err as { name?: string })?.name || '';
     if (name === 'NotFoundError') {
       return { ok: false, state: 'denied', reason: 'No microphone found on this device.' };
+    }
+    if (name === 'NotReadableError') {
+      return {
+        ok: false,
+        state: 'denied',
+        reason: 'Another application is using the microphone. Quit it and try again.',
+      };
     }
     return { ok: false, state: 'denied', reason: blockedReason() };
   }

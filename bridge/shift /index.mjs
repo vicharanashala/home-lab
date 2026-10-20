@@ -179,21 +179,96 @@ app.use(express.json({ limit: '4mb' }));
 // The policy is deliberately permissive where the app needs it: inline styles
 // (React inline style props, the aurora background) and blob:/data: images
 // (photo previews, canvas-downscaled attachments) are both required.
+//
+// INLINE SCRIPT HASHES
+// The SPA shell contains an inline <script type="importmap"> that maps the
+// bare specifier "onnxruntime-web/webgpu" onto the vendored ONNX Runtime
+// build. Chrome enforces script-src on import maps, so with a strict policy
+// that inline script was refused and the mapping never applied — which broke
+// the on-device Whisper engine with "Failed to resolve module specifier".
+//
+// The fix is a hash rather than 'unsafe-inline': the hash is computed from
+// the built index.html, so it stays correct when the import map changes and
+// still refuses every OTHER inline script.
+let inlineScriptHashes = [];
+let inlineHashMtime = 0;
+
+/** SHA-256 (base64) of every inline <script> body in the given HTML. */
+function computeInlineScriptHashes(html) {
+  const out = [];
+  // Only scripts WITHOUT a src attribute: an external script is already
+  // covered by 'self' and must not contribute a hash.
+  const re = /<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    out.push(`'sha256-${crypto.createHash('sha256').update(m[1], 'utf8').digest('base64')}'`);
+  }
+  return out;
+}
+
+/**
+ * Re-read the hashes when index.html changes.
+ *
+ * Re-read on a change rather than once at boot, because a rebuild replaces
+ * index.html while the bridge keeps running; a hash captured at boot would
+ * then no longer match and the import map would be refused again.
+ */
+function refreshInlineScriptHashes() {
+  try {
+    const file = path.join(WEB_DIST_DIR, 'index.html');
+    if (!existsSync(file)) return;
+    const st = statSync(file);
+    if (st.mtimeMs === inlineHashMtime) return;
+    inlineHashMtime = st.mtimeMs;
+    inlineScriptHashes = computeInlineScriptHashes(readFileSync(file, 'utf8'));
+  } catch {
+    // No build, or it is unreadable — the shell is served without a hash and
+    // the inline import map simply stays blocked.
+  }
+}
+
 app.use((req, res, next) => {
+  refreshInlineScriptHashes();
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(self), microphone=()');
+  // microphone=(self) is REQUIRED, and the empty allowlist that used to be
+  // here ("microphone=()") silently killed every microphone in the app.
+  //
+  // An empty allowlist does not merely withhold permission — it DISABLES the
+  // feature for the document. The browser then refuses getUserMedia with
+  // NotAllowedError and refuses SpeechRecognition with 'not-allowed', and no
+  // amount of clicking the padlock or resetting site permissions changes
+  // anything, because the block is in OUR response header rather than in the
+  // browser's settings. The app blamed the padlock for this for weeks.
+  //
+  // (self) is the correct value: the microphone is available to HomeHub's own
+  // pages and to nothing else.
+  res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(self), microphone=(self)');
   res.setHeader(
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      "script-src 'self'",
+      // 'wasm-unsafe-eval' is required by the on-device Whisper engine: ONNX
+      // Runtime is a WebAssembly module, and Chrome gates WASM compilation on
+      // script-src. Without this directive the browser refused to compile it
+      // with "violates the following Content Security policy directive",
+      // which stopped the speech-to-text microphone dead at the first model
+      // load. It permits WASM only — eval() stays disallowed.
+      //
+      // The trailing hashes whitelist the inline import map (see above) and
+      // nothing else.
+      ["script-src 'self' 'wasm-unsafe-eval'", ...inlineScriptHashes].join(' '),
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
       "img-src 'self' data: blob:",
       "media-src 'self' blob:",
-      "connect-src 'self' blob: data: https://tfhub.dev https://storage.googleapis.com",
+      // HuggingFace is required by the on-device Whisper engine: it is where
+      // the speech-to-text model is downloaded from on first use. Without it
+      // the "Speak your plan" microphone could never load a model and the
+      // download failed with a bare CSP error. The cdn-lfs hosts are where
+      // those model files are actually served from.
+      "connect-src 'self' blob: data: https://huggingface.co https://*.huggingface.co https://*.hf.co https://tfhub.dev https://storage.googleapis.com",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -2129,7 +2204,7 @@ function minimaxConfigured() {
 // injected into the prompt so House Bot remembers context across days.
 //
 // Storage: ~/.vision-overwatch/housebot-memory.json  (array, capped).
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 

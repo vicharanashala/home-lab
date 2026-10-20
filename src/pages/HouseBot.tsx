@@ -11,6 +11,7 @@ import {
 } from '../utils/csvRecipeSearch';
 import { parseGroceryList } from '../utils/groceryListParser';
 import { bridgeHeaders } from '../utils/bridgeToken';
+import { blockedReason } from '../utils/micPermission';
 import { applyAgentActions } from '../utils/agentActions';
 import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -1899,6 +1900,10 @@ export function HouseBotPage() {
                 void voice.enableMicrophone(onHeard);
               } else if (voice.micState === 'unsupported') {
                 toast('This browser can’t listen — try Chrome or Safari', 'warning');
+              } else if (voice.micState === 'blocked') {
+                // The server's own policy disabled the microphone. No browser
+                // setting can undo it, so say so instead of failing silently.
+                toast(blockedReason(), 'warning');
               } else {
                 voice.startListening(onHeard);
               }
@@ -1910,7 +1915,9 @@ export function HouseBotPage() {
                   ? 'Turn on the microphone'
                   : voice.micState === 'unsupported'
                     ? 'Voice input is not supported by this browser'
-                    : 'Speak your message'
+                    : voice.micState === 'blocked'
+                      ? 'The microphone is disabled by this site'
+                      : 'Speak your message'
             }
             title={
               voice.listening
@@ -1919,7 +1926,9 @@ export function HouseBotPage() {
                   ? 'Microphone is switched off — tap to turn it on'
                   : voice.micState === 'unsupported'
                     ? 'Voice input needs Chrome or Safari'
-                    : 'Speak your message'
+                    : voice.micState === 'blocked'
+                      ? 'The microphone is disabled by this site'
+                      : 'Speak your message'
             }
             aria-pressed={voice.listening}
             style={{

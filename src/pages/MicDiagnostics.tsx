@@ -56,6 +56,8 @@ function explainError(err: unknown): ProbeResult {
           'The browser or the operating system refused the microphone. The page cannot ' +
           'distinguish between a blocked site permission and a block at the OS level.',
         fix: [
+          'Check the "Permissions-Policy" row above: if it says the microphone is DISABLED, ' +
+            'the server is blocking it and no browser setting will help.',
           'Address-bar icon (left of the URL) → Site settings → Microphone → Allow.',
           'Still blocked? System Settings → Privacy & Security → Microphone, and check ' +
             'that Google Chrome is switched ON. On macOS this permission belongs to the ' +
@@ -122,6 +124,22 @@ export function MicDiagnostics() {
     const hasMediaDevices = !!navigator.mediaDevices;
     const hasGum = !!navigator.mediaDevices?.getUserMedia;
 
+    // Whether the SERVER's Permissions-Policy header allows the microphone.
+    // This is the check that matters most and used to be missing: an empty
+    // allowlist ("microphone=()") disables the microphone outright, and
+    // nothing in the browser's permission settings shows it. The browser
+    // even reports the permission as "granted" while refusing every request.
+    const policy = (document as Document & {
+      permissionsPolicy?: { allowsFeature?: (f: string) => boolean };
+      featurePolicy?: { allowsFeature?: (f: string) => boolean };
+    }).permissionsPolicy || (document as Document & {
+      featurePolicy?: { allowsFeature?: (f: string) => boolean };
+    }).featurePolicy;
+    const policyAllows =
+      policy && typeof policy.allowsFeature === 'function'
+        ? policy.allowsFeature('microphone')
+        : null;
+
     const out: Check[] = [
       {
         label: 'Origin',
@@ -154,6 +172,22 @@ export function MicDiagnostics() {
         meaning: hasGum
           ? 'The browser can be asked for audio here.'
           : 'Without this the microphone cannot be requested at all.',
+      },
+      {
+        label: 'Permissions-Policy',
+        value:
+          policyAllows === null
+            ? 'not reported'
+            : policyAllows
+              ? 'microphone allowed'
+              : 'microphone DISABLED',
+        level: policyAllows === false ? 'bad' : 'ok',
+        meaning:
+          policyAllows === false
+            ? 'The server sent a Permissions-Policy header that disables the microphone. This is a fault in the server, not in your browser settings — no padlock or permission reset can undo it.'
+            : policyAllows === null
+              ? 'This browser does not report the policy, so it cannot be checked from here.'
+              : 'The server has not disabled the microphone.',
       },
     ];
     setChecks(out);
