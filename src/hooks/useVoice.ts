@@ -174,10 +174,14 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
   const finalRef = useRef<((text: string) => void) | null>(null);
   /** A start requested by enableMicrophone, waiting for the setting to flip. */
   const pendingStartRef = useRef<((text: string) => void) | null>(null);
+  /** True once the user has deliberately stopped, so the auto-restart after a
+   *  brief silence does not fight them. */
+  const stoppedRef = useRef(false);
   const abortRef = useRef<AbortController>(new AbortController());
   const canSpeak = speechSynthesisSupported();
 
   const stopListening = useCallback(() => {
+    stoppedRef.current = true;
     try { recRef.current?.stop(); } catch { /* already stopped */ }
     recRef.current = null;
     setListening(false);
@@ -196,6 +200,7 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
     }
     setError(null);
     finalRef.current = onFinal;
+    stoppedRef.current = false;
 
     try {
       recRef.current?.abort();
@@ -225,12 +230,13 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
     rec.onerror = (e: any) => {
       const code = e?.error;
       // A brief silence ends Chrome's recogniser even in continuous mode.
-      // That is not the user stopping, so restart rather than reporting an
-      // error the user can do nothing about.
+      // That is not the user stopping, so the restart happens in `onend`
+      // below. Calling start() from here threw InvalidStateError — the
+      // recogniser is still "started" until onend fires — and the throw was
+      // swallowed, so the mic died after the first silence and the code
+      // written to prevent exactly that never ran.
       if (code === 'no-speech') {
-        try { rec.start(); } catch { /* already restarting */ }
         setError(null);
-        setListening(true);
         return;
       }
       setError(
@@ -247,9 +253,26 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
       setListening(false);
     };
     rec.onend = () => {
-      setListening(false);
-      setInterim('');
-      recRef.current = null;
+      // Only give up the reference if this is still the live recogniser. The
+      // ABORTED instance fires onend too, and it does so after the new one is
+      // installed — clearing the ref unconditionally orphaned the new
+      // recogniser, so nothing could stop it and the mic never released.
+      const isCurrent = recRef.current === rec;
+      if (isCurrent) {
+        recRef.current = null;
+        setListening(false);
+        setInterim('');
+      }
+      // Chrome ends the recogniser after a pause even in continuous mode.
+      // Restart it, unless the user asked to stop.
+      if (isCurrent && !stoppedRef.current) {
+        try {
+          rec.start();
+          setListening(true);
+        } catch {
+          // Already starting — nothing to do.
+        }
+      }
     };
 
     recRef.current = rec;
