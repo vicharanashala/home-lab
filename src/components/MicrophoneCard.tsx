@@ -161,7 +161,7 @@ export function MicrophoneCard() {
       {effective && (
         <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-sage-600 dark:text-sage-300">
           <Check size={12} />
-          Ready — look for the mic button in House Bot.
+          Ready — the browser will let HomeHub listen.
         </p>
       )}
     </section>
