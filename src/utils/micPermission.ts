@@ -20,6 +20,20 @@
 export type MicPermission = 'granted' | 'denied' | 'prompt' | 'unknown';
 
 /**
+ * The origin the browser is answering about.
+ *
+ * Chrome stores a microphone decision PER ORIGIN, so "allow it in Chrome"
+ * is ambiguous when the app has been opened on a Tailscale hostname, on
+ * localhost, and on a LAN address — allowing one does nothing for the
+ * others, and the failure looks identical every time. Naming the host is
+ * what turns "it is still blocked" into "fix THIS address".
+ */
+export function micHost(): string {
+  if (typeof window === 'undefined') return 'this site';
+  return window.location.host || 'this site';
+}
+
+/**
  * Why the mic is or is not usable, naming the layer responsible.
  *  - 'off'          our switch is off; the browser may be perfectly fine
  *  - 'unsupported'  this browser has no speech recognition at all

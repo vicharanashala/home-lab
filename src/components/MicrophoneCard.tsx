@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Mic, MicOff, ShieldAlert, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
-import { micPermissionState, requestMicrophone, watchMicPermission } from '../utils/micPermission';
+import { micHost, micPermissionState, requestMicrophone, watchMicPermission } from '../utils/micPermission';
 import type { MicPermission } from '../utils/micPermission';
 
 /**
@@ -130,7 +130,7 @@ export function MicrophoneCard() {
             )}
           >
             {blocked
-              ? 'Your browser is blocking it. Tap the padlock in the address bar, set Microphone to Allow, then switch this on again.'
+              ? `Your browser is blocking the microphone for ${micHost()}. Tap the padlock in the address bar, set Microphone to Allow, then switch this on again.`
               : on
                 ? 'House Bot will listen while you talk. Audio is never stored by HomeHub.'
                 : blocked
