@@ -1,5 +1,20 @@
 # Agent instructions
 
+## The permanent link
+
+**https://narayana.tailac25b4.ts.net** is the permanent address for this
+app. The owner's own words: *"this will be our permanent link."*
+
+- Served by Tailscale Serve (tailnet only) → `http://127.0.0.1:8789`, where
+  the bridge runs the API and serves the built SPA from `dist/`.
+- The House Bot lives at **https://narayana.tailac25b4.ts.net/house-bot** —
+  that is the page the owner works from.
+- `http://localhost:8789` and `http://127.0.0.1:8789` also work, but they
+  are **different origins**: each keeps its own localStorage, so each holds
+  its own grocery list. The ts.net address is the one with the real data.
+- The hostname is stable as long as the machine is on the tailnet. Nothing
+  about the link depends on a public URL or a tunnel.
+
 ## Commit after every change
 
 **After finishing any change to this app — a feature, a bug fix, a UI tweak,
