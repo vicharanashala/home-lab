@@ -1,0 +1,55 @@
+src/App.tsx TS6133 'location' is declared but its value is never read.
+src/components/AddStockModal.tsx TS6133 'bulkInputRef' is declared but its value is never read.
+src/components/AddStockModal.tsx TS6133 'onSwitchToManual' is declared but its value is never read.
+src/components/AddStockModal.tsx TS6133 'photoBlob' is declared but its value is never read.
+src/components/ConsentModal.tsx TS6133 'X' is declared but its value is never read.
+src/components/ConsentModal.tsx TS6133 'key' is declared but its value is never read.
+src/components/EndOfDayMeals.tsx TS6133 'ChefHat' is declared but its value is never read.
+src/components/EndOfDayMeals.tsx TS6133 'Plus' is declared but its value is never read.
+src/components/EndOfDayMeals.tsx TS6133 'Sparkles' is declared but its value is never read.
+src/components/EndOfDayMeals.tsx TS6133 'pickAmount' is declared but its value is never read.
+src/components/EndOfDayMeals.tsx TS6133 'planRecipeDeduction' is declared but its value is never read.
+src/components/EndOfDayMeals.tsx TS6133 'q' is declared but its value is never read.
+src/components/FoodTrainerModal.tsx TS6133 'Sparkles' is declared but its value is never read.
+src/components/FoodTrainerModal.tsx TS6133 'TrainingExample' is declared but its value is never read.
+src/components/FoodTrainerModal.tsx TS6133 'loadTrainingExamples' is declared but its value is never read.
+src/components/StoreDetailModal.tsx TS6133 'p' is declared but its value is never read.
+src/components/WelcomeModal.tsx TS6133 'Icon' is declared but its value is never read.
+src/components/WelcomeModal.tsx TS6133 'useMemo' is declared but its value is never read.
+src/components/icons/DishIcons.tsx TS6196 'Recipe' is declared but never used.
+src/pages/Dashboard.tsx TS6133 'dietEmoji' is declared but its value is never read.
+src/pages/Dashboard.tsx TS6133 'title' is declared but its value is never read.
+src/pages/Discover.tsx TS6133 'ArrowRight' is declared but its value is never read.
+src/pages/Discover.tsx TS6133 'ChefHat' is declared but its value is never read.
+src/pages/Discover.tsx TS6133 'Link' is declared but its value is never read.
+src/pages/Discover.tsx TS6133 'recipeById' is declared but its value is never read.
+src/pages/Grocery.tsx TS6133 'getCategory' is declared but its value is never read.
+src/pages/HouseBot.tsx TS6133 'DishIcon' is declared but its value is never read.
+src/pages/HouseBot.tsx TS6133 'Send' is declared but its value is never read.
+src/pages/HouseBot.tsx TS6133 'query' is declared but its value is never read.
+src/pages/HouseBot.tsx TS6133 'searchCsvRecipes' is declared but its value is never read.
+src/pages/MealPlan.tsx TS6133 'Trash2' is declared but its value is never read.
+src/pages/MealPlan.tsx TS6133 'suggestCategory' is declared but its value is never read.
+src/pages/Settings.tsx TS6133 'force' is declared but its value is never read.
+src/pages/Settings.tsx TS6133 'scheduleEndOfDayReminder' is declared but its value is never read.
+src/pages/Settings.tsx TS6196 'ThemeMode' is declared but never used.
+src/pages/Stock.tsx TS6133 'AlertTriangle' is declared but its value is never read.
+src/pages/Stores.tsx TS6133 'Languages' is declared but its value is never read.
+src/pages/Stores.tsx TS6133 'Search' is declared but its value is never read.
+src/pages/Stores.tsx TS6133 'SettingsIcon' is declared but its value is never read.
+src/pages/Stores.tsx TS6133 'Star' is declared but its value is never read.
+src/pages/Stores.tsx TS6133 'toast' is declared but its value is never read.
+src/pages/Stores.tsx TS6133 'useEffect' is declared but its value is never read.
+src/store/useStore.ts TS6133 'unitDimension' is declared but its value is never read.
+src/store/useStore.ts TS6196 'ThemeMode' is declared but never used.
+src/utils/bridgeToken.ts TS6196 'ViteEnv' is declared but never used.
+src/utils/foodClassifier.ts TS6133 'KNOWN_LOCAL_VEG_CANONICAL' is declared but its value is never read.
+src/utils/foodClassifier.ts TS6133 'loadTrainingExamples' is declared but its value is never read.
+src/utils/foodClassifier.ts TS6196 'OverwatchReply' is declared but never used.
+src/utils/mealSuggest.ts TS6133 'household' is declared but its value is never read.
+src/utils/mealSuggest.ts TS6133 'servings' is declared but its value is never read.
+src/utils/mealSuggest.ts TS6196 'MealPlanEntry' is declared but never used.
+src/utils/recipeMatch.ts TS6133 'unitDimension' is declared but its value is never read.
+src/utils/substitutions.ts TS6133 'PANTRY_STAPLE' is declared but its value is never read.
+src/utils/substitutions.ts TS6133 'UNIVERSAL_RATIO' is declared but its value is never read.
+src/utils/substitutions.ts TS6133 'reasonFor' is declared but its value is never read.

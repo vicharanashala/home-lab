@@ -1,0 +1,26 @@
+#!/bin/bash
+# HomeHub pre-commit hook.
+#
+# Every agent that commits in this repo passes through here. The hook is
+# tracked in git (under .githooks/) rather than left in .git/hooks/, because
+# .git/hooks is not versioned — a hook that only exists on one machine is not
+# a rule, it is a suggestion.
+#
+# The repository is configured to use it with:
+#     git config core.hooksPath .githooks
+#
+# Bypass with `git commit --no-verify` only when a fix is urgent and the
+# failure is understood. Say why in the commit message.
+#
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+GATE="$ROOT/scripts/quality-gate.sh"
+
+if [ ! -x "$GATE" ]; then
+  echo "pre-commit: quality gate missing at scripts/quality-gate.sh — skipping" >&2
+  exit 0
+fi
+
+"$GATE"
+exit $?

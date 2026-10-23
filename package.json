@@ -9,6 +9,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
+    "test": "node scripts/test-spoken-plan.mjs",
+    "check": "bash scripts/quality-gate.sh",
+    "check:baseline": "bash scripts/quality-gate.sh --update-baseline",
     "server": "npm --prefix server install && npm --prefix server run dev",
     "server:start": "npm --prefix server start"
   },
