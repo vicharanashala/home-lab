@@ -12,9 +12,15 @@ dist.retired/
 build/
 *.tsbuildinfo
 
-# The lock scripts/build-app.sh takes while it is building. It is a
-# directory, not a file, so it needs its own rule to stay out of the index.
-.build.lock/
+# The lock scripts/build-app.sh takes while it is building, and the holder's
+# own copy of the identity behind it. The lock is a plain file — a hard link to
+# that identity — so a rule with a trailing slash would not match it.
+#
+# The identity file is named .build.lock.info.<pid>, which is the name
+# scripts/lib/build-lock.sh writes. A rule for a name the lock never creates
+# leaves the real one untracked-but-not-ignored, and `git add -A` sweeps it in.
+.build.lock
+.build.lock.info.*
 
 # TypeScript/Vite emit these next to the sources; they are generated.
 vite.config.js
