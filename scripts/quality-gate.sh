@@ -220,27 +220,32 @@ fi
 
 DIFF_BLOB="$(git diff --cached --no-color)"
 LEAKED=""
+# The scan itself lives in scripts/lib/secret-scan.sh so that it can be
+# tested on its own — the gate runs against the real repository's index, so
+# a bug in the scan cannot be shown by running the gate. It is sourced from
+# the exported index when it is there, because everything else in this gate
+# is checked against the staged commit rather than the working tree.
+if [ -f "$CHECK_DIR/scripts/lib/secret-scan.sh" ]; then
+  . "$CHECK_DIR/scripts/lib/secret-scan.sh"
+else
+  . "$ROOT/scripts/lib/secret-scan.sh"
+fi
+
+# The scan reads the diff from a file rather than from a pipe. Piping it
+# into `grep -q` fails open: grep stops at the first match, the writer dies
+# of SIGPIPE, and under `set -o pipefail` the pipeline reports "not found"
+# for a diff that plainly contains the secret. See scripts/lib/secret-scan.sh.
+DIFF_FILE="$WORK/gate-diff.txt"
+printf '%s' "$DIFF_BLOB" > "$DIFF_FILE"
+
 # HH_ENV_FILES lets the scan be tested against a synthetic secret instead of
 # the real one. The default is the real env files.
 ENV_FILES="${HH_ENV_FILES:-.env .env.production}"
-for env_file in $ENV_FILES; do
-  [ -f "$env_file" ] || continue
-  while IFS= read -r secret; do
-    key="${secret%%=*}"
-    value="${secret#*=}"
-    # Skip blank, placeholder and too-short values — they cause false positives.
-    case "$value" in
-      ""|changeme*|your-*|example*|placeholder*) continue ;;
-    esac
-    [ "${#value}" -lt 8 ] && continue
-    if printf '%s' "$DIFF_BLOB" | grep -qF -- "$value"; then
-      LEAKED="$LEAKED\n     $key (value from $env_file)"
-    fi
-  done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file" 2>/dev/null)
-done
+LEAKED="$(leak_scan "$DIFF_FILE" $ENV_FILES)"
 
 if [ -n "$LEAKED" ]; then
-  bad "this commit contains secret values from .env:$LEAKED"
+  bad "this commit contains secret values from .env:"
+  printf '%s\n' "$LEAKED"
 else
   say "   ✓ no .env values in this commit"
 fi
