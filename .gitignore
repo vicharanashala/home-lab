@@ -38,3 +38,15 @@ npm-debug.log*
 # On-device Whisper runtime (~67 MB of ONNX wasm). Copied in by
 # scripts/setup-whisper-vendor.sh; the worklet that feeds it IS tracked.
 public/whisper/vendor/
+
+# ── throwaway scratch files ─────────────────────────────────────────────
+# Agents work by dropping scratch files into scripts/ and then committing
+# with `git add -A`, which sweeps up anything untracked. Two kinds showed up
+# that must never be committed:
+#   scripts/__leakprobe.txt   a synthetic secret used to try the leak scanner
+#   scripts/proto-match.py    a prototype of the spoken-recipe matcher
+# The first is a credential-shaped string sitting in the working tree, and the
+# second is throwaway code that the TypeScript version already replaced.
+# Throwaway work belongs in /tmp, which is where these now live.
+scripts/__*.txt
+scripts/proto-*.py
