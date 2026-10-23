@@ -10,7 +10,8 @@ import { AutocompleteInput } from '../components/AutocompleteInput';
 import { SpeakYourPlan } from '../components/SpeakYourPlan';
 import type { Suggestion } from '../components/AutocompleteInput';
 import { findCandidatesForIngredient } from '../utils/recipeMatch';
-import { dishCore, normalizeDish, CONFIDENT_SCORE } from '../utils/spokenRecipeMatch';
+import { dishCore, normalizeDish } from '../utils/spokenRecipeMatch';
+import { spokenPlanEntries } from '../utils/spokenPlanEntries';
 import { suggestCategory } from '../utils/categorySuggest';
 import { DishIcon } from '../components/icons/DishIcons';
 import { MealTypeIcon } from '../components/icons/AppIcons';
@@ -874,35 +875,16 @@ export default function MealPlanPage() {
                   catalogue={catalogue}
                   preferredIds={preferredIds}
                   onApply={(plan, resolutions) => {
-                    let filled = 0;
-                    (['breakfast', 'lunch', 'dinner'] as const).forEach((slot) => {
-                      const name = plan[slot]?.trim();
-                      if (!name) return;               // never mentioned: leave alone
-                      const existing = dayPlan?.[slot];
-                      // A dish that was matched to a real recipe carries its
-                      // id and emoji, so the plan links to the recipe and the
-                      // grocery list can work out what to buy. Before this,
-                      // a spoken dish was stored as a bare string and linked
-                      // to nothing.
-                      const res = resolutions[slot];
-                      const recipe =
-                        res?.best && res.best.score >= CONFIDENT_SCORE ? res.best.recipe : null;
-                      setMealPlanSlot(day, slot, {
-                        name,
-                        slot,
-                        ...(recipe ? { recipeId: recipe.id, emoji: recipe.emoji } : {}),
-                        // Keep the portion size this day already used rather than
-                        // resetting it; default to a small household.
-                        servings: existing?.servings ?? 2,
-                        createdAt: Date.now(),
-                      });
-                      filled++;
-                    });
+                    // The entries to write, and the portion size that goes
+                    // with them, are decided in one place so that every way
+                    // of putting a dish on a day agrees.
+                    const entries = spokenPlanEntries(plan, resolutions, dayPlan, household);
+                    entries.forEach(({ slot, entry }) => setMealPlanSlot(day, slot, entry));
                     toast(
-                      filled
-                        ? `Added ${filled} meal${filled === 1 ? '' : 's'} by voice`
+                      entries.length
+                        ? `Added ${entries.length} meal${entries.length === 1 ? '' : 's'} by voice`
                         : 'Nothing was recognised to add',
-                      filled ? 'success' : 'warning',
+                      entries.length ? 'success' : 'warning',
                     );
                   }}
                 />
