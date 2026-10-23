@@ -116,6 +116,8 @@ export function MicDiagnostics() {
   const streamRef = useRef<MediaStream | null>(null);
   const levelRef = useRef<number>(0);
   const [level, setLevel] = useState(0);
+  /** False once the page has gone away, so the meter stops touching state. */
+  const aliveRef = useRef(true);
 
   /* ---- everything the page can see without asking for anything ---- */
   const runStaticChecks = useCallback(() => {
@@ -228,6 +230,12 @@ export function MicDiagnostics() {
 
       // A visible level meter, so "live" is demonstrated rather than asserted.
       try {
+        // Release any earlier context before opening another one.
+        const prevCtx = (window as any).__micCtx;
+        if (prevCtx) {
+          void prevCtx.close?.();
+          delete (window as any).__micCtx;
+        }
         const Ctx = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new Ctx();
         if (ctx.state === 'suspended') await ctx.resume();
@@ -237,11 +245,16 @@ export function MicDiagnostics() {
         src.connect(an);
         const data = new Uint8Array(an.frequencyBinCount);
         const tick = () => {
+          // The loop re-arms itself while the stream is live, so it has to
+          // stop on the way out too — otherwise it keeps running after the
+          // page is left, calling setLevel on a component that is no longer
+          // there.
+          if (!aliveRef.current) return;
           an.getByteFrequencyData(data);
           const avg = data.reduce((a, b) => a + b, 0) / data.length;
           levelRef.current = avg;
           setLevel(avg);
-          if (streamRef.current) requestAnimationFrame(tick);
+          if (aliveRef.current && streamRef.current) requestAnimationFrame(tick);
         };
         tick();
         (window as any).__micCtx = ctx;
@@ -257,14 +270,32 @@ export function MicDiagnostics() {
   const stopMic = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-    void (window as any).__micCtx?.close?.();
+    const ctx = (window as any).__micCtx;
+    if (ctx) {
+      void ctx.close?.();
+      delete (window as any).__micCtx;
+    }
     setLive(false);
     setLevel(0);
   };
 
   // Never leave the recording indicator on.
-  useEffect(() => () => {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      // The stream has to be cleared as well as stopped: the level meter
+      // re-arms itself while the stream is truthy, so leaving it set keeps
+      // the loop running after the page is gone. The AudioContext is closed
+      // here too — it was only ever closed by the Stop button.
+      streamRef.current = null;
+      const ctx = (window as any).__micCtx;
+      if (ctx) {
+        void ctx.close?.();
+        delete (window as any).__micCtx;
+      }
+    };
   }, []);
 
   return (

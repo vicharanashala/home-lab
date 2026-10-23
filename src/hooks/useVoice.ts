@@ -127,21 +127,52 @@ export interface UseVoice {
   cancel: () => void;
 }
 
-/** Play raw WAV bytes. Resolves when playback ends. */
-function playWav(blob: Blob): Promise<void> {
+/**
+ * A WAV reply that is currently playing.
+ *
+ * The element is kept in a ref because it has to be reachable from
+ * `stopSpeaking()`. While it lived as a local variable inside `playWav()`,
+ * nothing outside could reach it: aborting the fetch only stopped the
+ * download, and `speechSynthesis.cancel()` only touches the browser's own
+ * voice — so a reply that had already begun playing could not be silenced,
+ * and a second reply started a second player on top of it.
+ */
+interface WavPlayback {
+  el: HTMLAudioElement;
+  /** Pause it, release the blob URL and settle the playback promise. */
+  cancel: () => void;
+}
+
+/**
+ * Play raw WAV bytes. Resolves when playback ends or is cancelled.
+ *
+ * The current playback is published through `slot` so it can be stopped.
+ */
+function playWav(blob: Blob, slot: { current: WavPlayback | null }): Promise<void> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
     const el = new Audio(url);
-    const done = () => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
       URL.revokeObjectURL(url);
+      if (slot.current?.el === el) slot.current = null;
       resolve();
     };
-    el.addEventListener('ended', done, { once: true });
-    el.addEventListener('error', done, { once: true });
+    el.addEventListener('ended', finish, { once: true });
+    el.addEventListener('error', finish, { once: true });
+    slot.current = {
+      el,
+      cancel: () => {
+        try { el.pause(); } catch { /* not playing */ }
+        finish();
+      },
+    };
     // Autoplay can be refused before any user gesture. Tapping the read-aloud
     // toggle IS that gesture, so this normally succeeds; if it doesn't, fall
     // back rather than leaving the user with silence and no explanation.
-    el.play().catch(done);
+    el.play().catch(finish);
   });
 }
 
@@ -184,6 +215,10 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
    *  brief silence does not fight them. */
   const stoppedRef = useRef(false);
   const abortRef = useRef<AbortController>(new AbortController());
+  /** The WAV reply that is playing right now, if any. */
+  const wavRef = useRef<WavPlayback | null>(null);
+  /** The reply currently being prepared, so it can be marked cancelled. */
+  const speakTokenRef = useRef<{ cancelled: boolean } | null>(null);
   const canSpeak = speechSynthesisSupported();
 
   const stopListening = useCallback(() => {
@@ -304,6 +339,18 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
   const stopSpeaking = useCallback(() => {
     abortRef.current.abort();
     abortRef.current = new AbortController();
+    // Mark the reply in flight as cancelled. Without this the aborted fetch
+    // fell through to the browser's synthesiser, so "stop reading replies
+    // aloud" made the app START talking.
+    if (speakTokenRef.current) speakTokenRef.current.cancelled = true;
+    // Silence a neural reply that is already playing: the abort above only
+    // stops the download, and `speechSynthesis.cancel()` only touches the
+    // browser's own voice.
+    const playback = wavRef.current;
+    if (playback) {
+      playback.cancel();
+      wavRef.current = null;
+    }
     setSpeaking(false);
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -323,10 +370,14 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
     const clean = (text || '').replace(/[*_`#]/g, '').replace(/\s+/g, ' ').trim();
     if (!clean) return;
 
-    window.speechSynthesis?.cancel();
+    // Only one reply at a time. Two replies arriving a few seconds apart
+    // used to overlap: the second started its own player while the first was
+    // still talking, and neither could be stopped.
+    stopSpeaking();
 
     setSpeaking(true);
     const token = { cancelled: false };
+    speakTokenRef.current = token;
 
     (async () => {
       const base = bridgeBase();
@@ -345,7 +396,7 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
             const blob = await res.blob();
             if (!token.cancelled) {
               setEngine('neural');
-              await playWav(blob);
+              await playWav(blob, wavRef);
               if (!token.cancelled) setSpeaking(false);
               return;
             }
@@ -365,7 +416,7 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
       utter.onerror = () => setSpeaking(false);
       window.speechSynthesis.speak(utter);
     })();
-  }, [voiceId]);
+  }, [voiceId, stopSpeaking]);
 
   const cancel = useCallback(() => {
     stopListening();
@@ -420,6 +471,11 @@ export function useVoice(voiceId = storedVoice()): UseVoice {
   // Never leave the mic hot when the page goes away.
   useEffect(() => () => {
     try { recRef.current?.abort(); } catch { /* noop */ }
+    const playback = wavRef.current;
+    if (playback) {
+      playback.cancel();
+      wavRef.current = null;
+    }
     if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
   }, []);
 

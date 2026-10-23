@@ -25,9 +25,22 @@ export function Modal({
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  // `onClose` is an inline arrow at almost every call site, so its identity
+  // changes on every render of the parent. Keeping it in a ref means the
+  // focus effect below can depend on `open` alone: a re-render of the parent
+  // (a store write, a toast auto-dismissing) no longer re-runs the effect
+  // and no longer yanks focus back to the close button while the user is
+  // typing in a field.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+  // Focus moves into the dialog exactly once per open.
+  const focusMovedRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
+    focusMovedRef.current = false;
     // Save the element that opened the modal so we can restore focus when
     // it closes (a11y expectation).
     previouslyFocused.current =
@@ -36,7 +49,7 @@ export function Modal({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       // Simple focus trap: cycle Tab through the modal's focusable
@@ -63,8 +76,11 @@ export function Modal({
     document.body.style.overflow = 'hidden';
     // Move focus into the modal so screen readers announce it.
     // Defer a tick so children (e.g. inputs) that mount in this pass get
-    // a chance to register their DOM nodes first.
+    // a chance to register their DOM nodes first. Guarded so focus is moved
+    // once per open, never again on a later re-render.
     const t = window.setTimeout(() => {
+      if (focusMovedRef.current) return;
+      focusMovedRef.current = true;
       const root = dialogRef.current;
       if (!root) return;
       const focusable = root.querySelector<HTMLElement>(
@@ -80,7 +96,7 @@ export function Modal({
       const prev = previouslyFocused.current;
       if (prev && document.contains(prev)) prev.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

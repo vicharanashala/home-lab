@@ -592,9 +592,8 @@ export function HouseBotPage() {
 
       // No strong Indian-catalog hit — fetch web-search candidates and
       // show them as clickable options. The user picks one and we send it
-      // back through this flow with webMode forced, which routes to the
-      // full /api/housebot/recipe generator.
-      let haveOptions = false;
+      // back through the recipe flow, which routes to the full
+      // /api/housebot/recipe generator.
       try {
         const optsRes = await fetch(
           `${API_BASE}/api/housebot/recipe/options`,
@@ -610,7 +609,6 @@ export function HouseBotPage() {
             options?: RecipeOption[];
           };
           if (Array.isArray(optsData.options) && optsData.options.length > 0) {
-            haveOptions = true;
             setOptionsHits((prev) => [
               ...prev,
               { query: text, options: optsData.options!, ts: Date.now() },
@@ -632,66 +630,19 @@ export function HouseBotPage() {
           }
         }
       } catch (optsErr) {
-        /* fall through to the full-recipe flow */
+        /* no options — fall through to the streaming chat path */
       }
 
-      // No options returned (Brave probably rate-limited us) — go
-      // straight to the streaming chat endpoint with webMode forced, so
-      // the LLM writes the recipe directly from its training data. This
-      // avoids the slow /recipe endpoint's second Brave fetch.
-      if (!haveOptions) {
-        setWebMode(true);
-        // re-submit through the regular chat-streaming path. We need the
-        // bot reply bubble for tokens; handleSend reuses `input`, but
-        // we already cleared it. Re-set and dispatch on the next tick.
-        setInput(text);
-        requestAnimationFrame(() => {
-          // toggle webMode off so it isn't applied to the user's next
-          // message; only the current fetch goes through the web path.
-          setWebMode(false);
-          void handleSend(text);
-        });
-        return;
-      }
-
-      try {
-        const res = await fetch(`${API_BASE}/api/housebot/recipe`, {
-          method: 'POST',
-          headers: bridgeHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ query: text }),
-        });
-        const data = (await res.json()) as {
-          ok?: boolean;
-          progress?: string[];
-          recipe?: string;
-          error?: string;
-        };
-        const progress = Array.isArray(data.progress) ? data.progress : [];
-        // Display each progress step as its own chat bubble.
-        const stamped = progress.map((p, i) => ({
-          id: `p-${Date.now()}-${i}`,
-          text: p,
-          ts: Date.now() + i,
-        }));
-        setProgressMsgs(stamped);
-        const recipe =
-          data.recipe ||
-          (data.error ? `⚠️ ${data.error}` : 'Sorry, I had trouble writing that recipe.');
-        setRecipeMsgs((prev) => [
-          ...prev,
-          { query: text, recipe, ts: Date.now() + progress.length + 1 },
-        ]);
-      } catch (err) {
-        const msg =
-          err instanceof Error
-            ? `⚠️ Network error: ${err.message}`
-            : '⚠️ Network error — please try again.';
-        setRecipeMsgs((prev) => [...prev, { query: text, recipe: msg, ts: Date.now() }]);
-      } finally {
-        setLoading(false);
-        textareaRef.current?.focus();
-      }
-      return;
+      // No options came back (the search backend may be rate-limited) — go
+      // straight to the streaming chat endpoint below, so the LLM writes the
+      // answer directly. This avoids the slow /recipe endpoint's second
+      // search.
+      //
+      // We deliberately do NOT re-enter handleSend here. This closure still
+      // sees the pre-send `webMode`, so a recursive call would take the web
+      // branch again, fail the same way and loop forever (one POST to the
+      // bridge per iteration, plus a duplicate user bubble). Falling through
+      // keeps the failure path finite.
     }
 
     // Build the history + compact context for the bridge.
@@ -1433,7 +1384,13 @@ export function HouseBotPage() {
                   type="button"
                   onClick={() => {
                     setInput(q);
-                    requestAnimationFrame(() => handleSend());
+                    // Pass the chip text explicitly: `handleSend` reads the
+                    // `input` from the closure it was created in, and that
+                    // closure still holds the value from BEFORE setInput(q)
+                    // — the chips are shown on a fresh page where the box is
+                    // empty, so the send would abort and the tap would do
+                    // nothing at all.
+                    requestAnimationFrame(() => handleSend(q));
                   }}
                   style={{
                     fontSize: 13,

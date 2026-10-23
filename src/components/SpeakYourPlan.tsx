@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
 import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES } from '../hooks/useWhisperSTT';
 import { parseSpokenPlan } from '../utils/spokenPlan';
@@ -28,6 +28,10 @@ export function SpeakYourPlan({ onApply }: Props) {
   const [draft, setDraft] = useState<SpokenPlan | null>(null);
   const [showSetup, setShowSetup] = useState(false);
   const [typed, setTyped] = useState('');
+  /** True while the transcription queue is being flushed. */
+  const [flushing, setFlushing] = useState(false);
+  /** Guards against a second tap starting a second flush. */
+  const flushingRef = useRef(false);
 
   const whisper = useWhisperSTT(model, language);
 
@@ -42,19 +46,39 @@ export function SpeakYourPlan({ onApply }: Props) {
     if (!res.ok && res.error !== 'Cancelled.') setError(res.error ?? 'Could not start the microphone.');
   };
 
-  /** Stop listening and show whatever was understood, ready to be edited. */
-  const review = () => {
-    whisper.stop();
-    const parsed = parseSpokenPlan(whisper.transcript);
-    if (!parsed.breakfast && !parsed.lunch && !parsed.dinner) {
-      setError(
-        whisper.transcript.trim()
-          ? `Heard "${whisper.transcript.trim()}" but could not tell which meal it was for. Try saying "breakfast …, lunch …, dinner …".`
-          : 'Nothing was picked up. Hold the phone closer and speak a little louder.',
-      );
-      return;
+  /**
+   * Stop listening and show whatever was understood, ready to be edited.
+   *
+   * The transcription queue is drained ASYNCHRONOUSLY: `stop()` hands the
+   * tail of the utterance to the queue and returns at once. Reading the
+   * transcript in the same tick therefore missed whatever was still in
+   * flight — in practice the last dish spoken, usually dinner — and an
+   * utterance shorter than five seconds produced nothing at all, because
+   * only a full block is transcribed on its own. So the text is read AFTER
+   * the flush completes.
+   */
+  const review = async () => {
+    if (flushingRef.current) return;
+    flushingRef.current = true;
+    setFlushing(true);
+    try {
+      whisper.stop();
+      const text = await whisper.flush();
+      const parsed = parseSpokenPlan(text);
+      if (!parsed.breakfast && !parsed.lunch && !parsed.dinner) {
+        setError(
+          text.trim()
+            ? `Heard "${text.trim()}" but could not tell which meal it was for. Try saying "breakfast …, lunch …, dinner …".`
+            : 'Nothing was picked up. Hold the phone closer and speak a little louder.',
+        );
+        return;
+      }
+      setError(null);
+      setDraft(parsed);
+    } finally {
+      flushingRef.current = false;
+      setFlushing(false);
     }
-    setDraft(parsed);
   };
 
   /* ---- confirmation ---- */
@@ -108,12 +132,14 @@ export function SpeakYourPlan({ onApply }: Props) {
   }
 
   /* ---- listening ---- */
-  if (whisper.listening) {
+  if (whisper.listening || flushing) {
     return (
       <div className="rounded-xl border border-tomato-200 dark:border-tomato-900 bg-tomato-50/60 dark:bg-tomato-900/20 p-2.5 mt-2">
         <div className="flex items-center gap-2 text-xs text-tomato-700 dark:text-tomato-300">
           <span className="w-2 h-2 rounded-full bg-tomato-500 animate-pulse" />
-          {whisper.status.text || 'Listening — say the meals for this day…'}
+          {flushing
+            ? 'Finishing the last words…'
+            : whisper.status.text || 'Listening — say the meals for this day…'}
         </div>
 
         {whisper.status.progress !== null && (
@@ -141,14 +167,17 @@ export function SpeakYourPlan({ onApply }: Props) {
         )}
 
         <div className="flex gap-1.5 mt-2">
+          {/* Never disabled for want of a transcript. The transcript only
+              appears once a FULL five-second block has been transcribed, so
+              a button that waits for one can never finish an utterance
+              shorter than that. The flush is what produces the rest. */}
           <button
             type="button"
             onClick={review}
-            disabled={!whisper.transcript}
-            className="btn-primary flex-1 !py-1.5 text-xs disabled:opacity-50"
+            className="btn-primary flex-1 !py-1.5 text-xs"
           >
-            <Check size={13} />
-            Done — check it
+            {flushing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+            {flushing ? 'Finishing…' : 'Done — check it'}
           </button>
           <button
             type="button"

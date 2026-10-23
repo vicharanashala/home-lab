@@ -186,7 +186,32 @@ export interface UseWhisperSTT {
   transcript: string;
   start: (onText: (text: string) => void) => Promise<{ ok: boolean; error?: string }>;
   stop: () => void;
+  /**
+   * Wait until everything captured has been transcribed, then return the
+   * complete transcript.
+   *
+   * `stop()` hands the leftover audio to the transcription queue and returns
+   * at once, but the queue is drained ASYNCHRONOUSLY. Reading the transcript
+   * in the same tick therefore loses whatever was still in flight — in
+   * practice the last dish spoken, which is usually dinner. This waits for
+   * the queue to empty instead.
+   */
+  flush: () => Promise<string>;
   reset: () => void;
+}
+
+/**
+ * A block of captured audio, together with the rate it was captured at.
+ *
+ * The rate has to travel WITH the audio. Reading it from the live context
+ * at drain time is wrong: `stop()` closes that context, so a tail drained
+ * afterwards was fed to Whisper at the wrong rate — three times too slow,
+ * and garbage.
+ */
+interface QueuedAudio {
+  samples: Float32Array;
+  /** The context's sample rate when these samples were captured. */
+  rate: number;
 }
 
 export function useWhisperSTT(
@@ -208,8 +233,15 @@ export function useWhisperSTT(
   const streamRef = useRef<MediaStream | null>(null);
   const blocksRef = useRef<Float32Array[]>([]);
   const countRef = useRef(0);
-  const queueRef = useRef<Float32Array[]>([]);
-  const drainingRef = useRef(false);
+  const queueRef = useRef<QueuedAudio[]>([]);
+  /** The drain that is running right now, so `flush()` can wait for it. */
+  const drainPromiseRef = useRef<Promise<void> | null>(null);
+  /** The sample rate the current recording was captured at. */
+  const recordRateRef = useRef(TARGET_RATE);
+  /** True while a `start()` is in flight, so a second tap cannot race it. */
+  const startingRef = useRef(false);
+  /** The transcript, kept in a ref so `flush()` never reads a stale render. */
+  const transcriptRef = useRef('');
   const textRef = useRef<((text: string) => void) | null>(null);
   const wantRef = useRef(false);
 
@@ -298,55 +330,76 @@ export function useWhisperSTT(
 
   /* ---- transcription queue ---- */
 
-  const drain = useCallback(async () => {
-    if (drainingRef.current) return;
-    drainingRef.current = true;
-    while (queueRef.current.length) {
-      const samples = queueRef.current.shift()!;
-      try {
-        if (samples.length < TARGET_RATE * 0.3) continue;   // too short to mean anything
-        const level = rms(samples);
-        if (level < SILENCE_RMS) continue;                   // nobody spoke
+  /**
+   * Transcribe everything in the queue.
+   *
+   * Returns a promise that resolves when the queue is EMPTY, so a caller
+   * that needs the final text can wait for it. Only one drain runs at a
+   * time; a second call joins the running one instead of starting a rival
+   * loop over the same queue.
+   */
+  const drain = useCallback((): Promise<void> => {
+    if (drainPromiseRef.current) return drainPromiseRef.current;
 
-        const ctx = ctxRef.current;
-        const audio =
-          ctx && ctx.sampleRate !== TARGET_RATE
-            ? resample(samples, ctx.sampleRate, TARGET_RATE)
-            : samples;
+    const run = (async () => {
+      while (queueRef.current.length) {
+        const { samples, rate } = queueRef.current.shift()!;
+        try {
+          if (samples.length < TARGET_RATE * 0.3) continue;   // too short to mean anything
+          const level = rms(samples);
+          if (level < SILENCE_RMS) continue;                   // nobody spoke
 
-        const pipe = await ensureModel();
-        const result = await pipe(audio, {
-          language: whisperLanguage(language),
-          task: 'transcribe',
-          temperature: 0,
-          no_repeat_ngram_size: 3,
-        });
-        const text = (result?.text || '').trim();
-        if (looksLikeArtifact(text, level)) continue;
-        setTranscript((prev) => (prev ? `${prev} ${text}` : text));
-        textRef.current?.(text);
-      } catch (err) {
-        console.warn('[whisper] transcription failed:', err);
-        // Surfaced rather than swallowed: a transcription that fails quietly
-        // is a microphone that looks alive and is not.
-        setStatus((s) => ({
-          ...s,
-          error: `Could not transcribe: ${(err as any)?.message || err}`,
-        }));
+          // Resample against the rate these samples were CAPTURED at, not
+          // the rate of whatever context happens to be live now.
+          const audio =
+            rate !== TARGET_RATE
+              ? resample(samples, rate, TARGET_RATE)
+              : samples;
+
+          const pipe = await ensureModel();
+          const result = await pipe(audio, {
+            language: whisperLanguage(language),
+            task: 'transcribe',
+            temperature: 0,
+            no_repeat_ngram_size: 3,
+          });
+          const text = (result?.text || '').trim();
+          if (looksLikeArtifact(text, level)) continue;
+          const next = transcriptRef.current ? `${transcriptRef.current} ${text}` : text;
+          transcriptRef.current = next;
+          setTranscript(next);
+          textRef.current?.(text);
+        } catch (err) {
+          console.warn('[whisper] transcription failed:', err);
+          // Surfaced rather than swallowed: a transcription that fails quietly
+          // is a microphone that looks alive and is not.
+          setStatus((s) => ({
+            ...s,
+            error: `Could not transcribe: ${(err as any)?.message || err}`,
+          }));
+        }
       }
-    }
-    drainingRef.current = false;
+    })();
+
+    drainPromiseRef.current = run
+      .catch((err) => {
+        console.warn('[whisper] drain failed:', err);
+      })
+      .finally(() => {
+        drainPromiseRef.current = null;
+      });
+    return drainPromiseRef.current;
   }, [ensureModel, language]);
 
   const pushSamples = useCallback(
-    (block: Float32Array) => {
+    (block: Float32Array, rate: number) => {
       blocksRef.current.push(block);
       countRef.current += block.length;
       while (countRef.current >= CHUNK_SAMPLES) {
         const { chunk, rest } = takeChunk(blocksRef.current, CHUNK_SAMPLES);
         blocksRef.current = rest;
         countRef.current -= CHUNK_SAMPLES;
-        queueRef.current.push(chunk);
+        queueRef.current.push({ samples: chunk, rate });
       }
       if (queueRef.current.length) void drain();
     },
@@ -354,6 +407,24 @@ export function useWhisperSTT(
   );
 
   /* ---- start / stop ---- */
+
+  /**
+   * Release the microphone, the audio context and the worklet.
+   *
+   * Every path that ends a session goes through here. Anything left alive
+   * keeps the recording indicator on and keeps posting samples into the
+   * queue — two live microphones produce one mixed transcript.
+   */
+  const releaseSession = useCallback(() => {
+    wantRef.current = false;
+    try { nodeRef.current?.port?.close(); } catch { /* already closed */ }
+    try { nodeRef.current?.disconnect?.(); } catch { /* not connected */ }
+    nodeRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    void ctxRef.current?.close().catch(() => {});
+    ctxRef.current = null;
+  }, []);
 
   const stop = useCallback(() => {
     wantRef.current = false;
@@ -363,33 +434,66 @@ export function useWhisperSTT(
     // utterance is not lost when the user stops talking.
     if (countRef.current >= TARGET_RATE * 0.3) {
       const { chunk } = takeChunk(blocksRef.current, countRef.current);
-      queueRef.current.push(chunk);
+      queueRef.current.push({ samples: chunk, rate: recordRateRef.current });
     }
     blocksRef.current = [];
     countRef.current = 0;
     void drain();
 
-    try { nodeRef.current?.port?.close(); } catch { /* already closed */ }
-    try { nodeRef.current?.disconnect?.(); } catch { /* not connected */ }
-    nodeRef.current = null;
+    releaseSession();
+  }, [drain, releaseSession]);
 
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
+  /**
+   * Transcribe everything captured so far and return the complete
+   * transcript.
+   *
+   * The queue is drained asynchronously, so the transcript has to be read
+   * AFTER the queue is empty. Reading it in the same tick as `stop()` lost
+   * the tail of the utterance — typically the dinner, spoken last — and an
+   * utterance shorter than five seconds produced nothing at all, because
+   * only a full block is transcribed on its own.
+   */
+  const flush = useCallback(async (): Promise<string> => {
+    // A partial block never became a full five-second segment, so it is
+    // still sitting in the block buffer. Move it into the queue, or a
+    // two-second utterance would never be transcribed at all.
+    if (countRef.current >= TARGET_RATE * 0.3) {
+      const { chunk } = takeChunk(blocksRef.current, countRef.current);
+      queueRef.current.push({ samples: chunk, rate: recordRateRef.current });
+    }
+    blocksRef.current = [];
+    countRef.current = 0;
 
-    void ctxRef.current?.close().catch(() => {});
-    ctxRef.current = null;
+    await drain();
+    // A block that landed while the drain was transcribing keeps it alive,
+    // so wait for that one too. The queue is only ever fed by microphone
+    // messages, which cannot arrive between two microtasks.
+    if (drainPromiseRef.current) await drainPromiseRef.current;
+    return transcriptRef.current;
   }, [drain]);
 
   const reset = useCallback(() => {
+    transcriptRef.current = '';
     setTranscript('');
     setStatus(IDLE);
   }, []);
 
-  const start = useCallback(
+  /**
+   * Open a microphone session.
+   *
+   * Separated from `start()` so the "is a start already running?" guard can
+   * sit in front of it: the model download can take a minute, and the
+   * button stays tappable throughout.
+   */
+  const openSession = useCallback(
     async (onText: (text: string) => void): Promise<{ ok: boolean; error?: string }> => {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        return { ok: false, error: 'This browser cannot record audio. Try Chrome or Safari.' };
-      }
+      // Release any earlier session BEFORE opening a new one. Overwriting
+      // the refs would orphan the old microphone track and the old
+      // AudioContext: the first stream's tracks are never stopped, its
+      // context is never closed, and its worklet keeps posting samples into
+      // the same queue as the new one.
+      releaseSession();
+
       textRef.current = onText;
       wantRef.current = true;
 
@@ -428,6 +532,11 @@ export function useWhisperSTT(
         const Ctx = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new Ctx({ sampleRate: TARGET_RATE });
         ctxRef.current = ctx;
+        // The rate the samples are captured at. The browser may ignore the
+        // 16 kHz request, and the audio has to be resampled against THIS
+        // rate — not against whatever context is live when the block is
+        // finally transcribed.
+        recordRateRef.current = ctx.sampleRate;
         if (ctx.state === 'suspended') await ctx.resume();
 
         const source = ctx.createMediaStreamSource(stream);
@@ -441,7 +550,7 @@ export function useWhisperSTT(
           await ctx.audioWorklet.addModule(WORKLET_URL);
           const node = new AudioWorkletNode(ctx, 'pcm-capture');
           node.port.onmessage = (e: MessageEvent) => {
-            if (wantRef.current) pushSamples(e.data as Float32Array);
+            if (wantRef.current) pushSamples(e.data as Float32Array, ctx.sampleRate);
           };
           source.connect(node);
           node.connect(mute);
@@ -456,7 +565,7 @@ export function useWhisperSTT(
           const legacy = ctx.createScriptProcessor(4096, 1, 1);
           legacy.onaudioprocess = (e: any) => {
             if (!wantRef.current) return;
-            pushSamples(new Float32Array(e.inputBuffer.getChannelData(0)));
+            pushSamples(new Float32Array(e.inputBuffer.getChannelData(0)), ctx.sampleRate);
           };
           source.connect(legacy);
           legacy.connect(mute);
@@ -471,24 +580,45 @@ export function useWhisperSTT(
       queueRef.current = [];
       blocksRef.current = [];
       countRef.current = 0;
+      transcriptRef.current = '';
       setTranscript('');
       setStatus((s) => (s.ready ? s : { ...s, text: 'Listening — Whisper transcribes on this device.' }));
       setListening(true);
       return { ok: true };
     },
-    [pushSamples],
+    [pushSamples, releaseSession],
+  );
+
+  const start = useCallback(
+    async (onText: (text: string) => void): Promise<{ ok: boolean; error?: string }> => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        return { ok: false, error: 'This browser cannot record audio. Try Chrome or Safari.' };
+      }
+      // A second tap while the first start is still running — the model
+      // download alone takes a minute — must not open a SECOND microphone.
+      // The first stream's tracks would never be stopped and both worklets
+      // would post into the same queue, so the transcript would mix two
+      // microphones. The session already being started owns the mic, so
+      // joining it is the honest answer rather than an error.
+      if (startingRef.current) return { ok: true };
+
+      startingRef.current = true;
+      try {
+        return await openSession(onText);
+      } finally {
+        startingRef.current = false;
+      }
+    },
+    [openSession],
   );
 
   // Never leave the mic hot when the component goes away.
   useEffect(
     () => () => {
-      wantRef.current = false;
-      try { nodeRef.current?.port?.close(); } catch { /* noop */ }
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      void ctxRef.current?.close().catch(() => {});
+      releaseSession();
     },
-    [],
+    [releaseSession],
   );
 
-  return { listening, status, transcript, start, stop, reset };
+  return { listening, status, transcript, start, stop, flush, reset };
 }

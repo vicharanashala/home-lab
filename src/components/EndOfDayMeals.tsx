@@ -28,7 +28,7 @@ import {
 import { useStore } from '../store/useStore';
 import { DishIcon } from './icons/DishIcons';
 import clsx from 'clsx';
-import type { MealType, Recipe } from '../types';
+import type { MealType, MealLog, Recipe } from '../types';
 import { planRecipeDeduction } from '../utils/recipeMatch';
 
 type EatenAmount = 'a-lot' | 'medium' | 'less';
@@ -192,11 +192,26 @@ const recipesForMeal = useMemo(() => {
       1,
       Math.round(selectedRecipes.reduce((m, r) => Math.max(m, r.baseServings), 1) * combinedMultiplier),
     );
-    logMealFromRecipes({
+    const res = logMealFromRecipes({
       recipeIds: selectedRecipes.map((r) => r.id),
       peopleCooked,
       notes: `${selectedRecipes.length} recipe${selectedRecipes.length === 1 ? '' : 's'} · Ate ${EATEN_LABEL[amount]} (${Math.round(combinedMultiplier * 100)}% combined)`,
+      // The picker shows the whole catalogue (built-ins + the ~5,900-entry CSV
+      // list), but the store only knows its OWN recipes. Without the resolved
+      // objects a CSV id matches nothing and the store writes no log at all.
+      recipes: selectedRecipes,
+      // The slot the user picked wins over the recipe's own meal type — the
+      // picker shows every recipe regardless of type, so a snack recipe can
+      // be logged as Breakfast.
+      mealType,
     });
+    // The store returns `{ log: null }` when it could not resolve a recipe.
+    // Only claim success when a log was really written.
+    const written = (res as { log?: MealLog | null } | undefined)?.log;
+    if (!written) {
+      toast(`${MEAL_META.find((m) => m.id === mealType)?.label} not logged — could not match the recipe`, 'warning');
+      return;
+    }
     toast(`${MEAL_META.find((m) => m.id === mealType)?.label} logged ✓`, 'success');
     setAmount(null);
     setRecipeIds([]);
@@ -227,7 +242,11 @@ const recipesForMeal = useMemo(() => {
             <button
               type="button"
               onClick={confirm}
-              className="btn-primary flex-1"
+              // Nothing is logged until an amount is chosen — the guard in
+              // `confirm` used to bail out silently, so the button looked
+              // pressed and did nothing.
+              disabled={amount === null}
+              className="btn-primary flex-1 disabled:opacity-50 disabled:hover:bg-sage-600 disabled:active:scale-100 disabled:cursor-not-allowed"
             >
               <Check size={18} />
               Confirm &amp; deduct
@@ -435,6 +454,11 @@ const recipesForMeal = useMemo(() => {
 
             {/* Quick amount buttons — a lot / medium / less, applied as deduction multiplier */}
             <p className="text-sm text-sage-600 dark:text-ink-300">How much did everyone eat in total?</p>
+            {!amount && (
+              <p className="text-xs font-semibold text-tomato-600 dark:text-tomato-400">
+                Choose how much was eaten to confirm.
+              </p>
+            )}
             <div className="grid grid-cols-3 gap-2">
               {(['a-lot', 'medium', 'less'] as EatenAmount[]).map((a) => (
                 <button

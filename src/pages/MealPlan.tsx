@@ -265,12 +265,32 @@ export default function MealPlanPage() {
     settings.allergies, household, hasTasteProfile, setMealPlanSlot, toast,
   ]);
 
-  const openEditor = (day: MealPlanDay, slot: MealSlot) => {
+  /**
+   * Open the inline editor for one slot.
+   *
+   * `recipe` seeds the draft from a dish the user tapped (a "use these
+   * before they go" card). Without it the editor starts from whatever the
+   * slot already contains, so the tapped dish was thrown away.
+   */
+  const openEditor = (day: MealPlanDay, slot: MealSlot, recipe?: Recipe) => {
     const entry = mealPlan[day]?.[slot];
     setEditing({ day, slot });
-    setDraftText(entry?.name || '');
-    setDraftServings(entry?.servings || suggestedServings(household));
-    setPreview(entry ? entryRecipe(entry, catalogue) : null);
+    if (recipe) {
+      setDraftText(recipe.name);
+      // Keep the recipe's own size when it is one of the portion buttons,
+      // so the highlighted portion matches the dish; otherwise fall back to
+      // the household default.
+      setDraftServings(
+        PORTION_LEVELS.some((p) => p.servings === recipe.baseServings)
+          ? recipe.baseServings
+          : suggestedServings(household),
+      );
+      setPreview(recipe);
+    } else {
+      setDraftText(entry?.name || '');
+      setDraftServings(entry?.servings || suggestedServings(household));
+      setPreview(entry ? entryRecipe(entry, catalogue) : null);
+    }
     // Focus after the editor paints.
     requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -430,7 +450,7 @@ export default function MealPlanPage() {
             {rescues.map((r) => (
               <button
                 key={r.recipe.id}
-                onClick={() => openEditor('mon', 'dinner')}
+                onClick={() => openEditor('mon', 'dinner', r.recipe)}
                 className="shrink-0 w-44 rounded-xl bg-white dark:bg-ink-800 border border-butter-200 dark:border-ink-700 p-2.5 text-left hover:bg-butter-50 dark:hover:bg-ink-700 active:scale-[.98] transition"
               >
                 <div className="flex items-center gap-2 mb-1">

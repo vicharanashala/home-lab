@@ -74,6 +74,23 @@ export function Dashboard() {
     [grocery],
   );
 
+  // The lists below are "top 4" PREVIEWS only. The counts that the stat
+  // tiles and the card subtitles show come from the full lists, so they
+  // agree with the Alerts page (which shows every item).
+  const lowStockCount = useMemo(
+    () => stock.filter((it) => it.quantity <= it.lowStockThreshold).length,
+    [stock],
+  );
+
+  const expiringCount = useMemo(
+    () =>
+      stock.filter((it) => {
+        const bucket = expiryBucket(it.expiryDate, settings.expiringSoonDays);
+        return bucket === 'expired' || bucket === 'soon';
+      }).length,
+    [stock, settings.expiringSoonDays],
+  );
+
   const lowStockItems = useMemo(
     () =>
       stock
@@ -268,9 +285,9 @@ export function Dashboard() {
           <StatTile
             to="/alerts"
             label="Alerts"
-            value={lowStockItems.length + expiringItems.length}
+            value={lowStockCount + expiringCount}
             accent={
-              lowStockItems.length + expiringItems.length > 0
+              lowStockCount + expiringCount > 0
                 ? 'bg-tomato-50 text-tomato-700'
                 : 'bg-sage-50 text-sage-700'
             }
@@ -344,9 +361,9 @@ export function Dashboard() {
               <div>
                 <h3 className="font-display font-bold text-lg text-sage-900 dark:text-cream-50">Low on stock</h3>
                 <p className="text-xs text-sage-500 dark:text-ink-300">
-                  {lowStockItems.length === 0
+                  {lowStockCount === 0
                     ? 'All items are well stocked'
-                    : `${lowStockItems.length} item${lowStockItems.length === 1 ? '' : 's'} running low`}
+                    : `${lowStockCount} item${lowStockCount === 1 ? '' : 's'} running low`}
                 </p>
               </div>
             </div>
@@ -359,7 +376,7 @@ export function Dashboard() {
             </Link>
           </div>
 
-          {lowStockItems.length === 0 ? (
+          {lowStockCount === 0 ? (
             <EmptyMini
               icon={stock.length === 0 ? ShoppingBasket : CircleCheck}
               title={stock.length === 0 ? 'Your kitchen is empty' : 'Nothing running low'}
@@ -390,9 +407,9 @@ export function Dashboard() {
               <div>
                 <h3 className="font-display font-bold text-lg text-sage-900 dark:text-cream-50">Expiring soon</h3>
                 <p className="text-xs text-sage-500 dark:text-ink-300">
-                  {expiringItems.length === 0
+                  {expiringCount === 0
                     ? `No items expiring in the next ${settings.expiringSoonDays} days`
-                    : `${expiringItems.length} item${expiringItems.length === 1 ? '' : 's'} need attention`}
+                    : `${expiringCount} item${expiringCount === 1 ? '' : 's'} need attention`}
                 </p>
               </div>
             </div>
@@ -405,7 +422,7 @@ export function Dashboard() {
             </Link>
           </div>
 
-          {expiringItems.length === 0 ? (
+          {expiringCount === 0 ? (
             <EmptyMini
               icon={Snowflake}
               title={stock.length === 0 ? 'No expiry alerts yet' : 'Nothing expiring soon'}
@@ -476,7 +493,11 @@ function TodaysMealsCard({ todaysLogs, onOpen }: { todaysLogs: MealLog[]; onOpen
     for (const m of todaysLogs) c[m.mealType]++;
     return c;
   }, [todaysLogs]);
-  const total = counts.breakfast + counts.lunch + counts.dinner + counts.snack + counts.sweet;
+  // Only the three main meals count: the denominator is 3 and the three
+  // progress pills below show breakfast/lunch/dinner. Counting snacks and
+  // sweets here made three snack logs read as "3 of 3 logged · all done"
+  // while every pill was still empty and the log button was disabled.
+  const total = counts.breakfast + counts.lunch + counts.dinner;
   const allDone = total >= 3;
   return (
     <section

@@ -130,9 +130,18 @@ export async function readMealPhoto(
  * useful to show but wrong inside a one-line description, so bullets are
  * stripped and pure headings dropped. The result is still handed to the user
  * to edit, so this tidies the reading rather than deciding it.
+ *
+ * The model is asked for BOTH a one-line name for the dish AND a list of the
+ * dishes or ingredients in it, so the same dish normally arrives twice and
+ * the line reads "Dal Makhani — Dal Makhani, Paneer, Spinach". Items the
+ * summary already names are dropped, because the meal log stores this string
+ * verbatim and the meal log feeds the taste model.
  */
 export function readingToLine(reading: RecipeReading): string {
   const cleaned: string[] = [];
+
+  const summary = (reading.summary || '').trim();
+  const summaryWords = new Set(wordSet(summary));
 
   for (const raw of reading.items) {
     const item = raw.replace(/^[\s\-*•·]+/, '').trim();
@@ -143,10 +152,34 @@ export function readingToLine(reading: RecipeReading): string {
     const isHeading = /[:：]\s*$/.test(item) || /^(ingredients?|method|directions?|steps?|serves?|for the .+)$/i.test(item);
     if (isHeading) continue;
 
+    // Already named by the summary — say it once, not twice.
+    if (summaryWords.size && isCoveredBy(summaryWords, item)) continue;
+
     cleaned.push(item);
   }
 
   const body = cleaned.length ? cleaned.join(', ') : '';
-  if (reading.summary && body) return `${reading.summary} — ${body}`;
-  return body || reading.summary;
+  if (summary && body) return `${summary} — ${body}`;
+  return body || summary;
+}
+
+/** Lower-cased words of a phrase, ignoring punctuation. */
+function wordSet(text: string): string[] {
+  return (text || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean);
+}
+
+/**
+ * Is this item already named by the summary?
+ *
+ * True when every word of the item appears in the summary, so "Dal Makhani"
+ * is covered by "Dal Makhani" and by "Dal Makhani with Paneer", while
+ * "Paneer" is not covered by "Dal Makhani".
+ */
+function isCoveredBy(summaryWords: Set<string>, item: string): boolean {
+  const words = wordSet(item);
+  if (!words.length) return false;
+  return words.every((w) => summaryWords.has(w));
 }

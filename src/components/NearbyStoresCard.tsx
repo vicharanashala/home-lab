@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   MapPin,
   RefreshCcw,
@@ -67,13 +68,13 @@ export function NearbyStoresCard() {
         <p className="text-xs text-sage-500 dark:text-ink-300 mb-3">
           Enable location to see supermarkets, kirana stores and malls nearby.
         </p>
-        <a
-          href="/settings"
+        <Link
+          to="/settings"
           className="btn-primary w-full !py-3"
         >
           <Navigation size={16} />
           Enable in Settings
-        </a>
+        </Link>
       </section>
     );
   }
@@ -107,13 +108,13 @@ export function NearbyStoresCard() {
       </div>
 
       {(status === 'idle' || status === 'requesting') && (
-        <a
-          href="/stores"
+        <Link
+          to="/stores"
           className="btn-primary w-full !py-3"
         >
           <Navigation size={16} />
           See near stores by you
-        </a>
+        </Link>
       )}
 
       {status === 'loading' && (

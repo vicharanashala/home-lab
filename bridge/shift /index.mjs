@@ -20,13 +20,14 @@
  */
 
 import express from 'express';
-import cors from 'cors';
 import multer from 'multer';
 import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import dns from 'node:dns';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
@@ -74,6 +75,89 @@ const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-M3';
 const MINIMAX_ACCESS_TOKEN = process.env.MINIMAX_ACCESS_TOKEN || '';
 const MINIMAX_MAX_TOKENS = Number(process.env.MINIMAX_MAX_TOKENS || 200);
 const MINIMAX_TIMEOUT_MS = Number(process.env.MINIMAX_TIMEOUT_MS || 25000);
+
+// ─── shared-secret gate helpers ───────────────────────────────────────
+// The bridge holds a MiniMax key and PlantNet quota with no per-user
+// accounts, so when it is reachable from the internet anyone who finds
+// the URL could spend those credits. BRIDGE_TOKEN puts a shared secret in
+// front of every /api route.
+//
+// Set BRIDGE_TOKEN in the .env to enforce. Leave it unset and the gate is
+// a no-op, which is what local-only use wants.
+//
+// Honest limitation: the browser has to present this token, so it ships
+// inside the JS bundle and anyone who opens devtools can read it. That
+// stops drive-by and scanner traffic, not a determined attacker. Real
+// authentication needs Cloudflare Access in front of the tunnel.
+//
+// It DOES stop a drive-by page, though, as long as CORS does not hand that
+// page a readable response — hence the explicit origin allowlist below.
+const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || '';
+
+/**
+ * Constant-time comparison of a supplied secret against BRIDGE_TOKEN.
+ *
+ * Plain `===` short-circuits on the first differing byte, which leaks
+ * comparison progress through response timing. timingSafeEqual does not,
+ * but it THROWS when the two buffers have different lengths, so the length
+ * check has to come first (the length of a secret is not itself secret).
+ */
+function tokenMatches(supplied) {
+  if (!supplied || !BRIDGE_TOKEN) return false;
+  const a = Buffer.from(String(supplied), 'utf8');
+  const b = Buffer.from(BRIDGE_TOKEN, 'utf8');
+  if (a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+// ─── CORS origin allowlist ───────────────────────────────────────────
+// The old middleware echoed the caller's Origin back as
+// Access-Control-Allow-Origin for EVERY response, which meant any web page
+// on the internet could read this API's responses cross-origin. Combined
+// with the shared secret being present in the publicly served JS bundle, a
+// hostile page could fetch the shell, pull the token out of it and drive
+// every /api route as the user.
+//
+// So: an explicit allowlist. The app's own origins only.
+const ALLOWED_ORIGINS = new Set([
+  // The permanent Tailscale Serve address (the real app).
+  'https://narayana.tailac25b4.ts.net',
+  'http://narayana.tailac25b4.ts.net',
+  // The bridge serving its own SPA/API on loopback.
+  'http://localhost:8789',
+  'http://127.0.0.1:8789',
+  'http://[::1]:8789',
+  // Vite dev / preview servers, which proxy /api to the bridge.
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+]);
+
+// The bridge's own Tailscale IP. Tailscale hands the machine a 100.64.0.0/10
+// address, and it changes when the tailnet changes, so it is discovered from
+// the live interfaces rather than hardcoded.
+for (const addrs of Object.values(os.networkInterfaces())) {
+  for (const a of addrs || []) {
+    if (a?.family !== 'IPv4' || a.internal) continue;
+    const ip = a.address;
+    // 100.64.0.0/10 is the CGNAT block Tailscale allocates from.
+    if (/^100\.(6[4-9]|[7-9]\d|1\d\d|2[01]\d)\./.test(ip)) {
+      ALLOWED_ORIGINS.add(`http://${ip}:${PORT}`);
+    }
+  }
+}
+
+// Extra origins (comma-separated) for anyone running the app on another
+// hostname. Empty by default.
+for (const extra of String(process.env.ALLOWED_ORIGINS || '').split(',')) {
+  const o = extra.trim();
+  if (o) ALLOWED_ORIGINS.add(o);
+}
 
 // Production prompt for the bulk multi-item scan. Lives as a module-level
 // constant so the verify pass can reference it via a lookup, and so it's
@@ -146,19 +230,41 @@ const upload = multer({
 });
 
 const app = express();
-// Set CORS + PNA headers BEFORE everything else, including the cors()
-// middleware so OPTIONS preflights also carry the Private-Network opt-in.
-// This is required for HTTPS pages (somi7pnt694ia.space.minimax.io) to
-// reach http://localhost:8789 in modern Chromium.
+// CORS + PNA headers BEFORE everything else, so OPTIONS preflights carry the
+// Private-Network opt-in.
 //
-// IMPORTANT: when Private Network Access is requested, Chrome REJECTS the
-// `Access-Control-Allow-Origin: *` wildcard — it must echo the exact Origin
-// header value. Otherwise the response is treated as if Allow-Origin were
-// null and the request is blocked.
+// The old version echoed the caller's Origin back for EVERY request, which
+// made the API readable from any web page on the internet. With the shared
+// secret present in the publicly served bundle, a hostile page could fetch
+// the shell, extract the token and call every /api route as the user.
+//
+// Now an explicit allowlist (ALLOWED_ORIGINS above). An unknown origin gets
+// NO Access-Control-Allow-Origin header, so the browser refuses to hand the
+// response to the caller's JavaScript. A same-origin request carries no
+// Origin header at all and simply passes through untouched.
 app.use((req, res, next) => {
-  const origin = req.headers.origin || '*';
+  const origin = req.headers.origin;
+
+  // Same-origin (or a non-browser client): nothing to allow.
+  if (!origin) {
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Access-Control-Max-Age', '86400');
+      return res.status(204).end();
+    }
+    return next();
+  }
+
+  if (!ALLOWED_ORIGINS.has(origin)) {
+    // Unknown origin: no CORS allow header. The request still runs (the
+    // response is simply unreadable by the other page), but a preflight is
+    // refused outright so the browser stops before the real request.
+    if (req.method === 'OPTIONS') return res.status(403).end();
+    return next();
+  }
+
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
+  // Only meaningful for an allowlisted origin.
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,x-homehub-token');
@@ -168,7 +274,6 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(cors({ origin: true, credentials: false })); // mirror Origin (not '*') under PNA
 app.use(express.json({ limit: '4mb' }));
 
 // ─── security headers ─────────────────────────────────────────────────
@@ -281,15 +386,43 @@ app.use((req, res, next) => {
 // Uploads sit outside /api, so the shared-secret gate below doesn't reach
 // them. Filenames are UUIDs, but they hold photos — cover them too whenever a
 // token is configured, and leave them open for local-only use.
-if (process.env.BRIDGE_TOKEN) {
+//
+// The token is read from the HEADER only. It used to be accepted from
+// `?token=` as well, which meant a secret in a query string — and the request
+// log then wrote it to disk in cleartext, and it leaked into browser history
+// and into the Referer of any outbound navigation.
+if (BRIDGE_TOKEN) {
   const tokenOk = (req, res, next) => {
-    const supplied = req.get('x-homehub-token') || (req.query && req.query.token) || '';
-    if (supplied === process.env.BRIDGE_TOKEN) return next();
+    if (tokenMatches(req.get('x-homehub-token'))) return next();
     res.status(401).json({ error: 'unauthorized' });
   };
-  app.use('/uploads', tokenOk, express.static(UPLOADS_DIR, { maxAge: '7d' }));
+  app.use('/uploads', tokenOk, uploadsStatic());
 } else {
-  app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '7d' }));
+  app.use('/uploads', uploadsStatic());
+}
+
+// Extensions an upload is allowed to be served AS. Images only — an uploaded
+// .html/.svg would otherwise be served as active content on the app's own
+// origin, where it would inherit the app's localStorage and its
+// authenticated API access (the CSP allows script-src 'self').
+const SAFE_IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+
+function uploadsStatic() {
+  return express.static(UPLOADS_DIR, {
+    maxAge: '7d',
+    setHeaders: (res, filePath) => {
+      // No script, no plugins, no framing — for every upload, images too.
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      const ext = path.extname(filePath).toLowerCase();
+      if (!SAFE_IMAGE_EXT.has(ext)) {
+        // Not a known-safe image: serve it as an opaque download so it can
+        // never be interpreted as a document by the browser.
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', 'attachment');
+      }
+    },
+  });
 }
 
 // ─── rate limiting ─────────────────────────────────────────────────────
@@ -364,30 +497,24 @@ app.use('/api', (req, res, next) => {
 // ─── request log ───────────────────────────────────────────────────────
 // Method, path, status and duration only — never the body, since bodies here
 // carry photos and the user's kitchen data.
+//
+// req.path, NOT req.originalUrl: the original URL carries the query string,
+// and a client that puts the shared secret in `?token=` would have it
+// written verbatim into /tmp/hh_bridge.log — a world-readable file.
 app.use((req, res, next) => {
   const started = Date.now();
   res.on('finish', () => {
     const ms = Date.now() - started;
     const flag = res.statusCode >= 500 ? ' !!' : res.statusCode >= 400 ? ' !' : '';
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms${flag}`);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} ${ms}ms${flag}`);
   });
   next();
 });
 
 // ─── shared-secret gate ───────────────────────────────────────────────
-// The bridge holds a MiniMax key and PlantNet quota with no per-user
-// accounts, so when it is reachable from the internet anyone who finds
-// the URL could spend those credits. BRIDGE_TOKEN puts a shared secret in
-// front of every /api route.
+// BRIDGE_TOKEN and tokenMatches() are declared near the top of the file,
+// because the /uploads mount above needs them too.
 //
-// Set BRIDGE_TOKEN in the .env to enforce. Leave it unset and the gate is
-// a no-op, which is what local-only use wants.
-//
-// Honest limitation: the browser has to present this token, so it ships
-// inside the JS bundle and anyone who opens devtools can read it. This
-// stops drive-by and scanner traffic, not a determined attacker. Real
-// authentication needs Cloudflare Access in front of the tunnel.
-const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || '';
 // Paths under /api that skip the gate. Values are MOUNT-RELATIVE, because
 // this middleware is mounted at '/api' — Express sets req.path to the part
 // after the mount, so '/api/anything' is seen here as '/anything'.
@@ -399,11 +526,10 @@ if (BRIDGE_TOKEN) {
   app.use('/api', (req, res, next) => {
     if (TOKEN_OPEN_PATHS.has(req.path)) return next();
     if (req.method === 'OPTIONS') return next(); // preflight carries no body
-    const supplied =
-      req.get('x-homehub-token') ||
-      (req.query && req.query.token) ||
-      '';
-    if (supplied === BRIDGE_TOKEN) return next();
+    // Header ONLY. The `?token=` fallback is gone: a secret in a query
+    // string ends up in the request log on disk, in browser history and in
+    // the Referer of any outbound navigation.
+    if (tokenMatches(req.get('x-homehub-token'))) return next();
     res.status(401).json({
       error: 'unauthorized',
       message: 'Missing or invalid x-homehub-token.',
@@ -412,30 +538,167 @@ if (BRIDGE_TOKEN) {
 }
 
 // ─── persistence helpers ──────────────────────────────────────────────
+// Three defects lived here:
+//
+//   1. writeJson truncated the target in place, so a crash (or a second
+//      writer) could leave a half-written file on disk.
+//   2. Every mutation was an unsynchronised read → mutate → write, so two
+//      overlapping requests interleaved between the read and the write and
+//      one update was lost (this also under-counted the PlantNet quota).
+//   3. readJson swallowed the JSON parse error and returned the fallback.
+//      A corrupt file therefore read as an EMPTY history, and the next
+//      write persisted that empty array — deleting the entire scan history
+//      with no error anywhere.
+//
+// So: atomic write (temp file + rename), a per-file promise-chain mutex
+// around every read-modify-write, and a reader that tells "file absent"
+// apart from "file corrupt" so a corrupt file is never silently replaced.
 
+/** Error thrown when a state file exists but does not parse as JSON. */
+function corruptStateError(file) {
+  const err = new Error(`corrupt state file: ${file}`);
+  err.code = 'EHHUB_CORRUPT_STATE';
+  err.file = file;
+  return err;
+}
+
+/**
+ * Read a JSON state file.
+ *
+ * Returns `fallback` when the file does not exist (a fresh install).
+ * THROWS when the file exists but is corrupt — that is a different thing
+ * entirely, and silently substituting the fallback would destroy the data
+ * on the next write.
+ */
 async function readJson(p, fallback) {
-  try { return JSON.parse(await fs.readFile(p, 'utf8')); }
-  catch { return fallback; }
+  let raw;
+  try {
+    raw = await fs.readFile(p, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return fallback;
+    throw err;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw corruptStateError(p);
+  }
 }
+
+/**
+ * Write a JSON state file atomically: serialise to a temp file in the same
+ * directory, then rename it over the target. A rename within one directory
+ * is atomic, so a reader never sees a partially written file and a crash
+ * can never leave a truncated target behind.
+ */
 async function writeJson(p, data) {
-  await fs.writeFile(p, JSON.stringify(data, null, 2));
+  const tmp = `${p}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+    await fs.rename(tmp, p);
+  } catch (err) {
+    await fs.unlink(tmp).catch(() => {});
+    throw err;
+  }
 }
-const readResults = () => readJson(RESULTS_FILE, []);
-const writeResults = (rows) => writeJson(RESULTS_FILE, rows);
-const readChat = () => readJson(CHAT_FILE, []);
-const writeChat = (rows) => writeJson(CHAT_FILE, rows);
+
+/** Per-file promise chains, so read-modify-write on one file is serialised. */
+const jsonLocks = new Map();
+
+/** Run `fn` with exclusive access to state file `p`. */
+function withJsonLock(p, fn) {
+  const prev = jsonLocks.get(p) || Promise.resolve();
+  // Run whether or not the previous job settled — a failed write must not
+  // wedge the queue — but keep the chain itself free of rejections.
+  const run = prev.then(fn, fn);
+  jsonLocks.set(p, run.then(() => {}, () => {}));
+  return run;
+}
+
+/**
+ * Serialised read-modify-write of a state file.
+ *
+ * `mutate(current)` receives the current value and returns the next one
+ * (return `undefined` to leave the file alone). The whole read → mutate →
+ * write sequence runs under the per-file lock, so no update can be lost.
+ */
+async function updateJson(p, fallback, mutate) {
+  return withJsonLock(p, async () => {
+    const current = await readJson(p, fallback);
+    const next = await mutate(current);
+    if (next !== undefined) await writeJson(p, next);
+    return next;
+  });
+}
+
+/**
+ * Read a state file for a GET route. A corrupt file is a real problem and
+ * is reported as one, rather than being answered with an empty list that
+ * looks like "you have no history".
+ */
+async function readState(p, fallback) {
+  try {
+    return await readJson(p, fallback);
+  } catch (err) {
+    if (err && err.code === 'EHHUB_CORRUPT_STATE') {
+      console.error(`[state] ${err.message} — refusing to serve it as empty`);
+      const e = new Error('state file is corrupt');
+      e.code = 'EHHUB_CORRUPT_STATE';
+      throw e;
+    }
+    throw err;
+  }
+}
 
 // ─── results API ──────────────────────────────────────────────────────
 
-app.post('/api/analyze', upload.single('image'), async (req, res) => {
+/**
+ * Wrap an async route handler so a rejection reaches Express's error
+ * handler. Express 4 does not await route handlers, so an async throw
+ * would otherwise become an unhandled rejection and leave the request
+ * hanging with no response.
+ */
+const asyncRoute = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
+/**
+ * Store an uploaded image on disk.
+ *
+ * The client's filename extension is NEVER trusted. It used to be copied
+ * verbatim, so an upload named `evil.html` was stored as `<uuid>.html` and
+ * then served by express.static on the SAME origin as the SPA, as
+ * text/html. The CSP allows script-src 'self', so such a page could load a
+ * second same-origin upload and run script — with the app's origin, its
+ * localStorage and its authenticated API access.
+ *
+ * So the bytes are re-encoded through sharp and stored as a fixed `.jpg`.
+ * If sharp cannot decode the upload at all, the raw bytes are stored as
+ * `.bin`, which the static mount serves as an opaque download.
+ */
+async function storeUpload(file) {
+  const id = crypto.randomUUID();
+  let storedName = `${id}.jpg`;
+  let buf;
+  let mime = 'image/jpeg';
+  try {
+    buf = await sharp(file.buffer, { failOn: 'none' })
+      .rotate() // honour the EXIF orientation phone cameras write
+      .jpeg({ quality: 90 })
+      .toBuffer();
+  } catch {
+    buf = file.buffer;
+    storedName = `${id}.bin`;
+    mime = file.mimetype || 'application/octet-stream';
+  }
+  await fs.writeFile(path.join(UPLOADS_DIR, storedName), buf);
+  return { id, storedName, buffer: buf, mime };
+}
+
+app.post('/api/analyze', upload.single('image'), asyncRoute(async (req, res) => {
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'no_image' });
 
-  const id = crypto.randomUUID();
-  const ext = path.extname(file.originalname) || '.jpg';
-  const storedName = `${id}${ext}`;
-  const storedPath = path.join(UPLOADS_DIR, storedName);
-  await fs.writeFile(storedPath, file.buffer);
+  const { id, storedName } = await storeUpload(file);
 
   const result = {
     id,
@@ -447,41 +710,52 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
     agentBridge: null,
     parsedOk: false,
   };
-  const rows = await readResults();
-  rows.unshift(result);
-  await writeResults(rows);
+  // Read → mutate → write, all under the per-file lock, so two concurrent
+  // uploads cannot lose each other's row.
+  await updateJson(RESULTS_FILE, [], (rows) => {
+    rows.unshift(result);
+    return rows;
+  });
   res.json({ result });
-});
+}));
 
-app.patch('/api/results/:id', async (req, res) => {
+app.patch('/api/results/:id', asyncRoute(async (req, res) => {
   const id = req.params.id;
-  const rows = await readResults();
-  const idx = rows.findIndex((r) => r.id === id);
-  if (idx === -1) return res.status(404).json({ error: 'not_found' });
-  rows[idx] = { ...rows[idx], ...req.body, id };
-  await writeResults(rows);
-  res.json({ result: rows[idx] });
-});
+  let updated = null;
+  await updateJson(RESULTS_FILE, [], (rows) => {
+    const idx = rows.findIndex((r) => r.id === id);
+    if (idx === -1) return undefined; // nothing to write
+    rows[idx] = { ...rows[idx], ...req.body, id };
+    updated = rows[idx];
+    return rows;
+  });
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ result: updated });
+}));
 
-app.get('/api/results', async (_req, res) => res.json(await readResults()));
+app.get('/api/results', asyncRoute(async (_req, res) => {
+  res.json(await readState(RESULTS_FILE, []));
+}));
 
-app.delete('/api/results', async (_req, res) => {
-  await writeResults([]);
+app.delete('/api/results', asyncRoute(async (_req, res) => {
+  await updateJson(RESULTS_FILE, [], () => []);
   const files = await fs.readdir(UPLOADS_DIR).catch(() => []);
   await Promise.all(files.map((f) => fs.unlink(path.join(UPLOADS_DIR, f)).catch(() => {})));
   res.json({ ok: true });
-});
+}));
 
-app.delete('/api/results/:id', async (req, res) => {
-  const rows = await readResults();
-  const row = rows.find((r) => r.id === req.params.id);
-  if (row) {
-    const fname = path.basename(row.imageUrl);
+app.delete('/api/results/:id', asyncRoute(async (req, res) => {
+  let removed = null;
+  await updateJson(RESULTS_FILE, [], (rows) => {
+    removed = rows.find((r) => r.id === req.params.id) || null;
+    return rows.filter((r) => r.id !== req.params.id);
+  });
+  if (removed) {
+    const fname = path.basename(removed.imageUrl);
     await fs.unlink(path.join(UPLOADS_DIR, fname)).catch(() => {});
   }
-  await writeResults(rows.filter((r) => r.id !== req.params.id));
   res.json({ ok: true });
-});
+}));
 
 // ─── overwatch agent bridge ───────────────────────────────────────────
 
@@ -644,16 +918,14 @@ app.post('/api/overwatch', async (req, res) => {
 });
 
 /** Image + question — uploads image to disk, then asks agent. */
-app.post('/api/overwatch/image', upload.single('image'), async (req, res) => {
+app.post('/api/overwatch/image', upload.single('image'), asyncRoute(async (req, res) => {
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'no_image' });
   const question = (req.body && req.body.question) || 'Identify this grocery item, suggest storage.';
 
-  const id = crypto.randomUUID();
-  const ext = path.extname(file.originalname) || '.jpg';
-  const storedName = `${id}${ext}`;
+  // Re-encoded to a fixed .jpg — the client's extension is never trusted.
+  const { storedName } = await storeUpload(file);
   const storedPath = path.join(UPLOADS_DIR, storedName);
-  await fs.writeFile(storedPath, file.buffer);
 
   const payload = [
     'IMAGE_AT: ' + storedPath,
@@ -677,17 +949,28 @@ app.post('/api/overwatch/image', upload.single('image'), async (req, res) => {
     rawReply,
     parsedOk,
   });
-});
+}));
 
 /** Persistent chat history between the user and overwatch. */
-app.get('/api/overwatch/chat', async (_req, res) => res.json(await readChat()));
+app.get('/api/overwatch/chat', asyncRoute(async (_req, res) => {
+  res.json(await readState(CHAT_FILE, []));
+}));
 
-app.post('/api/overwatch/chat', async (req, res) => {
+// The chat log is capped in two ways: the message length is bounded (the
+// sibling /api/housebot/chat caps at 4000) and the stored history is
+// trimmed to the last OVERWATCH_CHAT_MAX entries. Without that the file
+// and the response grew without bound.
+const OVERWATCH_CHAT_MAX = 200;
+const OVERWATCH_MESSAGE_MAX = 4000;
+
+app.post('/api/overwatch/chat', asyncRoute(async (req, res) => {
   const { message } = req.body || {};
-  if (!message) return res.status(400).json({ error: 'invalid_message' });
-
-  const history = await readChat();
-  history.push({ role: 'user', at: Date.now(), text: message });
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'invalid_message' });
+  }
+  if (message.length > OVERWATCH_MESSAGE_MAX) {
+    return res.status(400).json({ error: 'message_too_long' });
+  }
 
   const status = await callOverwatch([
     'agent',
@@ -697,8 +980,14 @@ app.post('/api/overwatch/chat', async (req, res) => {
   ]);
 
   const replyText = extractAgentText(status.parsed) || status.stderr || '(no reply)';
-  history.push({ role: 'assistant', at: Date.now(), text: replyText });
-  await writeChat(history);
+
+  // Serialised read-modify-write, and the array is trimmed before it is
+  // written so the file cannot grow without bound.
+  const history = await updateJson(CHAT_FILE, [], (rows) => {
+    rows.push({ role: 'user', at: Date.now(), text: message });
+    rows.push({ role: 'assistant', at: Date.now(), text: replyText });
+    return rows.slice(-OVERWATCH_CHAT_MAX);
+  });
 
   res.json({
     ok: status.code === 0,
@@ -706,7 +995,7 @@ app.post('/api/overwatch/chat', async (req, res) => {
     parsed: status.parsed,
     history,
   });
-});
+}));
 
 // ─── PlantNet proxy ───────────────────────────────────────────────────
 // Forwards a photo to https://my-api.plantnet.org and normalises the
@@ -717,23 +1006,38 @@ app.post('/api/overwatch/chat', async (req, res) => {
 //   - Daily-quota tracking has a real home.
 //   - No CORS dance.
 
-/** Read + write the in-memory daily quota counter (resets at UTC midnight). */
+/** Read + write the in-memory daily quota counter (resets at UTC midnight).
+ *  The increment runs under the per-file lock, so two concurrent requests
+ *  cannot both read the same count and one increment be lost — which
+ *  under-counted the daily quota and let extra calls through to PlantNet. */
 async function quotaTick() {
   const today = new Date().toISOString().slice(0, 10);
-  let q = await readJson(QUOTA_FILE, { date: today, count: 0 });
-  if (q.date !== today) q = { date: today, count: 0 };
-  q.count += 1;
-  await writeJson(QUOTA_FILE, q);
+  const q = await updateJson(QUOTA_FILE, { date: today, count: 0 }, (cur) => {
+    const next = cur && cur.date === today ? cur : { date: today, count: 0 };
+    next.count = (Number(next.count) || 0) + 1;
+    return next;
+  });
   return { usedToday: q.count, quota: PLANTNET_DAILY_LIMIT };
 }
+/** Read the counter. A corrupt quota file fails CLOSED (the quota reads as
+ *  exhausted) rather than open (the counter silently resets to zero). */
 async function quotaRead() {
   const today = new Date().toISOString().slice(0, 10);
-  const q = await readJson(QUOTA_FILE, { date: today, count: 0 });
-  if (q.date !== today) return { usedToday: 0, quota: PLANTNET_DAILY_LIMIT };
-  return { usedToday: q.count, quota: PLANTNET_DAILY_LIMIT };
+  let q;
+  try {
+    q = await readJson(QUOTA_FILE, { date: today, count: 0 });
+  } catch (err) {
+    if (err && err.code === 'EHHUB_CORRUPT_STATE') {
+      console.error('[plantnet] quota file is corrupt — treating the quota as used up');
+      return { usedToday: PLANTNET_DAILY_LIMIT, quota: PLANTNET_DAILY_LIMIT };
+    }
+    throw err;
+  }
+  if (!q || q.date !== today) return { usedToday: 0, quota: PLANTNET_DAILY_LIMIT };
+  return { usedToday: Number(q.count) || 0, quota: PLANTNET_DAILY_LIMIT };
 }
 
-app.get('/api/plantnet/status', async (_req, res) => {
+app.get('/api/plantnet/status', asyncRoute(async (_req, res) => {
   const quota = await quotaRead();
   res.json({
     configured: Boolean(PLANTNET_API_KEY),
@@ -742,9 +1046,9 @@ app.get('/api/plantnet/status', async (_req, res) => {
     quota: quota.quota,
     remaining: Math.max(0, quota.quota - quota.usedToday),
   });
-});
+}));
 
-app.post('/api/plantnet/identify', upload.single('image'), async (req, res) => {
+app.post('/api/plantnet/identify', upload.single('image'), asyncRoute(async (req, res) => {
   if (!PLANTNET_API_KEY) {
     return res.status(503).json({
       ok: false,
@@ -771,11 +1075,8 @@ app.post('/api/plantnet/identify', upload.single('image'), async (req, res) => {
   const lang = (req.body && req.body.lang) || 'en';
   const nbResults = (req.body && req.body.nbResults) || '5';
 
-  const id = crypto.randomUUID();
-  const ext = path.extname(file.originalname) || '.jpg';
-  const storedName = `${id}${ext}`;
-  const storedPath = path.join(UPLOADS_DIR, storedName);
-  await fs.writeFile(storedPath, file.buffer);
+  // Re-encoded to a fixed .jpg — the client's extension is never trusted.
+  const { storedName, buffer: uploadBuffer, mime: uploadMime } = await storeUpload(file);
 
   // Build the upstream multipart request manually so we can stream it
   // straight from the in-memory buffer without re-serialising through
@@ -791,12 +1092,12 @@ app.post('/api/plantnet/identify', upload.single('image'), async (req, res) => {
   // Some PlantNet endpoint variants expect multiple `images` fields.
   parts.push(
     `--${boundary}${CRLF}` +
-      `Content-Disposition: form-data; name="images"; filename="scan${ext}"${CRLF}` +
-      `Content-Type: ${file.mimetype || 'image/jpeg'}${CRLF}${CRLF}`,
+      `Content-Disposition: form-data; name="images"; filename="scan.jpg"${CRLF}` +
+      `Content-Type: ${uploadMime}${CRLF}${CRLF}`,
   );
   const head = Buffer.from(parts.join(''), 'utf8');
   const tail = Buffer.from(`${CRLF}--${boundary}--${CRLF}`, 'utf8');
-  const body = Buffer.concat([head, file.buffer, tail]);
+  const body = Buffer.concat([head, uploadBuffer, tail]);
 
   const url = `https://my-api.plantnet.org/v2/identify/${encodeURIComponent(PLANTNET_PROJECT)}?` +
     `api-key=${encodeURIComponent(PLANTNET_API_KEY)}&` +
@@ -868,7 +1169,136 @@ app.post('/api/plantnet/identify', upload.single('image'), async (req, res) => {
     usedToday: quota.usedToday,
     quota: quota.quota,
   });
-});
+}));
+
+// ─── MiniMax vision helpers (shared by /scan-bulk and /identify) ──────
+//
+// These used to live INSIDE the /api/minimax/scan-bulk handler. The
+// /api/minimax/identify handler had its own copy of the "4-QUADRANT
+// ZOOM-IN PASS" block, but it referenced `quadrants` and `callModel` —
+// both of which were declared in the SIBLING handler and therefore did not
+// exist in identify's scope. The `typeof quadrants !== 'undefined'` guard
+// turned that broken reference into silently skipped code instead of a
+// crash, so the zoom-in pass in identify NEVER ran while its comment
+// claimed it did.
+//
+// Hoisted to module scope so both routes use the same implementation.
+
+/**
+ * Crop an image into 4 overlapping quadrants (2x2 grid, 10% overlap).
+ * Each crop is sent to the model separately so it can "zoom in" on one
+ * region and pick up small items the full image misses.
+ */
+async function cropQuadrants(buffer) {
+  const quadrants = [];
+  try {
+    const md = await sharp(buffer).metadata();
+    const W = md.width || 1000;
+    const H = md.height || 1000;
+    // 2x2 grid with 10% overlap so items spanning quadrants still get caught.
+    const halfW = Math.floor(W / 2);
+    const halfH = Math.floor(H / 2);
+    const overlap = Math.floor(Math.min(W, H) * 0.1);
+    const crops = [
+      { name: 'TL', left: 0,                top: 0,                width: halfW + overlap, height: halfH + overlap },
+      { name: 'TR', left: halfW - overlap,   top: 0,                width: halfW + overlap, height: halfH + overlap },
+      { name: 'BL', left: 0,                top: halfH - overlap,  width: halfW + overlap, height: halfH + overlap },
+      { name: 'BR', left: halfW - overlap,   top: halfH - overlap,  width: halfW + overlap, height: halfH + overlap },
+    ];
+    for (const c of crops) {
+      const buf = await sharp(buffer)
+        .extract({ left: c.left, top: c.top, width: c.width, height: c.height })
+        .resize({ width: 1024, withoutEnlargement: false })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      quadrants.push({ name: c.name, b64: buf.toString('base64') });
+    }
+  } catch (e) {
+    console.error('[quadrants] crop failed:', e?.message);
+  }
+  return quadrants;
+}
+
+/**
+ * Ask the MiniMax vision endpoint about an image and return the raw
+ * Response, so the caller can read the body itself.
+ */
+async function callMiniMaxVision(imageB64, opts = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || MINIMAX_TIMEOUT_MS);
+  try {
+    return await fetch(MINIMAX_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${MINIMAX_ACCESS_TOKEN}`,
+      },
+      body: JSON.stringify({
+        model: MINIMAX_MODEL,
+        max_tokens: opts.maxTokens || 1500,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: opts.prompt || PRODUCE_PROMPT },
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: opts.mime || 'image/jpeg',
+                data: imageB64,
+              },
+            },
+          ],
+        }],
+      }),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Run the model over each cropped quadrant in parallel and return the
+ * flattened list of items it found. A failing quadrant never fails the
+ * request — it just contributes nothing.
+ */
+async function runQuadrantPass(quadrants, opts = {}) {
+  if (!Array.isArray(quadrants) || quadrants.length === 0) return [];
+  const tag = opts.tag || 'quadrants';
+  const results = await Promise.all(quadrants.map(async (q) => {
+    try {
+      const qRes = await callMiniMaxVision(q.b64, {
+        prompt: opts.prompt,
+        mime: opts.mime || 'image/jpeg', // the crops are always JPEG
+        maxTokens: 800,
+        timeoutMs: 20_000,
+      });
+      if (!qRes.ok) return [];
+      const qJson = await qRes.json();
+      const qText = Array.isArray(qJson?.content)
+        ? qJson.content.find((c) => c?.type === 'text')?.text ?? ''
+        : '';
+      if (!qText) return [];
+      // Robust JSON extraction: try fenced block first, then find first [..] array.
+      let qJsonStr = null;
+      const qFence = qText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (qFence) qJsonStr = qFence[1];
+      if (!qJsonStr) {
+        const arrMatch = qText.match(/\[[\s\S]*?\]/);
+        if (arrMatch) qJsonStr = arrMatch[0];
+      }
+      if (!qJsonStr) qJsonStr = qText.trim();
+      const qItems = JSON.parse(qJsonStr);
+      return Array.isArray(qItems) ? qItems : (qItems ? [qItems] : []);
+    } catch (e) {
+      console.error(`[${tag}] quadrant pass failed:`, e?.message);
+      return [];
+    }
+  }));
+  return results.flat();
+}
 
 // ─── MiniMax BULK vision (multi-item grocery haul recognition) ──────
 // Same Anthropic-format endpoint as /api/minimax/identify, but the prompt
@@ -881,7 +1311,7 @@ app.post('/api/plantnet/identify', upload.single('image'), async (req, res) => {
 //   Pass 2: 4 quadrants in parallel (zoomed-in for small items + accurate counts)
 //   Pass 3: focus pass on items <0.85 confidence (label/count re-verify)
 //   Pass 4: counting-only pass (exact piece count)
-app.post('/api/minimax/scan-bulk', upload.single('image'), async (req, res) => {
+app.post('/api/minimax/scan-bulk', upload.single('image'), asyncRoute(async (req, res) => {
   if (!MINIMAX_ACCESS_TOKEN || !MINIMAX_API_URL) {
     return res.status(503).json({
       ok: false,
@@ -918,6 +1348,10 @@ app.post('/api/minimax/scan-bulk', upload.single('image'), async (req, res) => {
         .jpeg({ quality: 90 })
         .toBuffer();
       b64 = upscaled.toString('base64');
+      // The upscaled bytes ARE JPEG now, so the media type sent to the model
+      // must say JPEG — it used to keep the original file's mime type, which
+      // labelled JPEG bytes as PNG (or vice versa).
+      mime = 'image/jpeg';
       console.log(`[scan-bulk] upscaled ${meta.width}x${meta.height} -> ${Math.round((meta.width || 800) * upscaleFactor)}x${Math.round((meta.height || 800) * upscaleFactor)}`);
     }
   } catch (e) {
@@ -930,66 +1364,16 @@ app.post('/api/minimax/scan-bulk', upload.single('image'), async (req, res) => {
   // Crop the image into 4 overlapping quadrants with sharp. Each crop is
   // sent to the model separately so it can "zoom in" on each region.
   const tCrop0 = Date.now();
-  let quadrants = [];
-  try {
-    const img = sharp(file.buffer);
-    const md = await img.metadata();
-    const W = md.width || 1000;
-    const H = md.height || 1000;
-    // 2x2 grid with 10% overlap so items spanning quadrants still get caught.
-    const halfW = Math.floor(W / 2);
-    const halfH = Math.floor(H / 2);
-    const overlap = Math.floor(Math.min(W, H) * 0.1);
-    const crops = [
-      { name: 'TL', left: 0,                top: 0,                width: halfW + overlap, height: halfH + overlap },
-      { name: 'TR', left: halfW - overlap,   top: 0,                width: halfW + overlap, height: halfH + overlap },
-      { name: 'BL', left: 0,                top: halfH - overlap,  width: halfW + overlap, height: halfH + overlap },
-      { name: 'BR', left: halfW - overlap,   top: halfH - overlap,  width: halfW + overlap, height: halfH + overlap },
-    ];
-    for (const c of crops) {
-      const buf = await sharp(file.buffer)
-        .extract({ left: c.left, top: c.top, width: c.width, height: c.height })
-        .resize({ width: 1024, withoutEnlargement: false })
-        .jpeg({ quality: 90 })
-        .toBuffer();
-      quadrants.push({ name: c.name, b64: buf.toString('base64') });
-    }
-  } catch (e) {
-    console.error('[scan-bulk] quadrant crop failed:', e?.message);
-  }
+  const quadrants = await cropQuadrants(file.buffer);
 
   // Build a body helper that sends the same prompt + image data to MiniMax.
-  const callModel = async (imageB64, opts = {}) => {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || MINIMAX_TIMEOUT_MS);
-    try {
-      const upstream = await fetch(MINIMAX_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
-          'Authorization': `Bearer ${MINIMAX_ACCESS_TOKEN}`,
-        },
-        body: JSON.stringify({
-          model: MINIMAX_MODEL,
-          max_tokens: opts.maxTokens || 1500,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: opts.prompt || prompt },
-              { type: 'image', source: { type: 'base64', media_type: mime, data: imageB64 } },
-            ],
-          }],
-        }),
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
-      return upstream; // Return the Response so caller can stream text/json
-    } catch (err) {
-      clearTimeout(timer);
-      throw err;
-    }
-  };
+  const callModel = (imageB64, opts = {}) =>
+    callMiniMaxVision(imageB64, {
+      prompt: opts.prompt || prompt,
+      mime: opts.mime || mime,
+      maxTokens: opts.maxTokens,
+      timeoutMs: opts.timeoutMs,
+    });
 
   const t0 = Date.now();
   let upstream;
@@ -1030,36 +1414,8 @@ app.post('/api/minimax/scan-bulk', upload.single('image'), async (req, res) => {
   // (Mint, Onion) and accurately count pieces that are too close to
   // distinguish in the full image. Merge results with the full-image
   // pass — for each label, keep the highest confidence.
-  let quadrantItems = [];
-  if (typeof quadrants !== 'undefined' && quadrants.length > 0) {
-    const quadrantPromises = quadrants.map(async (q) => {
-      try {
-        const qRes = await callModel(q.b64, { maxTokens: 800, timeoutMs: 20_000 });
-        if (!qRes.ok) return [];
-        const qJson = await qRes.json();
-        const qText = Array.isArray(qJson?.content)
-          ? qJson.content.find((c) => c?.type === 'text')?.text ?? ''
-          : '';
-        if (!qText) return [];
-        // Robust JSON extraction: try fenced block first, then find first [..] array.
-        let qJsonStr = null;
-        const qFence = qText.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (qFence) qJsonStr = qFence[1];
-        if (!qJsonStr) {
-          const arrMatch = qText.match(/\[[\s\S]*?\]/);
-          if (arrMatch) qJsonStr = arrMatch[0];
-        }
-        if (!qJsonStr) qJsonStr = qText.trim();
-        const qItems = JSON.parse(qJsonStr);
-        return Array.isArray(qItems) ? qItems : (qItems ? [qItems] : []);
-      } catch (e) {
-        console.error('[scan-bulk] quadrant pass failed:', e?.message);
-        return [];
-      }
-    });
-    const allQuadrantResults = await Promise.all(quadrantPromises);
-    quadrantItems = allQuadrantResults.flat();
-  }
+  const quadrantItems = await runQuadrantPass(quadrants, { prompt, tag: 'scan-bulk' });
+  console.log(`[scan-bulk] quadrant pass: ${quadrantItems.length} item(s) from ${quadrants.length} crop(s)`);
 
   // Parse the JSON array. Try multiple strategies in order:
   //   1) ```json ... ``` fenced block
@@ -1750,13 +2106,13 @@ app.post('/api/minimax/scan-bulk', upload.single('image'), async (req, res) => {
     items: cleanedArr,
     raw: { text, usage: parsed?.usage },
   });
-});
+}));
 
 // ─── MiniMax vision fallback ──────────────────────────────────────────
 // Anthropic-format /messages endpoint with image + text prompt.
 // Used as a last-resort when PlantNet (quota / down) and the in-browser
 // dataset tier both miss. Token never leaves the Mac.
-app.post('/api/minimax/identify', upload.single('image'), async (req, res) => {
+app.post('/api/minimax/identify', upload.single('image'), asyncRoute(async (req, res) => {
   if (!MINIMAX_ACCESS_TOKEN || !MINIMAX_API_URL) {
     return res.status(503).json({
       ok: false,
@@ -1783,6 +2139,16 @@ app.post('/api/minimax/identify', upload.single('image'), async (req, res) => {
   // so both endpoints share the upgraded distinguishing features
   // (capsicum/cabbage, plantain/banana, raw mango, etc.) without drifting.
   const prompt = PRODUCE_PROMPT;
+
+  // Crop the image into 4 overlapping quadrants for the zoom-in pass below.
+  //
+  // This used to be missing here entirely: the zoom-in block referenced
+  // `quadrants` and `callModel`, which were declared in the SIBLING
+  // scan-bulk handler and so did not exist in this scope. The
+  // `typeof quadrants !== 'undefined'` guard then turned the broken
+  // reference into silently skipped code — the zoom-in pass never ran here
+  // while its comment claimed it did.
+  const quadrants = await cropQuadrants(file.buffer);
 
   const body = {
     model: MINIMAX_MODEL,
@@ -1846,36 +2212,8 @@ app.post('/api/minimax/identify', upload.single('image'), async (req, res) => {
   // (Mint, Onion) and accurately count pieces that are too close to
   // distinguish in the full image. Merge results with the full-image
   // pass — for each label, keep the highest confidence.
-  let quadrantItems = [];
-  if (typeof quadrants !== 'undefined' && quadrants.length > 0) {
-    const quadrantPromises = quadrants.map(async (q) => {
-      try {
-        const qRes = await callModel(q.b64, { maxTokens: 800, timeoutMs: 20_000 });
-        if (!qRes.ok) return [];
-        const qJson = await qRes.json();
-        const qText = Array.isArray(qJson?.content)
-          ? qJson.content.find((c) => c?.type === 'text')?.text ?? ''
-          : '';
-        if (!qText) return [];
-        // Robust JSON extraction: try fenced block first, then find first [..] array.
-        let qJsonStr = null;
-        const qFence = qText.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (qFence) qJsonStr = qFence[1];
-        if (!qJsonStr) {
-          const arrMatch = qText.match(/\[[\s\S]*?\]/);
-          if (arrMatch) qJsonStr = arrMatch[0];
-        }
-        if (!qJsonStr) qJsonStr = qText.trim();
-        const qItems = JSON.parse(qJsonStr);
-        return Array.isArray(qItems) ? qItems : (qItems ? [qItems] : []);
-      } catch (e) {
-        console.error('[scan-bulk] quadrant pass failed:', e?.message);
-        return [];
-      }
-    });
-    const allQuadrantResults = await Promise.all(quadrantPromises);
-    quadrantItems = allQuadrantResults.flat();
-  }
+  const quadrantItems = await runQuadrantPass(quadrants, { prompt, tag: 'identify' });
+  console.log(`[identify] quadrant pass: ${quadrantItems.length} item(s) from ${quadrants.length} crop(s)`);
 
   // Parse the JSON array. Try multiple strategies in order:
   //   1) ```json ... ``` fenced block
@@ -2119,14 +2457,25 @@ app.post('/api/minimax/identify', upload.single('image'), async (req, res) => {
     }
   }
 
+  // The client (src/utils/foodClassifier.ts) gates on a FLAT
+  // single-prediction shape: result.label / result.confidence /
+  // result.category / result.notes.
+  //
+  // This route used to answer {ok, ms, count, items:[…], raw:{…}} instead,
+  // so the client's `if (!result.ok || !result.label) return []` check always
+  // threw the answer away. The last-resort MiniMax vision tier therefore
+  // returned an EMPTY prediction list in exactly the situation the endpoint
+  // exists for — PlantNet down, dataset tier missed.
+  const top = cleanedArr[0];
   res.json({
     ok: true,
     ms,
-    count: cleanedArr.length,
-    items: cleanedArr,
-    raw: { text, usage: parsed?.usage },
+    label: top?.label ?? '',
+    confidence: top?.confidence ?? 0,
+    category: top?.category ?? 'other',
+    notes: top?.notes ?? '',
   });
-});
+}));
 
 // Map to canonical BanglaVeg name; same logic as in the classifier.
 // Kept local here so we don't have to import from the frontend bundle.
@@ -2685,6 +3034,66 @@ app.get('/api/housebot/status', async (_req, res) => {
    the human stays in the loop by design rather than as a nicety.
    -------------------------------------------------------------------------- */
 
+/**
+ * Pull the first balanced JSON object out of a model reply.
+ *
+ * The old extraction was a GREEDY `/\{[\s\S]*\}/`: if the model emitted
+ * anything containing a `}` after the JSON object — a second object, a
+ * stray brace — the match ran from the first `{` to the LAST `}`, JSON.parse
+ * threw, and the route answered 200 with {ok:false,
+ * error:'unreadable_response'}, throwing away a reading that was perfectly
+ * valid. The sibling scan-bulk parser already used the non-greedy form.
+ *
+ * So: try a fenced block first, then a balanced-brace scan (which respects
+ * strings and nested objects), then the whole text.
+ */
+function extractJsonObject(text) {
+  const s = String(text || '');
+  const candidates = [];
+
+  // 1) A fenced ```json block.
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) candidates.push(fence[1]);
+
+  // 2) The first balanced {...} in the text.
+  const start = s.indexOf('{');
+  if (start !== -1) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let i = start; i < s.length; i++) {
+      const ch = s[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) { end = i + 1; break; }
+      }
+    }
+    if (end !== -1) candidates.push(s.slice(start, end));
+  }
+
+  // 3) The whole text.
+  candidates.push(s.trim());
+
+  for (const c of candidates) {
+    try {
+      const v = JSON.parse(c);
+      if (v && typeof v === 'object' && !Array.isArray(v)) return v;
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return null;
+}
+
 const RECIPE_READ_PROMPT = `You are reading a photo for a home kitchen app.
 
 Depending on the "mode" field:
@@ -2802,18 +3211,14 @@ app.post('/api/minimax/read-recipe', upload.single('image'), async (req, res) =>
 
     // The model is asked for bare JSON but will occasionally wrap it in a
     // fence or add a sentence, so recover rather than discarding a good read.
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    const data = extractJsonObject(text);
+    if (!data) {
       return res.json({
         ok: false,
         error: 'unreadable_response',
         message: text.slice(0, 300),
         ms: Date.now() - t0,
       });
-    }
-    let data;
-    try { data = JSON.parse(jsonMatch[0]); } catch {
-      return res.json({ ok: false, error: 'unreadable_response', message: text.slice(0, 300) });
     }
 
     const items = Array.isArray(data.items) ? data.items.filter(Boolean).map(String) : [];
@@ -2833,7 +3238,11 @@ app.post('/api/minimax/read-recipe', upload.single('image'), async (req, res) =>
       summary: String(data.summary || '').trim(),
       items,
       steps,
-      confidence: typeof data.confidence === 'number' ? data.confidence : null,
+      confidence: Number.isFinite(data.confidence)
+        // Clamped: the model sometimes returns 5 or -0.2, and an
+        // out-of-range confidence used to be passed straight through.
+        ? Math.min(1, Math.max(0, data.confidence))
+        : null,
       uncertain: Array.isArray(data.uncertain) ? data.uncertain.filter(Boolean).map(String) : [],
       ms: Date.now() - t0,
     });
@@ -2859,12 +3268,24 @@ app.post('/api/housebot/chat', async (req, res) => {
   try {
 
   // Build context block (compact, only what the LLM needs).
+  //
+  // Everything in `context` is client-supplied and was never shape-checked.
+  // `settings.allergies` is the dangerous one: a client that sends it as a
+  // plain string ("peanuts") gives a truthy .length but no .join, so the
+  // template literal below threw a TypeError and the route answered 500
+  // with the internal message. Everything is normalised here first.
   const ctx = context || {};
-  const stock = Array.isArray(ctx.stock) ? ctx.stock : [];
-  const grocery = Array.isArray(ctx.grocery) ? ctx.grocery : [];
-  const recentMeals = Array.isArray(ctx.recentMeals) ? ctx.recentMeals : [];
-  const settings = ctx.settings || {};
-  const recipes = Array.isArray(ctx.recipes) ? ctx.recipes : [];
+  const stock = (Array.isArray(ctx.stock) ? ctx.stock : []).filter(Boolean);
+  const grocery = (Array.isArray(ctx.grocery) ? ctx.grocery : []).filter(Boolean);
+  const recentMeals = (Array.isArray(ctx.recentMeals) ? ctx.recentMeals : []).filter(Boolean);
+  const settings =
+    ctx.settings && typeof ctx.settings === 'object' && !Array.isArray(ctx.settings)
+      ? ctx.settings
+      : {};
+  const recipes = (Array.isArray(ctx.recipes) ? ctx.recipes : []).filter(Boolean);
+  const allergies = Array.isArray(settings.allergies)
+    ? settings.allergies.filter(Boolean).map(String)
+    : [];
 
   const today = new Date().toISOString().slice(0, 10);
   const expiringSoon = stock
@@ -2890,9 +3311,9 @@ app.post('/api/housebot/chat', async (req, res) => {
   }
 
   const contextBlock = [
-    `USER: ${settings.userName || 'Friend'}`,
-    `DIET: ${settings.dietaryPreference && settings.dietaryPreference !== 'no-preference' ? settings.dietaryPreference : 'none'}`,
-    settings.allergies && settings.allergies.length ? `ALLERGIES: ${settings.allergies.join(', ')}` : null,
+    `USER: ${settings.userName ? String(settings.userName) : 'Friend'}`,
+    `DIET: ${settings.dietaryPreference && String(settings.dietaryPreference) !== 'no-preference' ? String(settings.dietaryPreference) : 'none'}`,
+    allergies.length ? `ALLERGIES: ${allergies.join(', ')}` : null,
     `STOCK (${stock.length} items):`,
     stock.length
       ? stock.slice(0, 80).map((s) => `  - ${s.name}: ${s.quantity}${s.unit || ''}${s.expiresOn ? ` (exp ${s.expiresOn})` : ''}${s.category ? ` [${s.category}]` : ''}`).join('\n')
@@ -2918,7 +3339,7 @@ app.post('/api/housebot/chat', async (req, res) => {
   const hist = Array.isArray(history) ? history.slice(-10) : [];
   const messages = [
     { role: 'system', content: sysMsg },
-    ...hist.map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content || '') })),
+    ...hist.map((h) => ({ role: h?.role === 'assistant' ? 'assistant' : 'user', content: String(h?.content || '') })),
     { role: 'user', content: message },
   ];
 
@@ -2973,6 +3394,11 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'invalid_message' });
   }
+  // Same cap as the non-streaming route — checked BEFORE the SSE headers
+  // are flushed, so the client still gets a real 400.
+  if (message.length > 4000) {
+    return res.status(400).json({ error: 'message_too_long' });
+  }
 
   // SSE headers — flush headers immediately so the browser sees the stream.
   res.setHeader('Content-Type', 'text/event-stream');
@@ -2999,11 +3425,17 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   try {
     // Build context (same as /chat).
     const ctx = context || {};
-    const stock = Array.isArray(ctx.stock) ? ctx.stock : [];
-    const grocery = Array.isArray(ctx.grocery) ? ctx.grocery : [];
-    const recentMeals = Array.isArray(ctx.recentMeals) ? ctx.recentMeals : [];
-    const settings = ctx.settings || {};
-    const recipes = Array.isArray(ctx.recipes) ? ctx.recipes : [];
+    const stock = (Array.isArray(ctx.stock) ? ctx.stock : []).filter(Boolean);
+    const grocery = (Array.isArray(ctx.grocery) ? ctx.grocery : []).filter(Boolean);
+    const recentMeals = (Array.isArray(ctx.recentMeals) ? ctx.recentMeals : []).filter(Boolean);
+    const settings =
+      ctx.settings && typeof ctx.settings === 'object' && !Array.isArray(ctx.settings)
+        ? ctx.settings
+        : {};
+    const recipes = (Array.isArray(ctx.recipes) ? ctx.recipes : []).filter(Boolean);
+    const allergies = Array.isArray(settings.allergies)
+      ? settings.allergies.filter(Boolean).map(String)
+      : [];
 
   const today = new Date().toISOString().slice(0, 10);
   const expiringSoon = stock
@@ -3029,9 +3461,9 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   }
 
   const contextBlock = [
-    `USER: ${settings.userName || 'Friend'}`,
-    `DIET: ${settings.dietaryPreference && settings.dietaryPreference !== 'no-preference' ? settings.dietaryPreference : 'none'}`,
-    settings.allergies && settings.allergies.length ? `ALLERGIES: ${settings.allergies.join(', ')}` : null,
+    `USER: ${settings.userName ? String(settings.userName) : 'Friend'}`,
+    `DIET: ${settings.dietaryPreference && String(settings.dietaryPreference) !== 'no-preference' ? String(settings.dietaryPreference) : 'none'}`,
+    allergies.length ? `ALLERGIES: ${allergies.join(', ')}` : null,
     `STOCK (${stock.length} items):`,
     stock.length
       ? stock.slice(0, 80).map((s) => `  - ${s.name}: ${s.quantity}${s.unit || ''}${s.expiresOn ? ` (exp ${s.expiresOn})` : ''}${s.category ? ` [${s.category}]` : ''}`).join('\n')
@@ -3056,7 +3488,7 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   const hist = Array.isArray(history) ? history.slice(-10) : [];
   const messages = [
     { role: 'system', content: sysMsg },
-    ...hist.map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content || '') })),
+    ...hist.map((h) => ({ role: h?.role === 'assistant' ? 'assistant' : 'user', content: String(h?.content || '') })),
     { role: 'user', content: message },
   ];
 
@@ -3176,6 +3608,92 @@ app.post('/api/housebot/summarize', async (req, res) => {
 //   - strips any URL/site mentions from the final output
 //   - returns progress[] with site TITLES only (no URLs) for the UI
 
+// ─── SSRF guard for outbound web fetches ──────────────────────────────
+// The bridge scrapes a search engine's result page and then fetches those
+// URLs ITSELF, server-side. The user-supplied chat message / recipe query
+// steers that search, and the fetched body is spliced into the LLM prompt —
+// so a result URL pointing at 127.0.0.1, at the cloud metadata address or
+// at an RFC1918 host would let a caller read the bridge's own network and
+// have it relayed straight back.
+//
+// So every outbound URL is checked BEFORE the request goes out: https only,
+// and the host must not be loopback / link-local / private (nor resolve to
+// one). Redirects are followed MANUALLY, one hop at a time, with the same
+// check applied to every hop — a public URL must not be able to bounce the
+// request into the LAN.
+
+/** Hostnames that are never fetched, whatever they resolve to. */
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost',
+  'localhost.localdomain',
+  'ip6-localhost',
+  'ip6-loopback',
+  'metadata',
+  'metadata.google.internal',
+  'instance-data',
+]);
+
+/** RFC1918 + friends, for an IPv4 literal. */
+function isPrivateIPv4(ip) {
+  const parts = ip.split('.').map((n) => Number(n));
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    return true;
+  }
+  const [a, b] = parts;
+  if (a === 0) return true;                             // 0.0.0.0/8
+  if (a === 10) return true;                            // 10.0.0.0/8
+  if (a === 127) return true;                           // 127.0.0.0/8 loopback
+  if (a === 169 && b === 254) return true;              // 169.254.0.0/16 link-local
+  if (a === 172 && b >= 16 && b <= 31) return true;     // 172.16.0.0/12
+  if (a === 192 && b === 168) return true;              // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127) return true;    // 100.64.0.0/10 CGNAT (Tailscale)
+  if (a === 192 && b === 0) return true;                // 192.0.0.0/24, 192.0.2.0/24
+  if (a === 198 && (b === 18 || b === 19)) return true;  // 198.18.0.0/15
+  if (a >= 224) return true;                           // multicast + reserved
+  return false;
+}
+
+/** Loopback / link-local / ULA / multicast, for an IPv6 literal. */
+function isPrivateIPv6(ip) {
+  const s = ip.toLowerCase();
+  if (s === '::1' || s === '::') return true;
+  // IPv4-mapped (::ffff:127.0.0.1) — judge the v4 part.
+  const mapped = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPrivateIPv4(mapped[1]);
+  if (/^fe[89ab]/.test(s)) return true;  // fe80::/10 link-local
+  if (/^f[cd]/.test(s)) return true;     // fc00::/7 unique-local
+  if (/^ff/.test(s)) return true;        // multicast
+  return false;
+}
+
+/** True when the address is loopback / link-local / private / reserved. */
+function isPrivateAddress(addr) {
+  const ip = String(addr || '').replace(/^\[|\]$/g, '');
+  const family = net.isIP(ip);
+  if (family === 4) return isPrivateIPv4(ip);
+  if (family === 6) return isPrivateIPv6(ip);
+  return true; // not an IP literal — the DNS branch below handles names
+}
+
+/**
+ * True when the host must not be fetched: a blocked name, a literal
+ * private address, or a name that resolves to a private address.
+ * A name that cannot be resolved is treated as blocked.
+ */
+async function isBlockedHost(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h) return true;
+  if (BLOCKED_HOSTNAMES.has(h)) return true;
+  if (net.isIP(h)) return isPrivateAddress(h);
+  try {
+    const infos = await dns.promises.lookup(h, { all: true, verbatim: true });
+    if (!infos.length) return true;
+    return infos.some((i) => isPrivateAddress(i.address));
+  } catch {
+    return true; // cannot resolve → do not fetch
+  }
+}
+
 async function searchBraveRecipes(q) {
   const url =
     'https://search.brave.com/search?q=' +
@@ -3220,8 +3738,13 @@ async function searchBraveRecipes(q) {
       const u = h[1].replace(/&amp;/g, '&');
       if (seen.has(u)) continue;
       try {
-        const host = new URL(u).hostname.toLowerCase();
+        const parsed = new URL(u);
+        // https only — the fetcher refuses anything else.
+        if (parsed.protocol !== 'https:') continue;
+        const host = parsed.hostname.toLowerCase();
         if (SKIP_HOSTS.some((s) => host === s || host.endsWith('.' + s))) continue;
+        // Never hand a private / loopback / link-local host to the fetcher.
+        if (await isBlockedHost(host)) continue;
         // Skip obvious non-content URLs.
         if (/\.(css|js|png|jpe?g|gif|svg|ico|woff2?|ttf|otf)(\?|$)/i.test(u)) continue;
         seen.add(u);
@@ -3243,17 +3766,38 @@ async function searchBraveRecipes(q) {
 }
 
 async function fetchRecipePage(url) {
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      signal: AbortSignal.timeout(8_000),
-      redirect: 'follow',
-    });
+  // Follow redirects manually, re-validating every hop: a public URL must
+  // not be able to bounce the request into the LAN.
+  let current = String(url || '');
+  for (let hop = 0; hop <= 3; hop++) {
+    let u;
+    try { u = new URL(current); } catch { return null; }
+    if (u.protocol !== 'https:') return null;
+    if (await isBlockedHost(u.hostname)) {
+      console.warn(`[web] refusing to fetch a private or blocked host: ${u.hostname}`);
+      return null;
+    }
+    let res;
+    try {
+      res = await fetch(u, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        signal: AbortSignal.timeout(8_000),
+        redirect: 'manual',
+      });
+    } catch {
+      return null;
+    }
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      if (!loc) return null;
+      try { current = new URL(loc, u).toString(); } catch { return null; }
+      continue;
+    }
     if (!res.ok) return null;
     const ct = res.headers.get('content-type') || '';
     if (!ct.includes('text/html')) return null;
@@ -3268,9 +3812,8 @@ async function fetchRecipePage(url) {
       .replace(/\s+/g, ' ')
       .trim();
     return stripped.slice(0, 8000); // cap per source
-  } catch {
-    return null;
   }
+  return null;
 }
 
 // ─── Indian recipe catalog loader ──────────────────────────────────────
@@ -3700,9 +4243,20 @@ Strict rules:
   }
 });
 
+/**
+ * Add `n` days to an ISO date (YYYY-MM-DD) and return YYYY-MM-DD.
+ *
+ * The date is parsed and advanced in UTC, deliberately. It used to parse
+ * 'YYYY-MM-DDT00:00:00' as LOCAL midnight and then format with
+ * toISOString(), which converts to UTC — in IST (UTC+5:30) local midnight
+ * is 18:30 UTC the previous day, so the date shifted back one. That made
+ * addDays(today, 3) return a date only two days ahead, and items expiring
+ * in exactly three days were silently dropped from the "EXPIRING SOON"
+ * block of the House Bot context.
+ */
 function addDays(iso, n) {
-  const d = new Date(iso + 'T00:00:00');
-  d.setDate(d.getDate() + n);
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
 
@@ -3769,14 +4323,13 @@ app.get('/api/voice/health', async (_req, res) => {
   }
 });
 
+// Unauthenticated (it sits outside the /api mount, so the shared-secret
+// gate never applies) — so it must not disclose anything about the
+// machine. It used to return the absolute data directory path and the
+// internal configuration to anyone who asked.
 app.get('/healthz', (_req, res) => res.json({
   ok: true,
-  dataDir: DATA_DIR,
-  agent: OVERWATCH_AGENT,
-  plantnet: {
-    configured: Boolean(PLANTNET_API_KEY),
-    project: PLANTNET_PROJECT,
-  },
+  configured: Boolean(BRIDGE_TOKEN),
 }));
 
 // ─── serve the built SPA (optional) ───────────────────────────────────
@@ -3854,12 +4407,32 @@ app.listen(PORT, () => {
 // recognize it as an error handler).
 app.use((err, _req, res, _next) => {
   console.error('[overwatch] route error:', err?.message || err);
-  if (!res.headersSent) {
-    res.status(500).json({
-      error: 'internal_error',
-      detail: String(err?.message || err).slice(0, 200),
+  if (res.headersSent) return;
+
+  // An oversize upload is the CALLER's problem, not a server crash.
+  // Multer's LIMIT_FILE_SIZE used to be reported as a 500 carrying the raw
+  // internal message ("File too large"), which reads like the bridge died.
+  if (err?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      error: 'file_too_large',
+      message: 'That file is too large. The maximum upload size is 12 MB.',
     });
   }
+  // body-parser's version of the same thing (the express.json limit).
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'payload_too_large',
+      message: 'That request body is too large.',
+    });
+  }
+
+  // Anything else is an internal fault. The detail is logged above; the
+  // response gets a generic message so internal error text is not
+  // disclosed to the caller.
+  res.status(500).json({
+    error: 'internal_error',
+    detail: 'Internal server error.',
+  });
 });
 
 process.on('unhandledRejection', (reason) => {

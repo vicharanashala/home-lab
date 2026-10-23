@@ -202,6 +202,39 @@ export type MealPlanDayPlan = Record<MealSlot, MealPlanEntry | null>;
 /** A full week. */
 export type MealPlan = Record<MealPlanDay, MealPlanDayPlan>;
 
+/**
+ * What kind of day it is for the household.
+ *
+ * Fasting days and feast days change what can be cooked, so they belong to
+ * the plan rather than to the global diet setting — the same household can
+ * eat normally on Monday and keep a vrat on Tuesday.
+ *
+ * The modes get stricter in order: each one adds a rule to the one before it.
+ * `normal` adds nothing and leans entirely on the household's own dietary
+ * preference.
+ */
+export type DayMode = 'normal' | 'vegetarian' | 'vrat' | 'fast';
+
+/**
+ * A dated one-off: a festival, a day with guests, a fasting day.
+ *
+ * Occasions are tied to a calendar date rather than to a weekday, because
+ * that is how they actually happen — Diwali is on a date, not "every
+ * Saturday". The meal plan shows the current week, so an occasion shows up on
+ * the day it falls on.
+ */
+export interface Occasion {
+  id: string;
+  /** ISO yyyy-mm-dd. */
+  date: string;
+  /** What the household calls it — "Diwali", "Auntie's visit". */
+  label: string;
+  /** Extra people eating that day, beyond the household itself. */
+  guests?: number;
+  /** Overrides that weekday's mode for this date only. */
+  mode?: DayMode;
+}
+
 /** One line on the generated shopping list. */
 export interface ShoppingNeed {
   /** Display name, e.g. "Tomato". */
@@ -228,4 +261,11 @@ export interface AppState {
   /** Weekly meal plan. Optional so saves written before this feature existed
    *  still load cleanly. */
   mealPlan?: MealPlan;
+  /**
+   * The mode each weekday runs on — "every Wednesday is a vrat day".
+   * A missing day means `normal`. Optional for the same reason as above.
+   */
+  dayModes?: Partial<Record<MealPlanDay, DayMode>>;
+  /** Dated one-offs: festivals, guest days, extra fasting days. */
+  occasions?: Occasion[];
 }

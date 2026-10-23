@@ -42,6 +42,15 @@ export interface ClassificationResult {
 const GRAY_SIZE = 32;
 const HIST_BINS = 16;
 
+/**
+ * Size the photo is decoded to before the fingerprint is drawn.
+ *
+ * The fingerprint is a 32×32 grayscale draw, so decoding a 12 MP phone
+ * photo at full resolution buys nothing and costs tens of megabytes of
+ * decoded RGBA. 64×64 is comfortably more than the draw needs.
+ */
+const FINGERPRINT_DECODE_SIZE = 64;
+
 /** The set of MobileNet-known vegetable/fruit canonicals that we *trust*
  *  implicitly when MobileNet returns them — even with modest confidence. */
 const KNOWN_LOCAL_VEG_CANONICAL = new Set<string>([
@@ -86,8 +95,19 @@ export async function classifyFoodImageDetailed(
   // Always compute the fingerprint first — needed for the trainer UI + dataset index
   let fingerprint: number[] | null = null;
   try {
-    const bitmap = await createImageBitmap(image);
-    fingerprint = computeFingerprint(bitmap);
+    // Decoded small, and released immediately. A bitmap that is never
+    // closed stays allocated for the life of the tab — one full-resolution
+    // photo per recognition, which is ~48 MB of RGBA for a 12 MP camera.
+    const bitmap = await createImageBitmap(image, {
+      resizeWidth: FINGERPRINT_DECODE_SIZE,
+      resizeHeight: FINGERPRINT_DECODE_SIZE,
+      resizeQuality: 'high',
+    });
+    try {
+      fingerprint = computeFingerprint(bitmap);
+    } finally {
+      bitmap.close();
+    }
   } catch {
     // ignore
   }
@@ -204,7 +224,8 @@ export async function classifyFoodImageDetailed(
     return {
       predictions: local,
       fingerprint: fingerprint ?? undefined,
-      path: 'overwatch',
+      // MobileNet runs IN THE BROWSER, so this is not the network path.
+      path: 'in-browser',
     };
   }
 
@@ -460,8 +481,19 @@ async function classifyViaMiniMax(
 /** Public helper for trainer modal — just delegates to the same fingerprint code. */
 export async function extractImageEmbedding(blob: Blob): Promise<number[] | null> {
   try {
-    const bitmap = await createImageBitmap(blob);
-    return computeFingerprint(bitmap);
+    // Decoded small and closed straight afterwards, for the same reason as
+    // the recognition path: a full-resolution bitmap left open is tens of
+    // megabytes leaked per photo.
+    const bitmap = await createImageBitmap(blob, {
+      resizeWidth: FINGERPRINT_DECODE_SIZE,
+      resizeHeight: FINGERPRINT_DECODE_SIZE,
+      resizeQuality: 'high',
+    });
+    try {
+      return computeFingerprint(bitmap);
+    } finally {
+      bitmap.close();
+    }
   } catch {
     return null;
   }
