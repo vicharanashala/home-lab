@@ -12,6 +12,10 @@ dist.retired/
 build/
 *.tsbuildinfo
 
+# The lock scripts/build-app.sh takes while it is building. It is a
+# directory, not a file, so it needs its own rule to stay out of the index.
+.build.lock/
+
 # TypeScript/Vite emit these next to the sources; they are generated.
 vite.config.js
 vite.config.d.ts
