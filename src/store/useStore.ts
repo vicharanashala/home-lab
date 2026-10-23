@@ -27,7 +27,7 @@ const BUILT_IN_RECIPES = [...STARTER_RECIPES, ...INDIAN_RECIPES] as any;
 import { uid } from '../utils/uid';
 import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimension } from '../utils/recipeMatch';
 import { formatBaseValue, subtractBase, toBaseUnit, unitDimension } from '../utils/units';
-import { MEAL_SLOTS, suggestedServingsForDay } from '../utils/portions';
+import { MEAL_SLOTS, rescaledServings, suggestedServingsForDay } from '../utils/portions';
 import { DEFAULT_CONSENTS } from '../utils/consent';
 
 const STORAGE_KEY = 'homehub.v1';
@@ -604,30 +604,26 @@ const setDayGuests: UseStore['setDayGuests'] = (day, guests) => {
     const oldGuests = Math.max(0, cur?.guests ?? 0);
     if (oldGuests === next) return s;
 
-    // Scale the portions already planned for that day by how much the day
-    // itself now wants. Without this, adding two guests would leave the
-    // shopping list short by exactly those two people's worth of food.
+    // Move the portions already planned for that day up with the day itself.
+    // Without this, adding two guests would leave the shopping list short by
+    // exactly those two people's worth of food.
     //
-    // The scale is the ratio between the day's portion size before and
-    // after the change — NOT the ratio of head counts. The head-count ratio
-    // looked reasonable and disagreed with the rest of the app whenever the
-    // household's usual portion was not exactly its head count, which is
-    // whenever there are children at the table: two adults and a child
-    // cooking for four people left three servings on the dish that was
-    // already planned and four on the dish picked afterwards, and the
-    // shopping list bought the smaller of the two.
+    // The dish keeps its PLACE on the portion ladder and the day carries it up
+    // the same number of steps. It used to be scaled by the RATIO between the
+    // day's old size and its new one, which works only while the dish IS the
+    // day's size — the common case, and the only one the tests covered. A
+    // dish deliberately planned at a different size drifted further with every
+    // step: a 9-serving dinner became 14, then 21, then 27 servings, and the
+    // shopping list bought five times the food the day needs.
     const household = s.app.settings.household;
     const before = suggestedServingsForDay(cur, household);
     const after = suggestedServingsForDay({ ...emptyDayPlan(), ...cur, guests: next }, household);
-    const factor = before > 0 ? after / before : 1;
 
     const day2: MealPlanDayPlan = { ...emptyDayPlan(), ...cur, guests: next };
-    if (Number.isFinite(factor) && factor > 0 && factor !== 1) {
-      for (const slot of MEAL_SLOTS) {
-        const entry = day2[slot];
-        if (entry) {
-          day2[slot] = { ...entry, servings: Math.max(1, Math.round(entry.servings * factor)) };
-        }
+    for (const slot of MEAL_SLOTS) {
+      const entry = day2[slot];
+      if (entry) {
+        day2[slot] = { ...entry, servings: rescaledServings(entry.servings, before, after) };
       }
     }
     return { ...s, app: { ...s.app, mealPlan: { ...plan, [day]: day2 } } };

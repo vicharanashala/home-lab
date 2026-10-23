@@ -83,27 +83,36 @@ export function headCount(h?: HouseholdProfile): number {
 }
 
 /**
+ * Where a number of servings lands on the portion ladder.
+ *
+ * The ladder is the five sizes the app offers — 2, 4, 6, 9, 12 — and a need
+ * that is not exactly one of them belongs to the nearest. Ties go to the
+ * SMALLER portion: half a portion too much is a smaller mistake than half
+ * too little, because the extra can be kept and the shortage cannot.
+ */
+function nearestPortionIndex(servings: number): number {
+  if (!(servings > 0)) return 0;
+  let best = 0;
+  let bestGap = Infinity;
+  for (let i = 0; i < PORTION_LEVELS.length; i++) {
+    const gap = Math.abs(PORTION_LEVELS[i].servings - servings);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
  * The standard portion closest to a given need.
  *
  * A need is measured in ADULT EQUIVALENTS — the one measure the app uses for
  * a household. A child counts 0.6 of an adult, so two adults and three
  * children is a need of 3.8, not five.
- *
- * Ties go to the SMALLER portion. Half a portion too much is a smaller
- * mistake than half too little: the extra can be kept, the shortage cannot.
  */
 function nearestPortion(need: number): PortionLevel {
-  if (!(need > 0)) return PORTION_LEVELS[0];
-  let best = PORTION_LEVELS[0];
-  let bestGap = Infinity;
-  for (const p of PORTION_LEVELS) {
-    const gap = Math.abs(p.servings - need);
-    if (gap < bestGap) {
-      bestGap = gap;
-      best = p;
-    }
-  }
-  return best;
+  return PORTION_LEVELS[nearestPortionIndex(need)];
 }
 
 /** The portion button closest to what this household needs. */
@@ -149,6 +158,40 @@ export function suggestedServingsForDay(
   const guests = Math.max(0, day?.guests ?? 0);
   if (guests === 0) return base;
   return Math.max(base, nearestPortion(adultEquivalents(h) + guests).servings);
+}
+
+/**
+ * The size a dish should move to when the day it sits on grows.
+ *
+ * WHY THIS IS NOT A RATIO
+ * The dish's size and the day's size are two different numbers, and only the
+ * DAY moves when the guest count changes. Scaling the dish by the ratio
+ * between the day's old size and its new one keeps the two in step only
+ * while the dish happens to BE the day's size — the common case, and the
+ * only case the tests covered. The moment a dish was deliberately planned at
+ * a different size (a "Family" dinner on a "Medium" day), every guest step
+ * multiplied it by the day's growth factor again and the dish ran away: a
+ * 9-serving dinner became 14, then 21, then 27 servings — sizes the app
+ * does not even offer, and a shopping list five times too big.
+ *
+ * So the dish keeps its PLACE on the ladder and the day carries it up the
+ * same number of steps. A dinner deliberately made bigger than the day stays
+ * bigger; a smaller one stays smaller; and the result is always one of the
+ * five sizes the app can show and buy.
+ *
+ * @param dishServings how big the dish is now
+ * @param dayBefore    the day's size before the change
+ * @param dayAfter     the day's size after the change
+ */
+export function rescaledServings(
+  dishServings: number,
+  dayBefore: number,
+  dayAfter: number,
+): number {
+  const steps = nearestPortionIndex(dayAfter) - nearestPortionIndex(dayBefore);
+  const moved = nearestPortionIndex(dishServings) + steps;
+  const clamped = Math.max(0, Math.min(PORTION_LEVELS.length - 1, moved));
+  return PORTION_LEVELS[clamped].servings;
 }
 
 /** How many times bigger than the recipe's written size we need to cook. */
