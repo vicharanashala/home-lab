@@ -327,14 +327,16 @@ export default function MealPlanPage() {
     setEditing({ day, slot });
     if (recipe) {
       setDraftText(recipe.name);
-      // Keep the recipe's own size when it is one of the portion buttons,
-      // so the highlighted portion matches the dish; otherwise fall back to
-      // the household default.
-      setDraftServings(
-        PORTION_LEVELS.some((p) => p.servings === recipe.baseServings)
-          ? recipe.baseServings
-          : dayServings,
-      );
+      // The portion this day wants — the same number every other way of
+      // putting a dish on a day uses.
+      //
+      // WHY NOT THE RECIPE'S OWN SIZE: every recipe in the catalogue is
+      // written for two people, so "cook it as written" is always "cook it
+      // for two". For a household with children, or a day with guests over,
+      // that is smaller than the day wants — and the shopping list is built
+      // from the servings on the dish, so the day said 4 and the list bought
+      // for 2. Two adults and two children, one dish, two answers.
+      setDraftServings(dayServings);
       setPreview(recipe);
     } else {
       setDraftText(entry?.name || '');
