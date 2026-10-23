@@ -551,14 +551,31 @@ const copyMealPlanDay: UseStore['copyMealPlanDay'] = (from, to) => {
     // Clone each entry so the two days never share an object. createdAt is
     // refreshed because this is a new plan for a different day.
     const cloned = { ...emptyDayPlan() } as typeof emptyDayPlan extends () => infer R ? R : never;
-    for (const slot of ['breakfast', 'lunch', 'dinner'] as const) {
-      const e = src[slot];
-      if (e) cloned[slot] = { ...e, createdAt: Date.now() };
-    }
     // The target day keeps its own way of eating and guest count — copying
     // Monday's dinners onto a vrat day must not quietly turn it into an
     // ordinary day. Any dish that breaks the mode is flagged in the UI.
     const target = plan[to];
+    // The dishes are sized for the TARGET day, not for the day they came
+    // from.
+    //
+    // WHY NOT THE SOURCE DAY'S PORTION: the copy keeps the target day's own
+    // guest count, so the two halves of the target day disagreed — the day
+    // saying "six people over, cook for six" while the dish it now held said
+    // four. The shopping list is built from the servings on each dish, so it
+    // bought for four. Two adults and three children with two guests over on
+    // Saturday: the day eats 6 servings, Monday's dinner is written for 4,
+    // and the copy wrote 4 onto Saturday.
+    //
+    // This is the rule every other way of putting a dish on a day already
+    // uses — the portion the day wants, the number the meal-plan header
+    // prints and the guest scaling applies — so the copy is now the same
+    // number as the picker, the suggestion sheet and the spoken plan. The
+    // user can still open a copied dish and choose another size.
+    const dayServings = suggestedServingsForDay(target, s.app.settings.household);
+    for (const slot of ['breakfast', 'lunch', 'dinner'] as const) {
+      const e = src[slot];
+      if (e) cloned[slot] = { ...e, servings: dayServings, createdAt: Date.now() };
+    }
     cloned.mode = target?.mode;
     cloned.guests = target?.guests;
     cloned.note = target?.note;
