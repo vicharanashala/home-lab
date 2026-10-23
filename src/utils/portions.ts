@@ -82,9 +82,18 @@ export function headCount(h?: HouseholdProfile): number {
   return (h.adults || 0) + (h.teens || 0) + (h.children || 0) + (h.toddlers || 0);
 }
 
-/** The portion button closest to what this household needs. */
-export function suggestedPortionId(h?: HouseholdProfile): PortionId {
-  const need = adultEquivalents(h);
+/**
+ * The standard portion closest to a given need.
+ *
+ * A need is measured in ADULT EQUIVALENTS — the one measure the app uses for
+ * a household. A child counts 0.6 of an adult, so two adults and three
+ * children is a need of 3.8, not five.
+ *
+ * Ties go to the SMALLER portion. Half a portion too much is a smaller
+ * mistake than half too little: the extra can be kept, the shortage cannot.
+ */
+function nearestPortion(need: number): PortionLevel {
+  if (!(need > 0)) return PORTION_LEVELS[0];
   let best = PORTION_LEVELS[0];
   let bestGap = Infinity;
   for (const p of PORTION_LEVELS) {
@@ -94,12 +103,16 @@ export function suggestedPortionId(h?: HouseholdProfile): PortionId {
       best = p;
     }
   }
-  return best.id;
+  return best;
+}
+
+/** The portion button closest to what this household needs. */
+export function suggestedPortionId(h?: HouseholdProfile): PortionId {
+  return nearestPortion(adultEquivalents(h)).id;
 }
 
 export function suggestedServings(h?: HouseholdProfile): number {
-  const id = suggestedPortionId(h);
-  return PORTION_LEVELS.find((p) => p.id === id)?.servings ?? 4;
+  return nearestPortion(adultEquivalents(h)).servings;
 }
 
 /** Heads at the table on a given day: the household, plus any guests. */
@@ -111,27 +124,22 @@ export function dayHeadCount(
 }
 
 /**
- * The portion size that suits a given number of heads — the nearest of the
- * five standard portions.
- */
-export function servingsForHeads(heads: number): number {
-  if (!(heads > 0)) return PORTION_LEVELS[0].servings;
-  let best = PORTION_LEVELS[0];
-  let bestGap = Infinity;
-  for (const p of PORTION_LEVELS) {
-    const gap = Math.abs(p.servings - heads);
-    if (gap < bestGap) {
-      bestGap = gap;
-      best = p;
-    }
-  }
-  return best.servings;
-}
-
-/**
  * The portion to cook on a given day: the household's usual size, bumped
  * up when guests are coming. Never smaller than the household's usual size —
  * extra guests should never shrink the portions.
+ *
+ * WHY THE GUESTS ARE ADDED TO THE ADULT EQUIVALENTS AND NOT TO THE HEAD COUNT
+ * The household is measured in adult equivalents — a child eats 0.6 of an
+ * adult — and the guests are extra people at the table, so they belong in
+ * that same measure. Adding them to the raw head count instead quietly
+ * re-measured the household's CHILDREN as full adults: one guest over grew a
+ * family of two adults and three children from a medium portion (4) to a
+ * large one (6), which is 50% more food than that family eats, and the
+ * shopping list — which is built from the servings on each dish — bought it.
+ *
+ * `dayHeadCount` is still the right answer to "how many people are at the
+ * table", and the meal-plan header says that. It was the wrong answer to
+ * "how much food does this day need".
  */
 export function suggestedServingsForDay(
   day: MealPlanDayPlan | undefined,
@@ -140,7 +148,7 @@ export function suggestedServingsForDay(
   const base = suggestedServings(h);
   const guests = Math.max(0, day?.guests ?? 0);
   if (guests === 0) return base;
-  return Math.max(base, servingsForHeads(dayHeadCount(day, h)));
+  return Math.max(base, nearestPortion(adultEquivalents(h) + guests).servings);
 }
 
 /** How many times bigger than the recipe's written size we need to cook. */
