@@ -429,10 +429,25 @@ const removeStock = (id: string) => {
 };
 
 const updateSettings: UseStore['updateSettings'] = (patch) => {
-  setState((s) => ({
-    ...s,
-    app: { ...s.app, settings: { ...s.app.settings, ...patch } },
-  }));
+  setState((s) => {
+    const settings = { ...s.app.settings, ...patch };
+    // A household change moves the dishes already on the plan, so the
+    // shopping list keeps up with the people who are actually eating.
+    // See `rescalePlanForHousehold` in the meal plan section.
+    const rescaled =
+      patch.household === undefined
+        ? null
+        : rescalePlanForHousehold(
+            currentMealPlan(),
+            s.app.settings.household,
+            patch.household,
+          );
+    const app = { ...s.app, settings };
+    // The plan is only replaced when a dish actually moved — otherwise the
+    // stored plan keeps its identity and nothing downstream re-renders.
+    if (rescaled) app.mealPlan = rescaled;
+    return { ...s, app };
+  });
 };
 
 const addMealLog: UseStore['addMealLog'] = (input) => {
@@ -585,13 +600,21 @@ const copyMealPlanDay: UseStore['copyMealPlanDay'] = (from, to) => {
 
 /** Marks the one-run household survey as done so it stops nagging. */
 const completeHouseholdSurvey: UseStore['completeHouseholdSurvey'] = (household) => {
-  setState((s) => ({
-    ...s,
-    app: {
+  setState((s) => {
+    // The dishes already on the plan move with the household, so the
+    // shopping list keeps up with the people who are actually eating.
+    const rescaled = rescalePlanForHousehold(
+      currentMealPlan(),
+      s.app.settings.household,
+      household,
+    );
+    const app = {
       ...s.app,
       settings: { ...s.app.settings, household: { ...household, completed: true } },
-    },
-  }));
+    };
+    if (rescaled) app.mealPlan = rescaled;
+    return { ...s, app };
+  });
 };
 
 const clearMealPlan = () => {
@@ -645,6 +668,54 @@ const setDayGuests: UseStore['setDayGuests'] = (day, guests) => {
     }
     return { ...s, app: { ...s.app, mealPlan: { ...plan, [day]: day2 } } };
   });
+};
+
+/**
+ * Move the dishes already on the plan when the HOUSEHOLD changes.
+ *
+ * WHY THIS HAS TO HAPPEN
+ * A day's portion is worked out from the household — how many people live
+ * there and how much each of them eats — so a household that grows makes
+ * every day want a bigger portion. The dishes already on the plan kept the
+ * size they were given, so the meal-plan card said "cooking for 4 today
+ * (4pax)" while the dish beside it said 2pax, and the shopping list — which
+ * is built from the servings on each dish — bought for two people.
+ *
+ * The guest count was already handled this way; see `setDayGuests`. A change
+ * to the household itself is the same situation with a different cause.
+ *
+ * Each dish keeps its PLACE on the portion ladder and moves by the same
+ * number of steps as the day, so a dish deliberately planned at a different
+ * size from the day stays that way.
+ *
+ * Returns null when no day changed size: nothing needs to move, and the
+ * stored plan is left exactly as it is.
+ */
+const rescalePlanForHousehold = (
+  plan: MealPlan,
+  from: HouseholdProfile | undefined,
+  to: HouseholdProfile | undefined,
+): MealPlan | null => {
+  let out: MealPlan | null = null;
+  for (const day of MEAL_PLAN_DAYS) {
+    const dayPlan = plan[day];
+    if (!dayPlan) continue;
+    const before = suggestedServingsForDay(dayPlan, from);
+    const after = suggestedServingsForDay(dayPlan, to);
+    // The day's own size did not move, so neither do its dishes — and a dish
+    // the user gave a size that is not on the ladder keeps it.
+    if (before === after) continue;
+    const moved: MealPlanDayPlan = { ...dayPlan };
+    for (const slot of MEAL_SLOTS) {
+      const entry = moved[slot];
+      if (entry) {
+        moved[slot] = { ...entry, servings: rescaledServings(entry.servings, before, after) };
+      }
+    }
+    if (!out) out = { ...plan };
+    out[day] = moved;
+  }
+  return out;
 };
 
 const setDayNote: UseStore['setDayNote'] = (day, note) => {
