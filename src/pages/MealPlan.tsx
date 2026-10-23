@@ -988,7 +988,8 @@ export default function MealPlanPage() {
           dayLabel={MEAL_PLAN_DAY_LABELS[suggestFor.day]}
           suggestions={suggestionsFor}
           hasTasteProfile={hasTasteProfile}
-          servings={suggestedServings(household)}
+          dayPlan={mealPlan[suggestFor.day]}
+          household={household}
           busy={suggestBusy}
           onPick={applySuggestion}
           onShuffle={() => setSuggestNonce((n) => n + 1)}

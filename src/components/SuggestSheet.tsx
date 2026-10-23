@@ -2,7 +2,8 @@ import { X, Sparkles, RefreshCw, ChefHat, Clock, Package } from 'lucide-react';
 import clsx from 'clsx';
 import { DishIcon } from './icons/DishIcons';
 import type { MealSuggestion, SuggestReason } from '../utils/mealSuggest';
-import type { MealSlot } from '../types';
+import { suggestedServingsForDay } from '../utils/portions';
+import type { HouseholdProfile, MealPlanDayPlan, MealSlot } from '../types';
 
 const SLOT_LABELS: Record<MealSlot, string> = {
   breakfast: 'breakfast',
@@ -38,19 +39,32 @@ const REASON_STYLE: Record<SuggestReason, { chip: string; icon: typeof Sparkles 
  * rule — a bad suggestion costs one tap, never a silent edit to their week.
  */
 export function SuggestSheet({
-  slot, dayLabel, suggestions, hasTasteProfile, servings,
+  slot, dayLabel, suggestions, hasTasteProfile, dayPlan, household,
   onPick, onShuffle, onClose, busy,
 }: {
   slot: MealSlot;
   dayLabel: string;
   suggestions: MealSuggestion[];
   hasTasteProfile: boolean;
-  servings?: number;
+  /**
+   * The day these suggestions are for. The sheet shows how many people THAT
+   * day cooks for, which is more than the household when guests are over.
+   */
+  dayPlan: MealPlanDayPlan | undefined;
+  household: HouseholdProfile | undefined;
   onPick: (s: MealSuggestion) => void;
   onShuffle: () => void;
   onClose: () => void;
   busy?: boolean;
 }) {
+  // The portion this day wants, from the same rule the plan is written with.
+  //
+  // WHY THE SHEET WORKS IT OUT ITSELF: it used to take the number from the
+  // caller, and the caller passed the household's portion while the dish the
+  // sheet produced was planned for the day's larger number — the sheet said
+  // "2pax" and the plan got 4 servings. Taking the day's plan instead makes
+  // the wrong number impossible to pass.
+  const servings = suggestedServingsForDay(dayPlan, household);
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       <button
@@ -128,8 +142,7 @@ export function SuggestSheet({
                             {s.why}
                           </span>
                           <span className="text-[11px] text-sage-500 dark:text-ink-400">
-                            {s.have}/{s.total} in stock
-                            {servings ? ` · ${servings}pax` : ''}
+                            {s.have}/{s.total} in stock{` · ${servings}pax`}
                           </span>
                         </span>
                       </span>
