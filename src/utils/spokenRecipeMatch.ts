@@ -60,6 +60,15 @@ export interface DishResolution {
   best: DishMatch | null;
   /** Other plausible recipes, best first. */
   alternatives: DishMatch[];
+  /**
+   * True when the USER picked this dish, rather than the matcher choosing it.
+   *
+   * A dish the user tapped is linked to its recipe even when the matcher's
+   * score for it was low: the user has already said which dish they meant.
+   * A low score only ever meant the matcher was unsure — never that the
+   * choice was wrong.
+   */
+  picked?: boolean;
 }
 
 /**
@@ -157,6 +166,22 @@ export function normalizeDish(s: string): string {
     .replace(/[^a-z0-9 ]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Whether two names are the same dish.
+ *
+ * WHY THIS IS A SHARED ANSWER: the sheet and the entry writer both have to
+ * decide "is this still the dish the user is looking at", and they must not
+ * disagree — one screen linking a recipe the other calls a different dish
+ * is how a shopping list ends up buying dosa batter for a paneer tikka.
+ *
+ * The comparison is on the CORE of each name, so "Masala Dosa" and
+ * "Masala Dosa Recipe - Spiced Lentil Crepe" are one dish, and "masala dosa"
+ * typed in lower case is the same dish as the catalogue's "Masala dosa".
+ */
+export function sameDish(a: string, b: string): boolean {
+  return normalizeDish(dishCore(a)) === normalizeDish(dishCore(b));
 }
 
 /**
@@ -465,4 +490,50 @@ export function resolveSpokenPlan<T extends object>(
     },
   );
   return { plan: { ...(plan as object), ...out } as T, resolutions };
+}
+
+/**
+ * The resolution for a slot the user has typed over.
+ *
+ * WHY THE TEXT IS MATCHED AGAIN: the dish the slot holds is now the typed
+ * text, not what was heard. A correction that names a real recipe links to
+ * it; one that names nothing stays unlinked rather than being guessed at.
+ *
+ * The heard text becomes the typed text, because that is the text this
+ * resolution was worked out from — the sheet shows it back to the user as
+ * "heard … → matched …".
+ */
+export function retypeDish(
+  text: string,
+  catalogue: Recipe[],
+  preferredIds?: Set<string>,
+): DishResolution {
+  const typed = (text || '').trim();
+  if (!typed) return { heard: '', best: null, alternatives: [] };
+  return matchDish(typed, catalogue, preferredIds);
+}
+
+/**
+ * The resolution for a slot where the user tapped one of the alternatives.
+ *
+ * The dish the user tapped becomes the match, and the one that was there
+ * before becomes an alternative — so the user can change their mind without
+ * the sheet losing what was on offer.
+ *
+ * The heard text is kept: it is still what was said, and the sheet tells the
+ * user what they said and what it was taken to mean.
+ */
+export function pickDish(
+  resolution: DishResolution,
+  match: DishMatch,
+): DishResolution {
+  const alternatives = [resolution.best, ...resolution.alternatives].filter(
+    (m): m is DishMatch => !!m && m.recipe.id !== match.recipe.id,
+  );
+  return {
+    heard: resolution.heard,
+    best: match,
+    alternatives,
+    picked: true,
+  };
 }

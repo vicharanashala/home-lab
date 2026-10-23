@@ -3,7 +3,7 @@ import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
 import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES } from '../hooks/useWhisperSTT';
 import { parseSpokenPlan } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
-import { resolveSpokenPlan, CONFIDENT_SCORE } from '../utils/spokenRecipeMatch';
+import { resolveSpokenPlan, CONFIDENT_SCORE, retypeDish, pickDish } from '../utils/spokenRecipeMatch';
 import type { DishResolution } from '../utils/spokenRecipeMatch';
 import type { Recipe } from '../types';
 
@@ -133,7 +133,17 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
           // matcher put there. Once the user types over it, the note would be
           // describing something that is no longer on screen.
           const corrected = res?.best && res.best.score >= CONFIDENT_SCORE;
-          const settled = res && (corrected ? current === res.best!.name : current === res.heard);
+          // A dish the user TAPPED is the slot's dish now, whatever the
+          // matcher made of it. So the sheet keeps saying what it heard and
+          // what the slot holds, and the other dishes stay on offer — the
+          // user can change their mind without the sheet losing the list.
+          const settled = res && (
+            res.picked === true
+              ? current === res.best?.name
+              : corrected
+                ? current === res.best!.name
+                : current === res.heard
+          );
           const options = res?.best
             ? [res.best, ...res.alternatives].filter((m) => m.name !== current)
             : [];
@@ -146,9 +156,28 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
                 value={current}
                 placeholder="leave empty to keep what's planned"
                 aria-label={`${slot} from speech`}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d!, [slot]: e.target.value || undefined }))
-                }
+                onChange={(e) => {
+                  const text = e.target.value;
+                  setDraft((d) => ({ ...d!, [slot]: text || undefined }));
+                  // The slot and the resolution have to move together.
+                  //
+                  // WHY: the slot says what the dish IS; the resolution says
+                  // which RECIPE it is, and the shopping list is built from
+                  // the recipe, not from the name. Moving the slot alone
+                  // leaves the plan holding one dish and buying another — so
+                  // a slot the user typed over is matched again, and a
+                  // correction that names a real recipe links to it.
+                  setResolutions((r) => {
+                    if (!text.trim()) {
+                      // The slot is empty again, so there is no dish to
+                      // describe.
+                      const next = { ...r };
+                      delete next[slot];
+                      return next;
+                    }
+                    return { ...r, [slot]: retypeDish(text, catalogue, preferredIds) };
+                  });
+                }}
                 className="input w-full text-xs py-1.5 mt-0.5"
               />
 
@@ -176,6 +205,20 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
                       onClick={(e) => {
                         e.preventDefault();
                         setDraft((d) => ({ ...d!, [slot]: m.name }));
+                        // The resolution follows the slot. The dish the user
+                        // tapped IS the dish the plan now holds, so it is the
+                        // dish whose recipe has to be linked — otherwise the
+                        // plan says "Paneer Tikka Masala" and the shopping
+                        // list buys paneer tikka's ingredients.
+                        //
+                        // The match is taken at the user's word even when the
+                        // matcher scored it low: they have already said which
+                        // dish they meant.
+                        setResolutions((r) => {
+                          const current = r[slot];
+                          if (!current) return r;
+                          return { ...r, [slot]: pickDish(current, m) };
+                        });
                       }}
                       className="rounded-md border border-sage-300 dark:border-sage-700 bg-white dark:bg-ink-800 px-1.5 py-0.5 text-[10px] text-sage-700 dark:text-ink-200 hover:bg-sage-50 dark:hover:bg-sage-900/40"
                     >
