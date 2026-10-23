@@ -83,12 +83,22 @@ export function headCount(h?: HouseholdProfile): number {
 }
 
 /**
- * Where a number of servings lands on the portion ladder.
+ * Where a number of servings lands on the portion ladder: the NEAREST size.
  *
  * The ladder is the five sizes the app offers — 2, 4, 6, 9, 12 — and a need
- * that is not exactly one of them belongs to the nearest. Ties go to the
- * SMALLER portion: half a portion too much is a smaller mistake than half
- * too little, because the extra can be kept and the shortage cannot.
+ * that is not exactly one of them belongs to the nearest.
+ *
+ * WHY A TIE GOES TO THE LARGER SIZE
+ * The ladder publishes what each size feeds: Small is "1–2 people", Medium is
+ * "3–4 people", Large is "5–6", Family is "7–9", Big is "10+". A need of
+ * exactly three is three people, so it belongs to Medium. The smaller size
+ * would be cooking two portions for three people — and the shopping list,
+ * which is built from the servings on each dish, would buy two portions'
+ * worth of food for three adults.
+ *
+ * The same reason decides the general case: too much food can be kept for
+ * the next day, too little cannot be made up. So a tie rounds UP, the way
+ * `Math.round` does.
  */
 function nearestPortionIndex(servings: number): number {
   if (!(servings > 0)) return 0;
@@ -96,7 +106,9 @@ function nearestPortionIndex(servings: number): number {
   let bestGap = Infinity;
   for (let i = 0; i < PORTION_LEVELS.length; i++) {
     const gap = Math.abs(PORTION_LEVELS[i].servings - servings);
-    if (gap < bestGap) {
+    // `<=` and not `<`: on a tie the LATER size wins, and the ladder is in
+    // ascending order, so the later size is the bigger one.
+    if (gap <= bestGap) {
       bestGap = gap;
       best = i;
     }
@@ -105,23 +117,84 @@ function nearestPortionIndex(servings: number): number {
 }
 
 /**
- * The standard portion closest to a given need.
+ * The smallest size on the ladder that COVERS a need.
  *
- * A need is measured in ADULT EQUIVALENTS — the one measure the app uses for
- * a household. A child counts 0.6 of an adult, so two adults and three
- * children is a need of 3.8, not five.
+ * This is the other half of the ladder rule. `nearestPortionIndex` answers
+ * "which size is closest"; this answers "which size is big enough" — and for
+ * a household where every guest and every member of the family eats a whole
+ * serving, "big enough" is the only answer that is right. Six servings is
+ * the closest size to seven people, but six servings is the size whose own
+ * label says it feeds "5–6 people", and the shopping list, built from the
+ * servings on each dish, would buy six people's worth of food for seven
+ * adults.
  */
-function nearestPortion(need: number): PortionLevel {
-  return PORTION_LEVELS[nearestPortionIndex(need)];
+function coveringPortionIndex(servings: number): number {
+  for (let i = 0; i < PORTION_LEVELS.length; i++) {
+    if (PORTION_LEVELS[i].servings >= servings) return i;
+  }
+  return PORTION_LEVELS.length - 1;
+}
+
+/**
+ * Whether anyone at the table eats less than a whole serving.
+ *
+ * A child counts 0.6 of an adult and a toddler 0.4, so a household with
+ * children needs noticeably less food than its head count suggests — that is
+ * the whole point of measuring in adult equivalents, and the reason the
+ * survey asks for kids by age. A teen counts 0.9, which is close enough to
+ * a whole serving that the household is treated as one.
+ */
+function hasSmallEaters(h?: HouseholdProfile): boolean {
+  return (h?.children || 0) + (h?.toddlers || 0) > 0;
+}
+
+/**
+ * The ladder index a household's need lands on.
+ *
+ * WHY TWO RULES AND NOT ONE
+ * The ladder's own blurbs promise what each size feeds, and a size that
+ * cannot feed the people at the table is the one thing the shopping list
+ * cannot recover from: it buys the servings on each dish, so too small a
+ * size means too little food bought.
+ *
+ * So a household where EVERYONE eats a whole serving gets the smallest size
+ * that COVERS it — seven adults get nine servings, not six.
+ *
+ * A household with children is different. Its need is measured in ADULT
+ * EQUIVALENTS, and it lands on the NEAREST size, because rounding that
+ * fraction up to a whole serving would be expensive: one child would push a
+ * family of two adults and one child from two portions to four, and the
+ * shopping list would buy twice what that family eats. The size that does
+ * not feed everyone is the child's own share — which is the point.
+ *
+ * @param need        the appetite of the household and its guests, in adult
+ *                    equivalents
+ * @param heads       how many people are at the table
+ * @param smallEaters whether anyone at the table eats less than a whole
+ *                    serving
+ */
+function portionIndexForNeed(need: number, heads: number, smallEaters: boolean): number {
+  if (smallEaters) return nearestPortionIndex(need);
+  return coveringPortionIndex(Math.max(need, heads));
 }
 
 /** The portion button closest to what this household needs. */
 export function suggestedPortionId(h?: HouseholdProfile): PortionId {
-  return nearestPortion(adultEquivalents(h)).id;
+  const index = portionIndexForNeed(
+    adultEquivalents(h),
+    headCount(h),
+    hasSmallEaters(h),
+  );
+  return PORTION_LEVELS[index].id;
 }
 
 export function suggestedServings(h?: HouseholdProfile): number {
-  return nearestPortion(adultEquivalents(h)).servings;
+  const index = portionIndexForNeed(
+    adultEquivalents(h),
+    headCount(h),
+    hasSmallEaters(h),
+  );
+  return PORTION_LEVELS[index].servings;
 }
 
 /** Heads at the table on a given day: the household, plus any guests. */
@@ -157,7 +230,12 @@ export function suggestedServingsForDay(
   const base = suggestedServings(h);
   const guests = Math.max(0, day?.guests ?? 0);
   if (guests === 0) return base;
-  return Math.max(base, nearestPortion(adultEquivalents(h) + guests).servings);
+  const index = portionIndexForNeed(
+    adultEquivalents(h) + guests,
+    dayHeadCount(day, h),
+    hasSmallEaters(h),
+  );
+  return Math.max(base, PORTION_LEVELS[index].servings);
 }
 
 /**
@@ -389,7 +467,7 @@ export function countPlannedDays(plan: MealPlan | undefined): number {
 
 export const TOTAL_DAYS = 7;
 
-/** Short day names for compact "which days did you use?" labels. */
+/** Short day names for compact "which days did the user use?" labels. */
 export const DAY_SHORT: Record<MealPlanDay, string> = {
   mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu',
   fri: 'Fri', sat: 'Sat', sun: 'Sun',

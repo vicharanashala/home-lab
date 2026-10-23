@@ -18,6 +18,22 @@
  * model is "the nearest standard portion to the household's adult equivalents,
  * plus one for each guest".
  *
+ * TWO RULES THAT LOOK LIKE ONE
+ * A household where EVERYONE at the table eats a whole serving is sized by
+ * COVERING the people there: seven adults get nine servings, because six
+ * servings is the size whose own label says it feeds "5–6 people", and the
+ * shopping list — which is built from the servings on each dish — would buy
+ * six people's worth of food for seven adults.
+ *
+ * A household WITH children is sized by its adult equivalents, which is a
+ * fraction, and lands on the NEAREST size. One child must not push a family
+ * of two adults and one child from two portions to four.
+ *
+ * A tie goes to the LARGER size: too much food can be kept for the next day,
+ * too little cannot be made up. The two numbers below that changed with that
+ * rule are the two households of adults whose need sits exactly between two
+ * sizes — three people, and five.
+ *
  * Run with:  node scripts/test-portion-measure.mjs
  */
 import { register } from 'node:module';
@@ -65,9 +81,14 @@ console.log('\nthe day is measured in adult equivalents, guests and all');
 {
   const h = H(2);
   eq(suggestedServingsForDay(dayWithGuests(0), h), 2, '2 adults, no guests — 2');
-  eq(suggestedServingsForDay(dayWithGuests(1), h), 2, '2 adults, 1 guest — 2');
+  // Three people at the table: three is exactly between two sizes, and the
+  // tie goes to the larger one. Two portions for three adults would leave the
+  // shopping list a third short.
+  eq(suggestedServingsForDay(dayWithGuests(1), h), 4, '2 adults, 1 guest — 4');
   eq(suggestedServingsForDay(dayWithGuests(2), h), 4, '2 adults, 2 guests — 4');
-  eq(suggestedServingsForDay(dayWithGuests(3), h), 4, '2 adults, 3 guests — 4');
+  // Five people at the table: five is exactly between four and six, and the
+  // tie goes to six.
+  eq(suggestedServingsForDay(dayWithGuests(3), h), 6, '2 adults, 3 guests — 6');
 }
 
 /* Two adults and a child — the household that first exposed the old rule. */
