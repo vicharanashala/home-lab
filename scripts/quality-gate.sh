@@ -292,7 +292,7 @@ fi
 step "junk files"
 
 JUNK="$(git diff --cached --name-only --diff-filter=A \
-  | grep -E '(^|/)(dist|node_modules)/|\.tsbuildinfo$|\.log$|(^|/)\.env($|\.)' | head -10)"
+  | grep -E '(^|/)(dist|dist\.[^/]*|node_modules)/|\.tsbuildinfo$|\.log$|(^|/)\.env($|\.)' | head -10)"
 if [ -n "$JUNK" ]; then
   bad "this commit adds files that should never be tracked:"
   printf '%s\n' "$JUNK" | sed 's/^/     /'

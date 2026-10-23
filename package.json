@@ -6,7 +6,7 @@
   "description": "A simple, modern household management app for groceries and kitchen stock.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && bash scripts/build-app.sh",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "node scripts/test-spoken-plan.mjs",

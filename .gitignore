@@ -5,6 +5,10 @@ node_modules/
 
 # ── build output ────────────────────────────────────────────────────────
 dist/
+# Staging and retired copies used by scripts/build-app.sh, which builds the
+# bundle somewhere else and swaps it in only when it is complete.
+dist.staging/
+dist.retired/
 build/
 *.tsbuildinfo
 
