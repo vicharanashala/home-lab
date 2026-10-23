@@ -3,10 +3,21 @@ import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
 import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES } from '../hooks/useWhisperSTT';
 import { parseSpokenPlan } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
+import { resolveSpokenPlan, CONFIDENT_SCORE } from '../utils/spokenRecipeMatch';
+import type { DishResolution } from '../utils/spokenRecipeMatch';
+import type { Recipe } from '../types';
 
 interface Props {
-  /** Apply the parsed slots. Only the slots present in the plan are touched. */
-  onApply: (plan: SpokenPlan) => void;
+  /**
+   * Apply the parsed slots. Only the slots present in the plan are touched.
+   * The second argument says what each slot was heard as and what it was
+   * matched to, so the caller can link the dish to its recipe.
+   */
+  onApply: (plan: SpokenPlan, resolutions: Record<string, DishResolution>) => void;
+  /** Every recipe the app knows, so a spoken dish can be matched to a real one. */
+  catalogue: Recipe[];
+  /** Ids of the app's curated recipes, which win ties against scraped ones. */
+  preferredIds?: Set<string>;
 }
 
 /**
@@ -20,12 +31,20 @@ interface Props {
  * always shown with the slots it parsed out, each editable, and nothing is
  * written to the plan until "Yes, add these" is pressed. Meals the user did
  * not mention are left exactly as they were.
+ *
+ * What was heard is then matched against the recipe catalogue, because
+ * Whisper hears "masala dosaa" and "painter tikka" and the catalogue knows
+ * "Masala dosa" and "Paneer tikka". A correction is only applied when the
+ * match is certain; otherwise the heard words are kept and the candidates
+ * are offered, because a wrong dish in the plan is worse than a rough one.
  */
-export function SpeakYourPlan({ onApply }: Props) {
+export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
   const [model, setModel] = useState('onnx-community/whisper-base');
   const [language, setLanguage] = useState('en-IN');
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<SpokenPlan | null>(null);
+  /** What was heard, and what it was matched to, for each slot. */
+  const [resolutions, setResolutions] = useState<Record<string, DishResolution>>({});
   const [showSetup, setShowSetup] = useState(false);
   const [typed, setTyped] = useState('');
   /** True while the transcription queue is being flushed. */
@@ -35,6 +54,20 @@ export function SpeakYourPlan({ onApply }: Props) {
 
   const whisper = useWhisperSTT(model, language);
 
+  /**
+   * Parse the transcript and then try to match each dish to a real recipe.
+   *
+   * Both the spoken and the typed path go through here: a typo is the same
+   * problem as a mis-heard word.
+   */
+  const buildDraft = (text: string): SpokenPlan | null => {
+    const parsed = parseSpokenPlan(text);
+    if (!parsed.breakfast && !parsed.lunch && !parsed.dinner) return null;
+    const { plan, resolutions: found } = resolveSpokenPlan(parsed, catalogue, preferredIds);
+    setResolutions(found);
+    return plan as SpokenPlan;
+  };
+
   const toggle = async () => {
     setError(null);
     if (whisper.listening) {
@@ -42,6 +75,7 @@ export function SpeakYourPlan({ onApply }: Props) {
       return;
     }
     setDraft(null);
+    setResolutions({});
     const res = await whisper.start(() => {});
     if (!res.ok && res.error !== 'Cancelled.') setError(res.error ?? 'Could not start the microphone.');
   };
@@ -64,8 +98,8 @@ export function SpeakYourPlan({ onApply }: Props) {
     try {
       whisper.stop();
       const text = await whisper.flush();
-      const parsed = parseSpokenPlan(text);
-      if (!parsed.breakfast && !parsed.lunch && !parsed.dinner) {
+      const parsed = buildDraft(text);
+      if (!parsed) {
         setError(
           text.trim()
             ? `Heard "${text.trim()}" but could not tell which meal it was for. Try saying "breakfast …, lunch …, dinner …".`
@@ -92,27 +126,72 @@ export function SpeakYourPlan({ onApply }: Props) {
           </span>
         </div>
 
-        {(['breakfast', 'lunch', 'dinner'] as const).map((slot) => (
-          <label key={slot} className="block mb-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-sage-600 dark:text-sage-300">
-              {slot}
-            </span>
-            <input
-              value={draft[slot] ?? ''}
-              placeholder="leave empty to keep what's planned"
-              aria-label={`${slot} from speech`}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d!, [slot]: e.target.value || undefined }))
-              }
-              className="input w-full text-xs py-1.5 mt-0.5"
-            />
-          </label>
-        ))}
+        {(['breakfast', 'lunch', 'dinner'] as const).map((slot) => {
+          const res = resolutions[slot];
+          const current = draft[slot] ?? '';
+          // The correction is only shown while the slot still holds what the
+          // matcher put there. Once the user types over it, the note would be
+          // describing something that is no longer on screen.
+          const corrected = res?.best && res.best.score >= CONFIDENT_SCORE;
+          const settled = res && (corrected ? current === res.best!.name : current === res.heard);
+          const options = res?.best
+            ? [res.best, ...res.alternatives].filter((m) => m.name !== current)
+            : [];
+          return (
+            <label key={slot} className="block mb-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-sage-600 dark:text-sage-300">
+                {slot}
+              </span>
+              <input
+                value={current}
+                placeholder="leave empty to keep what's planned"
+                aria-label={`${slot} from speech`}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d!, [slot]: e.target.value || undefined }))
+                }
+                className="input w-full text-xs py-1.5 mt-0.5"
+              />
+
+              {settled && res && corrected && (
+                <span className="block text-[10px] text-sage-600 dark:text-sage-300 mt-0.5">
+                  heard “{res.heard}” → matched{' '}
+                  <span className="font-semibold text-sage-800 dark:text-cream-100">
+                    {res.best!.name}
+                  </span>
+                </span>
+              )}
+
+              {settled && res && !corrected && res.best && (
+                <span className="block text-[10px] text-sage-600 dark:text-sage-300 mt-0.5">
+                  heard “{res.heard}” — did you mean
+                </span>
+              )}
+
+              {settled && options.length > 0 && (
+                <span className="flex flex-wrap gap-1 mt-1">
+                  {options.slice(0, 5).map((m) => (
+                    <button
+                      key={m.recipe.id}
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setDraft((d) => ({ ...d!, [slot]: m.name }));
+                      }}
+                      className="rounded-md border border-sage-300 dark:border-sage-700 bg-white dark:bg-ink-800 px-1.5 py-0.5 text-[10px] text-sage-700 dark:text-ink-200 hover:bg-sage-50 dark:hover:bg-sage-900/40"
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </label>
+          );
+        })}
 
         <div className="flex gap-1.5 mt-2">
           <button
             type="button"
-            onClick={() => { onApply(draft); setDraft(null); whisper.reset(); }}
+            onClick={() => { onApply(draft, resolutions); setDraft(null); setResolutions({}); whisper.reset(); }}
             className="btn-primary flex-1 !py-1.5 text-xs"
           >
             <Check size={13} />
@@ -120,7 +199,7 @@ export function SpeakYourPlan({ onApply }: Props) {
           </button>
           <button
             type="button"
-            onClick={() => { setDraft(null); whisper.reset(); }}
+            onClick={() => { setDraft(null); setResolutions({}); whisper.reset(); }}
             className="btn-secondary !py-1.5 text-xs"
           >
             <X size={13} />
@@ -276,8 +355,8 @@ export function SpeakYourPlan({ onApply }: Props) {
             <button
               type="button"
               onClick={() => {
-                const parsed = parseSpokenPlan(typed);
-                if (!parsed.breakfast && !parsed.lunch && !parsed.dinner) {
+                const parsed = buildDraft(typed);
+                if (!parsed) {
                   setError(
                     typed.trim()
                       ? 'Could not tell which meal that was for. Include "breakfast", "lunch" or "dinner".'

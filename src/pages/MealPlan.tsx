@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useScrollFade } from '../hooks/useScrollFade';
 import {
   CalendarDays, Check, Trash2, X, ShoppingCart, ChefHat, Sparkles,
-  Store, Users, ChevronRight, CircleCheck, Timer, Copy,
+  Store, Users, ChevronRight, CircleCheck, Timer, Copy, Plus, Minus,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore, MEAL_PLAN_DAYS, MEAL_PLAN_DAY_LABELS } from '../store/useStore';
@@ -10,15 +10,18 @@ import { AutocompleteInput } from '../components/AutocompleteInput';
 import { SpeakYourPlan } from '../components/SpeakYourPlan';
 import type { Suggestion } from '../components/AutocompleteInput';
 import { findCandidatesForIngredient } from '../utils/recipeMatch';
+import { dishCore, normalizeDish, CONFIDENT_SCORE } from '../utils/spokenRecipeMatch';
 import { suggestCategory } from '../utils/categorySuggest';
 import { DishIcon } from '../components/icons/DishIcons';
 import { MealTypeIcon } from '../components/icons/AppIcons';
 import {
-  PORTION_LEVELS, suggestedServings, headCount, buildShoppingList,
+  PORTION_LEVELS, suggestedServings, suggestedServingsForDay, dayHeadCount, headCount, buildShoppingList,
   missingItems, countPlanned, countPlannedDays, TOTAL_SLOTS, TOTAL_DAYS,
   searchLinkFor, entryRecipe,
 } from '../utils/portions';
 import type { MealPlanDay, MealPlanEntry, MealSlot, Recipe, ShoppingNeed } from '../types';
+import { dayMode, recipeAllowed, recipeViolations, violationPhrase } from '../utils/dayModes';
+import { DayModeSheet } from '../components/DayModeSheet';
 import { recipesUsingExpiringStock, urgencyLabel } from '../utils/expiryRecipes';
 import { suggestMeals, buildTasteVector } from '../utils/mealSuggest';
 import type { MealSuggestion } from '../utils/mealSuggest';
@@ -79,6 +82,7 @@ export default function MealPlanPage() {
   const {
     recipes: builtIn, stock, grocery, mealPlan, mealLogs, settings,
     setMealPlanSlot, clearMealPlanDay, copyMealPlanDay, clearMealPlan, addGrocery, toast,
+    setDayMode, setDayGuests, setDayNote,
   } = useStore();
   const csvRecipes = useCsvRecipes();
   const embeddings = useRecipeEmbeddings();
@@ -93,6 +97,8 @@ export default function MealPlanPage() {
   const [draftServings, setDraftServings] = useState(4);
   const [preview, setPreview] = useState<Recipe | null>(null);
   const [showShopping, setShowShopping] = useState(false);
+  // Which day the "how is this day eaten?" sheet is open for. Null = closed.
+  const [modeFor, setModeFor] = useState<MealPlanDay | null>(null);
   // Days the user has explicitly expanded. A day with any meal planned is
   // always open; an empty day stays collapsed to one line so the whole week
   // fits on a phone screen instead of scrolling through 21 empty slots.
@@ -120,16 +126,56 @@ export default function MealPlanPage() {
     return [...byId.values()];
   }, [builtIn, csvRecipes]);
 
+  // The app's own recipes, which the spoken matcher prefers over scraped
+  // ones: the CSV catalogue holds near-duplicates and the occasional
+  // rubbish entry, and a curated "Medu vada" should beat a scraped
+  // "Spinach Wada Recipe (Spinach & Women's Gram Printers)".
+  const preferredIds = useMemo(() => new Set(builtIn.map((r) => r.id)), [builtIn]);
+
+  /** The same catalogue as a lookup — checking a day's dishes is per-entry. */
+  const catalogueById = useMemo(() => {
+    const byId = new Map<string, Recipe>();
+    for (const r of builtIn) byId.set(r.id, r);
+    for (const r of csvRecipes || []) if (!byId.has(r.id)) byId.set(r.id, r);
+    return byId;
+  }, [builtIn, csvRecipes]);
+
   const suggestions = useMemo<Suggestion[]>(
     () => catalogue.map((r) => ({ kind: 'recipe' as const, id: r.id, label: r.name, emoji: r.emoji })),
     [catalogue],
   );
 
+  /**
+   * The dish list shown while editing a slot, narrowed to what is actually
+   * allowed on that day. On a vrat day the dal and the chicken are gone from
+   * the list entirely, rather than being offered and then rejected.
+   */
+  const editingSuggestions = useMemo<Suggestion[]>(() => {
+    if (!editing) return suggestions;
+    const mode = mealPlan[editing.day]?.mode;
+    if (!mode || mode === 'normal') return suggestions;
+    return suggestions.filter((s) => {
+      if (s.kind !== 'recipe' || !s.id) return true;
+      return recipeAllowed(catalogueById.get(s.id), mode);
+    });
+  }, [editing, suggestions, catalogueById, mealPlan]);
+
   const findByName = useCallback(
     (name: string): Recipe | null => {
       const q = name.trim().toLowerCase();
       if (!q) return null;
-      return catalogue.find((r) => r.name.toLowerCase() === q) || null;
+      const exact = catalogue.find((r) => r.name.toLowerCase() === q);
+      if (exact) return exact;
+      // A dish is often known by its short core — "Masala dosa" — while the
+      // recipe it came from is titled "Masala Dosa Recipe - Spiced Lentil
+      // Crepe". Comparing cores too means a spoken dish still links to its
+      // recipe instead of sitting in the plan as a name that leads nowhere.
+      const key = normalizeDish(dishCore(name));
+      if (!key) return null;
+      return (
+        catalogue.find((r) => normalizeDish(dishCore(r.name)) === key) ||
+        null
+      );
     },
     [catalogue],
   );
@@ -165,6 +211,7 @@ export default function MealPlanPage() {
       diet: settings.dietaryPreference,
       allergies: settings.allergies ?? [],
       household,
+      mode: mealPlan[suggestFor.day]?.mode,
       nonce: suggestNonce,
       limit: 3,
     });
@@ -190,10 +237,10 @@ export default function MealPlanPage() {
       setSuggestFor(null);
       setEditing(key);
       setDraftText(s.recipe.name);
-      setDraftServings(suggestedServings(household));
+      setDraftServings(suggestedServingsForDay(mealPlan[key.day], household));
       setPreview(s.recipe);
     },
-    [suggestFor, household],
+    [suggestFor, household, mealPlan],
   );
 
   /**
@@ -201,7 +248,6 @@ export default function MealPlanPage() {
    * one, and never touches a slot the user already filled.
    */
   const suggestWholeWeek = useCallback(() => {
-    const defaults = suggestedServings(household);
     let filled = 0;
     const taken = new Set<string>();
     // One confidence figure per dish, summed into the single accuracy number.
@@ -224,6 +270,7 @@ export default function MealPlanPage() {
           diet: settings.dietaryPreference,
           allergies: settings.allergies ?? [],
           household,
+          mode: mealPlan[day]?.mode,
           limit: 6,
           nonce: filled,
         }).filter((p) => !taken.has(p.recipe.id));
@@ -235,7 +282,7 @@ export default function MealPlanPage() {
           name: pick.recipe.name,
           recipeId: pick.recipe.id,
           slot,
-          servings: defaults,
+          servings: suggestedServingsForDay(mealPlan[day], household),
           createdAt: Date.now(),
         };
         setMealPlanSlot(day, slot, entry);
@@ -274,6 +321,8 @@ export default function MealPlanPage() {
    */
   const openEditor = (day: MealPlanDay, slot: MealSlot, recipe?: Recipe) => {
     const entry = mealPlan[day]?.[slot];
+    // The portion this day wants — bigger when guests are over.
+    const dayServings = suggestedServingsForDay(mealPlan[day], household);
     setEditing({ day, slot });
     if (recipe) {
       setDraftText(recipe.name);
@@ -283,12 +332,12 @@ export default function MealPlanPage() {
       setDraftServings(
         PORTION_LEVELS.some((p) => p.servings === recipe.baseServings)
           ? recipe.baseServings
-          : suggestedServings(household),
+          : dayServings,
       );
       setPreview(recipe);
     } else {
       setDraftText(entry?.name || '');
-      setDraftServings(entry?.servings || suggestedServings(household));
+      setDraftServings(entry?.servings || dayServings);
       setPreview(entry ? entryRecipe(entry, catalogue) : null);
     }
     // Focus after the editor paints.
@@ -478,6 +527,25 @@ export default function MealPlanPage() {
           const dayCount = SLOTS.filter((s) => dayPlan?.[s]).length;
           const dayOpen = dayCount > 0 || expandedDays.has(day);
 
+          // How this day is eaten, and how many are at the table.
+          const dayModeId = dayPlan?.mode;
+          const mode = dayMode(dayModeId);
+          const isSpecialMode = !!dayModeId && dayModeId !== 'normal';
+          const guests = Math.max(0, dayPlan?.guests ?? 0);
+          const dayHeads = dayHeadCount(dayPlan, household);
+          const dayServings = suggestedServingsForDay(dayPlan, household);
+
+          // Dishes already on this day that break the day's own rules.
+          const slotViolations = new Map<MealSlot, string[]>();
+          if (isSpecialMode) {
+            for (const slot of SLOTS) {
+              const entry = dayPlan?.[slot];
+              if (!entry?.recipeId) continue;
+              const found = recipeViolations(catalogueById.get(entry.recipeId), dayModeId);
+              if (found.length) slotViolations.set(slot, found);
+            }
+          }
+
           return (
             <li
               key={day}
@@ -513,6 +581,18 @@ export default function MealPlanPage() {
                 <span className="text-[10px] text-sage-500 dark:text-ink-400">
                   {dayCount > 0 ? `${dayCount}/3` : 'nothing planned'}
                 </span>
+                {isSpecialMode && (
+                  <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-butter-100 dark:bg-butter-900/50 text-butter-800 dark:text-butter-200">
+                    <span aria-hidden="true">{mode.emoji}</span>
+                    {mode.label}
+                  </span>
+                )}
+                {guests > 0 && (
+                  <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-sage-100 dark:bg-ink-700 text-sage-700 dark:text-sage-300">
+                    <Users size={10} />
+                    +{guests}
+                  </span>
+                )}
                 <span className="flex-1" />
                 {dayCount === 0 && (
                   <ChevronRight
@@ -525,12 +605,68 @@ export default function MealPlanPage() {
                 )}
               </button>
 
+              {/* How this day is eaten, who is over, and what it is called.
+                  Shown for every day so a fasting day is set up before the
+                  meals are picked, not after. */}
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <button
+                  onClick={() => setModeFor(day)}
+                  aria-label={`How ${MEAL_PLAN_DAY_LABELS[day]} is eaten`}
+                  className={clsx(
+                    'inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-bold transition',
+                    isSpecialMode
+                      ? 'bg-butter-100 dark:bg-butter-900/50 text-butter-800 dark:text-butter-200 hover:bg-butter-200 dark:hover:bg-butter-900/70'
+                      : 'border border-dashed border-sage-300 dark:border-ink-600 text-sage-500 dark:text-ink-400 hover:bg-sage-50 dark:hover:bg-ink-700',
+                  )}
+                >
+                  <span aria-hidden="true">{mode.emoji}</span>
+                  {isSpecialMode ? mode.label : 'Day style'}
+                </button>
+
+                <span className="inline-flex items-center gap-1 rounded-lg border border-sage-200 dark:border-ink-700 px-1 py-0.5">
+                  <button
+                    onClick={() => setDayGuests(day, guests - 1)}
+                    disabled={guests === 0}
+                    aria-label={`One fewer guest on ${MEAL_PLAN_DAY_LABELS[day]}`}
+                    className="p-1 rounded-md text-sage-500 hover:text-sage-800 hover:bg-sage-50 disabled:opacity-30 disabled:hover:bg-transparent dark:text-ink-400 dark:hover:text-sage-200 dark:hover:bg-ink-700"
+                  >
+                    <Minus size={11} />
+                  </button>
+                  <span className="text-[11px] font-bold text-sage-700 dark:text-sage-300 min-w-[3.5rem] text-center">
+                    {guests > 0 ? `+${guests} guest${guests === 1 ? '' : 's'}` : 'No guests'}
+                  </span>
+                  <button
+                    onClick={() => setDayGuests(day, guests + 1)}
+                    aria-label={`One more guest on ${MEAL_PLAN_DAY_LABELS[day]}`}
+                    className="p-1 rounded-md text-sage-500 hover:text-sage-800 hover:bg-sage-50 dark:text-ink-400 dark:hover:text-sage-200 dark:hover:bg-ink-700"
+                  >
+                    <Plus size={11} />
+                  </button>
+                </span>
+
+                {guests > 0 && (
+                  <span className="text-[11px] text-sage-500 dark:text-ink-400">
+                    cooking for {dayHeads}
+                  </span>
+                )}
+
+                <input
+                  value={dayPlan?.note || ''}
+                  onChange={(e) => setDayNote(day, e.target.value)}
+                  placeholder="Name the day…"
+                  aria-label={`Name for ${MEAL_PLAN_DAY_LABELS[day]}`}
+                  maxLength={40}
+                  className="flex-1 min-w-[7rem] rounded-lg border border-sage-200 dark:border-ink-700 bg-white dark:bg-ink-800 px-2 py-1 text-[11px] text-sage-900 dark:text-cream-50 placeholder:text-sage-400 dark:text-ink-500 focus:outline-none focus:ring-1 focus:ring-sage-300"
+                />
+              </div>
+
               {dayCount === 0 && !dayOpen ? null : (
               <ul className="space-y-1 sm:space-y-1.5">
                 {SLOTS.map((slot) => {
                   const entry = dayPlan?.[slot];
                   const meta = SLOT_META[slot];
                   const isOpen = editing?.day === day && editing?.slot === slot;
+                  const violation = slotViolations.get(slot);
 
                   if (isOpen) {
                     return (
@@ -556,9 +692,13 @@ export default function MealPlanPage() {
                               setPreview(catalogue.find((x) => x.id === s.id) || null);
                             }
                           }}
-                          suggestions={suggestions}
+                          suggestions={editingSuggestions}
                           maxSuggestions={10}
-                          placeholder="Type a dish — or pick a recipe"
+                          placeholder={
+                            isSpecialMode
+                              ? `A dish for a ${mode.label.toLowerCase()}…`
+                              : 'Type a dish — or pick a recipe'
+                          }
                           className="w-full rounded-xl border border-sage-200 dark:border-ink-700 bg-white dark:bg-ink-800 px-3 py-2.5 text-sm text-sage-900 dark:text-cream-50 placeholder:text-sage-400 dark:text-ink-500 focus:outline-none focus:ring-2 focus:ring-sage-300"
                         />
 
@@ -566,7 +706,12 @@ export default function MealPlanPage() {
                         <div className="mt-2">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-sage-500 dark:text-ink-400 mb-1">
                             Portion
-                            {defaultPortion && (
+                            {guests > 0 ? (
+                              <span className="normal-case tracking-normal font-semibold text-sage-600 dark:text-sage-400">
+                                {' '}
+                                · cooking for {dayHeads} today ({dayServings}pax)
+                              </span>
+                            ) : defaultPortion && (
                               <span className="normal-case tracking-normal font-semibold text-sage-600 dark:text-sage-400">
                                 {' '}
                                 · {defaultPortion.label} ({defaultPortion.servings}) suits your household
@@ -661,11 +806,21 @@ export default function MealPlanPage() {
                           <span className="text-[10px] font-bold uppercase tracking-wider text-sage-500 dark:text-ink-400 w-16 shrink-0">
                             {meta.label}
                           </span>
-                          <span className={clsx(
-                            'flex-1 truncate text-sm',
-                            entry ? 'font-semibold text-sage-900 dark:text-cream-50' : 'text-sage-400 dark:text-ink-500',
-                          )}>
-                            {entry ? entry.name : 'Tap to plan'}
+                          <span className="flex-1 min-w-0">
+                            <span className={clsx(
+                              'block truncate text-sm',
+                              entry ? 'font-semibold text-sage-900 dark:text-cream-50' : 'text-sage-400 dark:text-ink-500',
+                            )}>
+                              {entry ? entry.name : 'Tap to plan'}
+                            </span>
+                            {/* A dish already on the day that breaks the day's
+                                own rules. Shown rather than hidden — the user
+                                may have planned it before setting the mode. */}
+                            {violation && (
+                              <span className="block truncate text-[10px] font-semibold text-tomato-600 dark:text-tomato-300">
+                                {violationPhrase(violation)}
+                              </span>
+                            )}
                           </span>
                           {entry && (
                             <span className="shrink-0 text-[10px] text-sage-500 dark:text-ink-400">
@@ -716,15 +871,26 @@ export default function MealPlanPage() {
               {/* Say the whole day out loud instead of picking each slot. */}
               {dayOpen && (
                 <SpeakYourPlan
-                  onApply={(plan) => {
+                  catalogue={catalogue}
+                  preferredIds={preferredIds}
+                  onApply={(plan, resolutions) => {
                     let filled = 0;
                     (['breakfast', 'lunch', 'dinner'] as const).forEach((slot) => {
                       const name = plan[slot]?.trim();
                       if (!name) return;               // never mentioned: leave alone
                       const existing = dayPlan?.[slot];
+                      // A dish that was matched to a real recipe carries its
+                      // id and emoji, so the plan links to the recipe and the
+                      // grocery list can work out what to buy. Before this,
+                      // a spoken dish was stored as a bare string and linked
+                      // to nothing.
+                      const res = resolutions[slot];
+                      const recipe =
+                        res?.best && res.best.score >= CONFIDENT_SCORE ? res.best.recipe : null;
                       setMealPlanSlot(day, slot, {
                         name,
                         slot,
+                        ...(recipe ? { recipeId: recipe.id, emoji: recipe.emoji } : {}),
                         // Keep the portion size this day already used rather than
                         // resetting it; default to a small household.
                         servings: existing?.servings ?? 2,
@@ -814,6 +980,24 @@ export default function MealPlanPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {modeFor && (
+        <DayModeSheet
+          dayLabel={MEAL_PLAN_DAY_LABELS[modeFor]}
+          current={mealPlan[modeFor]?.mode}
+          onPick={(m) => {
+            setDayMode(modeFor, m);
+            setModeFor(null);
+            toast(
+              m === 'normal'
+                ? `${MEAL_PLAN_DAY_LABELS[modeFor]} back to your usual diet`
+                : `${MEAL_PLAN_DAY_LABELS[modeFor]} · ${dayMode(m).label}`,
+              'success',
+            );
+          }}
+          onClose={() => setModeFor(null)}
+        />
       )}
 
       {suggestFor && (

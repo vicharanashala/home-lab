@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppState,
   CategoryId,
+  DayModeId,
   GroceryItem,
   MealLog,
   HouseholdProfile,
@@ -26,6 +27,7 @@ const BUILT_IN_RECIPES = [...STARTER_RECIPES, ...INDIAN_RECIPES] as any;
 import { uid } from '../utils/uid';
 import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimension } from '../utils/recipeMatch';
 import { formatBaseValue, subtractBase, toBaseUnit, unitDimension } from '../utils/units';
+import { headCount, MEAL_SLOTS } from '../utils/portions';
 import { DEFAULT_CONSENTS } from '../utils/consent';
 
 const STORAGE_KEY = 'homehub.v1';
@@ -204,6 +206,18 @@ export interface UseStore extends AppState {
   copyMealPlanDay: (from: MealPlanDay, to: MealPlanDay) => void;
   /** Clear the whole week. */
   clearMealPlan: () => void;
+  /**
+   * How one day of the week is eaten — a vrat, a day without onion, and so
+   * on. 'normal' means the household's usual diet applies.
+   */
+  setDayMode: (day: MealPlanDay, mode: DayModeId) => void;
+  /**
+   * Extra people at the table on one day. Every portion already planned for
+   * that day scales with it, so the shopping list stays right.
+   */
+  setDayGuests: (day: MealPlanDay, guests: number) => void;
+  /** A name for the day, e.g. "Diwali". */
+  setDayNote: (day: MealPlanDay, note: string) => void;
   /** Record the household's composition (adults + kids by age). */
   completeHouseholdSurvey: (household: HouseholdProfile) => void;
   // Toasts
@@ -515,10 +529,17 @@ const setMealPlanSlot: UseStore['setMealPlanSlot'] = (day, slot, entry) => {
 };
 
 const clearMealPlanDay: UseStore['clearMealPlanDay'] = (day) => {
-  setState((s) => ({
-    ...s,
-    app: { ...s.app, mealPlan: { ...currentMealPlan(), [day]: emptyDayPlan() } },
-  }));
+  setState((s) => {
+    const plan = currentMealPlan();
+    const cur = plan[day];
+    // Clearing a day's meals must not silently un-do a vrat or a guest list —
+    // the day is still a vrat day, there just aren't any dishes on it yet.
+    const next: MealPlanDayPlan = {
+      ...emptyDayPlan(),
+      ...(cur ? { mode: cur.mode, guests: cur.guests, note: cur.note } : {}),
+    };
+    return { ...s, app: { ...s.app, mealPlan: { ...plan, [day]: next } } };
+  });
 };
 
 const copyMealPlanDay: UseStore['copyMealPlanDay'] = (from, to) => {
@@ -534,6 +555,13 @@ const copyMealPlanDay: UseStore['copyMealPlanDay'] = (from, to) => {
       const e = src[slot];
       if (e) cloned[slot] = { ...e, createdAt: Date.now() };
     }
+    // The target day keeps its own way of eating and guest count — copying
+    // Monday's dinners onto a vrat day must not quietly turn it into an
+    // ordinary day. Any dish that breaks the mode is flagged in the UI.
+    const target = plan[to];
+    cloned.mode = target?.mode;
+    cloned.guests = target?.guests;
+    cloned.note = target?.note;
     return { ...s, app: { ...s.app, mealPlan: { ...plan, [to]: cloned } } };
   });
 };
@@ -551,6 +579,62 @@ const completeHouseholdSurvey: UseStore['completeHouseholdSurvey'] = (household)
 
 const clearMealPlan = () => {
   setState((s) => ({ ...s, app: { ...s.app, mealPlan: emptyMealPlan() } }));
+};
+
+/* ── per-day settings: mode, guests, note ───────────────────────────────── */
+
+const setDayMode: UseStore['setDayMode'] = (day, mode) => {
+  setState((s) => {
+    const plan = currentMealPlan();
+    return {
+      ...s,
+      app: {
+        ...s.app,
+        mealPlan: { ...plan, [day]: { ...emptyDayPlan(), ...plan[day], mode } },
+      },
+    };
+  });
+};
+
+const setDayGuests: UseStore['setDayGuests'] = (day, guests) => {
+  const next = Math.max(0, Math.min(20, Math.round(guests || 0)));
+  setState((s) => {
+    const plan = currentMealPlan();
+    const cur = plan[day];
+    const oldGuests = Math.max(0, cur?.guests ?? 0);
+    if (oldGuests === next) return s;
+
+    // Scale the portions already planned for that day by the change in head
+    // count. Without this, adding two guests would leave the shopping list
+    // short by exactly those two people's worth of food.
+    const householdHeads = headCount(s.app.settings.household);
+    const factor = (householdHeads + next) / (householdHeads + oldGuests || 1);
+
+    const day2: MealPlanDayPlan = { ...emptyDayPlan(), ...cur, guests: next };
+    if (Number.isFinite(factor) && factor > 0 && factor !== 1) {
+      for (const slot of MEAL_SLOTS) {
+        const entry = day2[slot];
+        if (entry) {
+          day2[slot] = { ...entry, servings: Math.max(1, Math.round(entry.servings * factor)) };
+        }
+      }
+    }
+    return { ...s, app: { ...s.app, mealPlan: { ...plan, [day]: day2 } } };
+  });
+};
+
+const setDayNote: UseStore['setDayNote'] = (day, note) => {
+  const clean = (note || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  setState((s) => {
+    const plan = currentMealPlan();
+    return {
+      ...s,
+      app: {
+        ...s.app,
+        mealPlan: { ...plan, [day]: { ...emptyDayPlan(), ...plan[day], note: clean } },
+      },
+    };
+  });
 };
 
 /** Sum deduction base-amounts per stock item.
@@ -1079,6 +1163,9 @@ export function useStore(): UseStore {
     clearMealPlanDay,
     copyMealPlanDay,
     clearMealPlan,
+    setDayMode,
+    setDayGuests,
+    setDayNote,
     completeHouseholdSurvey,
     toasts: snap.toasts,
     toast,

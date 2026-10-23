@@ -153,6 +153,30 @@ export type MealPlanDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 export type MealSlot = 'breakfast' | 'lunch' | 'dinner';
 
 /**
+ * A day-scoped way of eating.
+ *
+ * The household setting (`settings.dietaryPreference`) says how the family
+ * eats most days. These say how *one* day of the week is different — a vrat,
+ * a day without onion, a family gathering.
+ */
+export type DayModeId =
+  | 'normal'
+  | 'vegetarian'
+  | 'no-onion-garlic'
+  | 'vrat'
+  | 'vrat-strict';
+
+/** Per-day extras that change how that one day of the plan is set up. */
+export interface DayPlanSettings {
+  /** Which way of eating applies to this day. Undefined means 'normal'. */
+  mode?: DayModeId;
+  /** Extra people at the table that day — every portion on the day scales up. */
+  guests?: number;
+  /** A name for the day, e.g. "Diwali" or "Amma is visiting". */
+  note?: string;
+}
+
+/**
  * Who eats at home. Portions are sized from this: each person contributes an
  * "adult equivalent", so a toddler counts for far less than an adult and the
  * survey answers directly affect how much the shopping list buys.
@@ -196,8 +220,8 @@ export interface MealPlanEntry {
   createdAt: number;
 }
 
-/** One day's three slots. A null slot means "not planned yet". */
-export type MealPlanDayPlan = Record<MealSlot, MealPlanEntry | null>;
+/** One day's three slots, plus how that day is set up. */
+export type MealPlanDayPlan = Record<MealSlot, MealPlanEntry | null> & DayPlanSettings;
 
 /** A full week. */
 export type MealPlan = Record<MealPlanDay, MealPlanDayPlan>;

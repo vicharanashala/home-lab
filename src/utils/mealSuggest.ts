@@ -18,10 +18,12 @@
 
 import type {
   MealLog, MealPlan, MealSlot, Recipe, StockItem, MealPlanEntry,
-  DietaryPreference, HouseholdProfile,
+  DietaryPreference, HouseholdProfile, DayModeId,
 } from '../types';
 import { recipesUsingExpiringStock } from './expiryRecipes';
 import { conflictsDiet, detectAllergensInName } from './diet';
+import { recipeViolations } from './dayModes';
+import { resolveCategory } from './ingredientRules';
 import { trainTasteModel, predict, samplesFromLogs, MIN_SAMPLES } from './tasteModel';
 import type { TrainedTasteModel } from './tasteModel';
 
@@ -66,6 +68,11 @@ export interface SuggestInput {
   diet?: DietaryPreference;
   allergies?: string[];
   household?: HouseholdProfile;
+  /**
+   * The way of eating on the day being planned for. A vrat day rules out
+   * onion, dal and meat; 'normal' means the household diet alone.
+   */
+  mode?: DayModeId;
   /** Override the adventurous share. Defaults to 25%. */
   adventureMix?: number;
   /** How many to return. Default 3. */
@@ -144,23 +151,33 @@ function slotFit(recipe: Recipe, slot: MealSlot): number {
   return 0.15; // heavily penalised but not a hard veto
 }
 
-/** Hard-reject a recipe on diet, allergies, or missing ingredients. */
+/** Hard-reject a recipe on diet, allergies, the day's mode, or missing ingredients. */
 function passesHardFilters(
   recipe: Recipe,
   diet: DietaryPreference | undefined,
   allergies: string[],
+  mode?: DayModeId,
 ): boolean {
   if (!recipe?.ingredients?.length) return false;
   if (diet && diet !== 'no-preference') {
     // One incompatible ingredient disqualifies the dish — that's what a diet
     // means. Checking every ingredient, not just the first.
+    //
+    // The category is resolved from the ingredient's name when the catalogue
+    // didn't supply one. Without that, the 5,894 CSV recipes — which carry no
+    // ingredient categories at all — sailed straight through a vegetarian
+    // filter and chicken kept turning up in the suggestions.
     for (const ing of recipe.ingredients) {
-      if (conflictsDiet({ category: ing.category }, diet)) return false;
+      if (conflictsDiet({ category: resolveCategory(ing) }, diet)) return false;
     }
   }
   if (allergies.length) {
     const haystack = `${recipe.name} ${recipe.ingredients.map((i) => i.name).join(' ')}`;
     if (detectAllergensInName(haystack, allergies).length > 0) return false;
+  }
+  // The day's own way of eating — a vrat day rules out onion, dal and meat.
+  if (mode && mode !== 'normal' && recipeViolations(recipe, mode).length > 0) {
+    return false;
   }
   return true;
 }
@@ -234,7 +251,7 @@ export function suggestMeals(input: SuggestInput): MealSuggestion[] {
   const {
     slot, catalogue, stock, mealLogs, embeddings, mealPlan,
     diet = 'no-preference', allergies = [], adventureMix = DEFAULT_ADVENTURE_MIX,
-    limit = 3, nonce = 0, servings,
+    limit = 3, nonce = 0, servings, mode,
   } = input;
 
   if (catalogue?.length === 0) return [];
@@ -277,7 +294,7 @@ export function suggestMeals(input: SuggestInput): MealSuggestion[] {
 
   for (const recipe of catalogue) {
     if (planned.has(recipe.id)) continue;
-    if (!passesHardFilters(recipe, diet, allergies)) continue;
+    if (!passesHardFilters(recipe, diet, allergies, mode)) continue;
 
     const { have, total } = stockCoverage(recipe, stock);
     if (have === 0) continue; // can't cook any of it — not a suggestion

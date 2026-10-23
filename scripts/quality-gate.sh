@@ -220,7 +220,10 @@ fi
 
 DIFF_BLOB="$(git diff --cached --no-color)"
 LEAKED=""
-for env_file in .env .env.production; do
+# HH_ENV_FILES lets the scan be tested against a synthetic secret instead of
+# the real one. The default is the real env files.
+ENV_FILES="${HH_ENV_FILES:-.env .env.production}"
+for env_file in $ENV_FILES; do
   [ -f "$env_file" ] || continue
   while IFS= read -r secret; do
     key="${secret%%=*}"

@@ -21,13 +21,24 @@ import type {
   HouseholdProfile,
   MealPlanDay,
   MealPlan,
+  MealPlanDayPlan,
   MealPlanEntry,
+  MealSlot,
   PortionId,
   PortionLevel,
   Recipe,
   ShoppingNeed,
   StockItem,
 } from '../types';
+
+/**
+ * The three slots of a day.
+ *
+ * Always iterate the plan through this list rather than `Object.values(day)`
+ * — a day now carries settings (mode, guests, note) alongside its meals,
+ * and those are not meals.
+ */
+export const MEAL_SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner'];
 
 /** How much of an adult's portion each age group actually eats. */
 const APPETITE = {
@@ -89,6 +100,47 @@ export function suggestedPortionId(h?: HouseholdProfile): PortionId {
 export function suggestedServings(h?: HouseholdProfile): number {
   const id = suggestedPortionId(h);
   return PORTION_LEVELS.find((p) => p.id === id)?.servings ?? 4;
+}
+
+/** Heads at the table on a given day: the household, plus any guests. */
+export function dayHeadCount(
+  day: MealPlanDayPlan | undefined,
+  h?: HouseholdProfile,
+): number {
+  return headCount(h) + Math.max(0, day?.guests ?? 0);
+}
+
+/**
+ * The portion size that suits a given number of heads — the nearest of the
+ * five standard portions.
+ */
+export function servingsForHeads(heads: number): number {
+  if (!(heads > 0)) return PORTION_LEVELS[0].servings;
+  let best = PORTION_LEVELS[0];
+  let bestGap = Infinity;
+  for (const p of PORTION_LEVELS) {
+    const gap = Math.abs(p.servings - heads);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = p;
+    }
+  }
+  return best.servings;
+}
+
+/**
+ * The portion to cook on a given day: the household's usual size, bumped
+ * up when guests are coming. Never smaller than the household's usual size —
+ * extra guests should never shrink the portions.
+ */
+export function suggestedServingsForDay(
+  day: MealPlanDayPlan | undefined,
+  h?: HouseholdProfile,
+): number {
+  const base = suggestedServings(h);
+  const guests = Math.max(0, day?.guests ?? 0);
+  if (guests === 0) return base;
+  return Math.max(base, servingsForHeads(dayHeadCount(day, h)));
 }
 
 /** How many times bigger than the recipe's written size we need to cook. */
@@ -182,7 +234,8 @@ export function buildShoppingList(
 
   for (const day of Object.values(plan || {})) {
     if (!day) continue;
-    for (const entry of Object.values(day)) {
+    for (const slot of MEAL_SLOTS) {
+      const entry = day[slot];
       if (!entry || !entry.recipeId) continue;
       const recipe = byId.get(entry.recipeId);
       if (!recipe || !Array.isArray(recipe.ingredients)) continue;
@@ -264,7 +317,7 @@ export function countPlanned(plan: MealPlan | undefined): number {
   let n = 0;
   for (const day of Object.values(plan)) {
     if (!day) continue;
-    for (const slot of Object.values(day)) if (slot) n++;
+    for (const slot of MEAL_SLOTS) if (day[slot]) n++;
   }
   return n;
 }
@@ -278,7 +331,7 @@ export function countPlannedDays(plan: MealPlan | undefined): number {
   let n = 0;
   for (const day of Object.values(plan)) {
     if (!day) continue;
-    if (Object.values(day).some(Boolean)) n++;
+    if (MEAL_SLOTS.some((slot) => !!day[slot])) n++;
   }
   return n;
 }
@@ -297,7 +350,7 @@ export function plannedDayLabels(plan: MealPlan | undefined): string[] {
   const out: string[] = [];
   for (const d of ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as MealPlanDay[]) {
     const day = plan[d];
-    if (day && Object.values(day).some(Boolean)) out.push(DAY_SHORT[d]);
+    if (day && MEAL_SLOTS.some((slot) => !!day[slot])) out.push(DAY_SHORT[d]);
   }
   return out;
 }
@@ -311,7 +364,8 @@ export function unplannedNames(plan: MealPlan | undefined, recipes: Recipe[]): s
   const out = new Set<string>();
   for (const day of Object.values(plan || {})) {
     if (!day) continue;
-    for (const entry of Object.values(day)) {
+    for (const slot of MEAL_SLOTS) {
+      const entry = day[slot];
       if (!entry) continue;
       if (!entry.recipeId || !known.has(entry.recipeId)) out.add(entry.name);
     }
