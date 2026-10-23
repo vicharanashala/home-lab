@@ -136,7 +136,7 @@ function coveringPortionIndex(servings: number): number {
 }
 
 /**
- * Whether anyone at the table eats less than a whole serving.
+ * How many people at the table eat less than a whole serving.
  *
  * A child counts 0.6 of an adult and a toddler 0.4, so a household with
  * children needs noticeably less food than its head count suggests — that is
@@ -144,8 +144,8 @@ function coveringPortionIndex(servings: number): number {
  * survey asks for kids by age. A teen counts 0.9, which is close enough to
  * a whole serving that the household is treated as one.
  */
-function hasSmallEaters(h?: HouseholdProfile): boolean {
-  return (h?.children || 0) + (h?.toddlers || 0) > 0;
+function smallEaterCount(h?: HouseholdProfile): number {
+  return (h?.children || 0) + (h?.toddlers || 0);
 }
 
 /**
@@ -167,32 +167,62 @@ function hasSmallEaters(h?: HouseholdProfile): boolean {
  * shopping list would buy twice what that family eats. The size that does
  * not feed everyone is the child's own share — which is the point.
  *
+ * WHY THERE IS STILL A FLOOR UNDER THE NEAREST SIZE
+ * "The child's share is what the app may come up short on" is a promise about
+ * the CHILD, and the nearest-size rule was breaking it: rounding the
+ * adult-equivalent need to the nearest size could land BELOW the number of
+ * people who eat a whole serving. Two adults and a toddler with five guests
+ * over are seven whole-serving eaters and 7.4 adult equivalents — and the
+ * nearest size to 7.4 is six, so the plan fed seven people six portions and
+ * the shopping list bought six people's worth of food for seven.
+ *
+ * So the nearest size is a floor, not the answer on its own: the size must
+ * also cover the adults, the teens and the guests. The floor is the
+ * SMALLEST size that covers them, so nothing is bought beyond what the table
+ * needs — it is never larger than the size that covers the full
+ * adult-equivalent need.
+ *
  * @param need        the appetite of the household and its guests, in adult
  *                    equivalents
  * @param heads       how many people are at the table
- * @param smallEaters whether anyone at the table eats less than a whole
- *                    serving
+ * @param smallEaters how many of those people eat less than a whole serving
  */
-function portionIndexForNeed(need: number, heads: number, smallEaters: boolean): number {
-  if (smallEaters) return nearestPortionIndex(need);
+function portionIndexForNeed(
+  need: number,
+  heads: number,
+  smallEaters: number,
+): number {
+  if (smallEaters > 0) {
+    // Everyone who eats a whole serving gets one. The children are the only
+    // ones the app is allowed to come up short on.
+    const wholeEaters = Math.max(0, heads - smallEaters);
+    return Math.max(nearestPortionIndex(need), coveringPortionIndex(wholeEaters));
+  }
   return coveringPortionIndex(Math.max(need, heads));
 }
 
-/** The portion button closest to what this household needs. */
+/**
+ * The portion button this household needs.
+ *
+ * The same size `suggestedServings` returns, under its id — kept as its own
+ * lookup so a screen can show the button and the serving count without
+ * re-deriving the rule in two places.
+ */
 export function suggestedPortionId(h?: HouseholdProfile): PortionId {
   const index = portionIndexForNeed(
     adultEquivalents(h),
     headCount(h),
-    hasSmallEaters(h),
+    smallEaterCount(h),
   );
   return PORTION_LEVELS[index].id;
 }
 
+/** How many servings this household's usual portion is. */
 export function suggestedServings(h?: HouseholdProfile): number {
   const index = portionIndexForNeed(
     adultEquivalents(h),
     headCount(h),
-    hasSmallEaters(h),
+    smallEaterCount(h),
   );
   return PORTION_LEVELS[index].servings;
 }
@@ -233,7 +263,7 @@ export function suggestedServingsForDay(
   const index = portionIndexForNeed(
     adultEquivalents(h) + guests,
     dayHeadCount(day, h),
-    hasSmallEaters(h),
+    smallEaterCount(h),
   );
   return Math.max(base, PORTION_LEVELS[index].servings);
 }
