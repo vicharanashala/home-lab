@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { blockedReason } from '../utils/micPermission';
 import { looksLikeArtifact, foldTranscript, trimLoop, SILENCE_RMS } from '../utils/whisperText';
-import { AUTO_MODEL, WHISPER_MODELS, modelForDevice } from '../utils/whisperModel';
+import { AUTO_MODEL, WHISPER_MODELS, modelForDevice, rememberedDevice } from '../utils/whisperModel';
 import type { WhisperModel } from '../utils/whisperModel';
 
 export { AUTO_MODEL, WHISPER_MODELS, modelForDevice };
@@ -207,6 +207,8 @@ export function useWhisperSTT(
   const pipeRef = useRef<((a: Float32Array, o?: any) => Promise<any>) | null>(null);
   const loadedModelRef = useRef<string | null>(null);
   const modelPromiseRef = useRef<Promise<any> | null>(null);
+  /** Whether this device has a GPU, decided once and then kept. */
+  const deviceRef = useRef<(() => Promise<'webgpu' | 'wasm'>) | null>(null);
 
   const ctxRef = useRef<AudioContext | null>(null);
   const nodeRef = useRef<any>(null);
@@ -242,11 +244,21 @@ export function useWhisperSTT(
     return tf;
   }, []);
 
-  const pickDevice = useCallback(async () => {
-    try {
-      if ('gpu' in navigator && (await navigator.gpu.requestAdapter())) return 'webgpu' as const;
-    } catch { /* fall through to wasm */ }
-    return 'wasm' as const;
+  /**
+   * Whether this device can use the GPU, decided ONCE per session.
+   *
+   * The answer picks the model, and the model has to be the same one the
+   * whole session through — so it is asked once and kept. See
+   * `rememberedDevice` for what went wrong when it was asked every block.
+   */
+  const pickDevice = useCallback(async (): Promise<'webgpu' | 'wasm'> => {
+    if (!deviceRef.current) {
+      deviceRef.current = rememberedDevice(async () => {
+        if (!('gpu' in navigator)) return false;
+        return !!(await navigator.gpu.requestAdapter());
+      });
+    }
+    return deviceRef.current();
   }, []);
 
   const ensureModel = useCallback(async () => {
