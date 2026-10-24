@@ -238,8 +238,13 @@ function withoutFillers(text: string): string {
  *
  * @param named the dish the refusal names
  * @param held  the dish the plan is holding
+ *
+ * WHY IT IS EXPORTED: the same question is asked twice, of two different
+ * dishes — the dish the plan of this utterance is holding, and the dish the
+ * DAY is holding. One rule for both, or the two answers drift apart and a
+ * refusal takes a meal the user never mentioned.
  */
-function namesHeldDish(named: string, held: string | undefined): boolean {
+export function namesHeldDish(named: string, held: string | undefined): boolean {
   if (!named || !held) return false;
   if (named === held) return true;
   return withoutFillers(named) === withoutFillers(held);
@@ -509,12 +514,51 @@ function dishWithoutRefusal(text: string): string {
 }
 
 /**
+ * A dish the user said they did not want.
+ */
+export interface SpokenRefusal {
+  /**
+   * The meal the refusal is about, or null when the refusal named a dish and
+   * no meal — "no dal" with no meal word beside it refuses the dal wherever
+   * the day is holding it.
+   */
+  slot: PlanSlot | null;
+  /** The dish the refusal named: the words the user refused. */
+  dish: string;
+}
+
+/**
+ * What the utterance said: the dishes it files, and the dishes it refuses.
+ */
+export interface SpokenPlanResult {
+  /** The dishes the utterance files, one per meal it named. */
+  plan: SpokenPlan;
+  /** The dishes the utterance refused. */
+  refusals: SpokenRefusal[];
+}
+
+/**
  * Parse spoken text into slots.
  *
  * Returns only the meals that were actually named — a partial dict is a
  * legitimate result and the caller fills just those slots.
  */
 export function parseSpokenPlan(text: string): SpokenPlan {
+  return parseSpokenPlanResult(text).plan;
+}
+
+/**
+ * Parse spoken text into slots AND the dishes it refused.
+ *
+ * WHY THE REFUSALS ARE A SEPARATE THING AND NOT PART OF THE PLAN: a refusal
+ * is not a dish, so it cannot be a slot — but it is not the absence of one
+ * either. "no dal for dinner" leaves the plan empty, and an empty plan reads
+ * as "the user did not mention the dinner", which is what the writer took it
+ * to mean and why the dal the user had REFUSED stayed in the plan and on the
+ * shopping list. The refusal has to be said out loud, or the one thing the
+ * user was clearest about is the one thing the plan cannot carry.
+ */
+export function parseSpokenPlanResult(text: string): SpokenPlanResult {
   // The contraction is expanded first so that EVERY rule below — the one
   // that reads the text in front of a meal word and the one that reads the
   // dish itself — sees the refusal in the same words.
@@ -545,7 +589,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     .trim()
     .replace(CONTRACTED_REFUSAL_RE, 'do not')
     .replace(/[.!?]+(?=\s|$)/g, ',');
-  if (!src) return {};
+  if (!src) return { plan: {}, refusals: [] };
 
   // Locate every slot marker, keeping the LENGTH OF THE MATCH. Earlier this
   // re-ran a search over the remaining text to work out where the word ended,
@@ -563,7 +607,13 @@ export function parseSpokenPlan(text: string): SpokenPlan {
       if (m.index === global.lastIndex) global.lastIndex += 1;
     }
   }
-  if (!marks.length) return {};
+  // WHY THE TEXT IS NOT GIVEN UP ON WHEN NO MEAL WAS SPOKEN: a refusal with
+  // no meal word beside it is still a refusal — "no dal" refuses the dal
+  // wherever the day is holding it, and the day is the only thing that knows
+  // where that is. The plan below is empty either way, so nothing about the
+  // plan changes; what changes is that the refusal is said out loud instead
+  // of being thrown away with the text. The refusal rules at the bottom of
+  // this function are the ones that read it.
 
   // Overlapping rules can flag the same word twice; keep the earliest at each
   // spot.
@@ -575,6 +625,18 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   }
 
   const out: SpokenPlan = {};
+
+  /**
+   * The dishes the utterance refused, and the meal each one was about.
+   *
+   * WHY THEY ARE COLLECTED AND NOT JUST APPLIED: the rule below removes a
+   * refused dish from the PLAN — the plan this utterance is describing. The
+   * meal the day is actually holding is a different thing, and it is the one
+   * the shopping list buys. A refusal that says "no dal" has to be able to
+   * reach the dal the day is holding, and that answer belongs to whoever
+   * knows what the day holds.
+   */
+  const refusals: SpokenRefusal[] = [];
 
   /**
    * The dish the meal word about to be read may take from the text IN FRONT
@@ -611,8 +673,9 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   const mentions: { slot: PlanSlot; at: number; len: number; dish: string }[] = [];
 
   // The text before the FIRST meal word can only be that meal's own: there
-  // is no meal before it that could have claimed it.
-  const leadPre = src.slice(0, unique[0].at).match(PRE_CONNECTOR_RE);
+  // is no meal before it that could have claimed it. There is no first meal
+  // word when the text held none, and then there is no lead text either.
+  const leadPre = unique.length ? src.slice(0, unique[0].at).match(PRE_CONNECTOR_RE) : null;
   if (leadPre) nextLeftDish = tidy(dishWithoutRefusal(leadPre[1]));
 
   for (let i = 0; i < unique.length; i++) {
@@ -737,11 +800,13 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   // nothing anywhere said so: the sheet said the dinner had been heard and
   // the list bought it.
   for (const refusal of refusalsIn(src)) {
-    // The meal this refusal belongs to: the one whose word FOLLOWS it, or
-    // the one it was said after.
+    // The meal whose word FOLLOWS the refusal.
+    //
+    // WHY THERE MAY BE NO SUCH MEAL: the text held no meal word at all — "no
+    // dal" on its own. That refusal is not thrown away: it names a dish and
+    // no meal, so it is about every meal holding that dish, and the day is
+    // the only thing that knows where that is.
     const forward = mentions.findIndex((m) => m.at > refusal.at);
-    const bound = forward >= 0 ? mentions[forward] : mentions[mentions.length - 1];
-    if (!bound) continue;
 
     let named = '';
 
@@ -767,6 +832,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
       const before = mentions.filter((m) => m.at < refusal.at).pop();
       named = before ? before.dish : '';
     } else if (forward >= 0) {
+      const bound = mentions[forward];
       if (refusalLinksToMeal(src, refusal.end, bound.at)) {
         // The meal word follows the refusal, so the dish the refusal names
         // is the one BEHIND the meal word.
@@ -816,6 +882,9 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     if (pointsBack) {
       const before = mentions.filter((m) => m.at < refusal.at).pop();
       if (before && namesHeldDish(named, out[before.slot])) delete out[before.slot];
+      // The pronoun points at ONE meal's dish, and that is the meal the
+      // refusal is about.
+      if (before) refusals.push({ slot: before.slot, dish: named });
       continue;
     }
 
@@ -834,11 +903,17 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // the refusal and the refusal says nothing about it, so the refusal
     // stands alone and the dal is refused wherever it is.
     const clauseEnd = clauseEndOf(src, refusal);
-    const attachedToAMeal = mentions.some(
+    // The meal this refusal is bound to, when it named one: a meal word
+    // after the refusal, inside the refusal's own clause. It is the same
+    // meal as `forward` names — a meal word cannot fit between the refusal
+    // and the end of the word the refusal is made of.
+    const boundSlot = mentions.find(
       (m) => m.at >= refusal.end && m.at < clauseEnd,
-    );
-    if (attachedToAMeal) {
-      if (namesHeldDish(named, out[bound.slot])) delete out[bound.slot];
+    )?.slot;
+    if (boundSlot) {
+      if (namesHeldDish(named, out[boundSlot])) delete out[boundSlot];
+      // The refusal named a meal, so it is about that meal and no other.
+      refusals.push({ slot: boundSlot, dish: named });
       continue;
     }
 
@@ -854,8 +929,13 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     for (const m of mentions) {
       if (namesHeldDish(named, out[m.slot])) delete out[m.slot];
     }
+
+    // The refusal stands alone: it named a dish and no meal, so the dish is
+    // refused wherever it is being held — in the plan the utterance is
+    // describing, and in the day the app is holding.
+    refusals.push({ slot: null, dish: named });
   }
-  return out;
+  return { plan: out, refusals };
 }
 
 /** What the parser found, phrased for a person. */

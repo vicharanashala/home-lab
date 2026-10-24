@@ -1,24 +1,53 @@
 import { useRef, useState } from 'react';
 import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
 import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES, AUTO_MODEL } from '../hooks/useWhisperSTT';
-import { parseSpokenPlan } from '../utils/spokenPlan';
+import { parseSpokenPlanResult } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
 import { resolveSpokenPlan, retypeDish, pickDish } from '../utils/spokenRecipeMatch';
+import { spokenPlanClears } from '../utils/spokenPlanEntries';
 import { sheetNoteFor } from '../utils/spokenPlanSheet';
 import type { DishResolution } from '../utils/spokenRecipeMatch';
-import type { Recipe } from '../types';
+import type { MealPlanDayPlan, MealSlot, Recipe } from '../types';
 
 interface Props {
   /**
    * Apply the parsed slots. Only the slots present in the plan are touched.
    * The second argument says what each slot was heard as and what it was
-   * matched to, so the caller can link the dish to its recipe.
+   * matched to, so the caller can link the dish to its recipe. The third says
+   * which meals a refusal empties — those are removed, not written.
    */
-  onApply: (plan: SpokenPlan, resolutions: Record<string, DishResolution>) => void;
+  onApply: (
+    plan: SpokenPlan,
+    resolutions: Record<string, DishResolution>,
+    cleared: MealSlot[],
+  ) => void;
   /** Every recipe the app knows, so a spoken dish can be matched to a real one. */
   catalogue: Recipe[];
   /** Ids of the app's curated recipes, which win ties against scraped ones. */
   preferredIds?: Set<string>;
+  /**
+   * The day as it stands, so a refusal can be matched against the dish the
+   * day is actually holding.
+   */
+  dayPlan?: MealPlanDayPlan;
+}
+
+/**
+ * What the sheet is holding: the dishes that were heard, and the meals a
+ * refusal empties.
+ *
+ * WHY THE CLEARED MEALS ARE KEPT APART FROM THE PLAN: a refused meal holds
+ * no dish, so it cannot be a slot with an empty dish — it is the ABSENCE of
+ * one, and the absence of a slot in the plan means "the user did not mention
+ * this meal", which is a different thing entirely. The user said "no dal for
+ * dinner": the dinner is not left alone, and it is not filled with something
+ * else. It is emptied.
+ */
+interface SpokenDraft {
+  /** The dishes the utterance filed. */
+  plan: SpokenPlan;
+  /** The meals a refusal empties. */
+  cleared: MealSlot[];
 }
 
 /**
@@ -39,11 +68,11 @@ interface Props {
  * match is certain; otherwise the heard words are kept and the candidates
  * are offered, because a wrong dish in the plan is worse than a rough one.
  */
-export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
+export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Props) {
   const [model, setModel] = useState(AUTO_MODEL);
   const [language, setLanguage] = useState('en-IN');
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<SpokenPlan | null>(null);
+  const [draft, setDraft] = useState<SpokenDraft | null>(null);
   /** What was heard, and what it was matched to, for each slot. */
   const [resolutions, setResolutions] = useState<Record<string, DishResolution>>({});
   const [showSetup, setShowSetup] = useState(false);
@@ -60,13 +89,20 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
    *
    * Both the spoken and the typed path go through here: a typo is the same
    * problem as a mis-heard word.
+   *
+   * WHY A REFUSAL IS PART OF THE DRAFT AND NOT A SEPARATE SCREEN: the parser
+   * takes a refused dish out of the plan, so a plan of nothing is what a
+   * refusal looks like — and a plan of nothing used to read as "the user did
+   * not say anything about any meal", which is not what they said at all.
    */
-  const buildDraft = (text: string): SpokenPlan | null => {
-    const parsed = parseSpokenPlan(text);
-    if (!parsed.breakfast && !parsed.lunch && !parsed.dinner) return null;
+  const buildDraft = (text: string): SpokenDraft | null => {
+    const { plan: parsed, refusals } = parseSpokenPlanResult(text);
+    // The meals a refusal empties, worked out against the day as it stands.
+    const cleared = spokenPlanClears(refusals, dayPlan);
+    if (!parsed.breakfast && !parsed.lunch && !parsed.dinner && !cleared.length) return null;
     const { plan, resolutions: found } = resolveSpokenPlan(parsed, catalogue, preferredIds);
     setResolutions(found);
-    return plan as SpokenPlan;
+    return { plan, cleared };
   };
 
   const toggle = async () => {
@@ -129,7 +165,10 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
 
         {(['breakfast', 'lunch', 'dinner'] as const).map((slot) => {
           const res = resolutions[slot];
-          const current = draft[slot] ?? '';
+          const current = draft.plan[slot] ?? '';
+          // A meal the user refused: it is going to be REMOVED, which is not
+          // what an empty slot means everywhere else in this sheet.
+          const isCleared = draft.cleared.includes(slot);
           // What the slot says about itself, and which dishes are offered
           // beside it.
           //
@@ -152,11 +191,25 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
               </span>
               <input
                 value={current}
-                placeholder="leave empty to keep what's planned"
+                placeholder={
+                  isCleared
+                    ? 'removed — type a dish to keep it instead'
+                    : "leave empty to keep what's planned"
+                }
                 aria-label={`${slot} from speech`}
                 onChange={(e) => {
                   const text = e.target.value;
-                  setDraft((d) => ({ ...d!, [slot]: text || undefined }));
+                  // An edited slot is the user's own: the refusal that
+                  // emptied it is dropped, because the user has just said
+                  // what this meal should be.
+                  setDraft((d) =>
+                    d
+                      ? {
+                          plan: { ...d.plan, [slot]: text || undefined },
+                          cleared: d.cleared.filter((s) => s !== slot),
+                        }
+                      : d,
+                  );
                   // The slot and the resolution have to move together.
                   //
                   // WHY: the slot says what the dish IS; the resolution says
@@ -178,6 +231,12 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
                 }}
                 className="input w-full text-xs py-1.5 mt-0.5"
               />
+
+              {isCleared && (
+                <span className="block text-[10px] text-tomato-600 dark:text-tomato-300 mt-0.5">
+                  you refused this dish — this meal will be removed
+                </span>
+              )}
 
               {note.kind === 'matched' && res && (
                 <span className="block text-[10px] text-sage-600 dark:text-sage-300 mt-0.5">
@@ -202,7 +261,14 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
-                        setDraft((d) => ({ ...d!, [slot]: m.name }));
+                        setDraft((d) =>
+                          d
+                            ? {
+                                plan: { ...d.plan, [slot]: m.name },
+                                cleared: d.cleared.filter((s) => s !== slot),
+                              }
+                            : d,
+                        );
                         // The resolution follows the slot. The dish the user
                         // tapped IS the dish the plan now holds, so it is the
                         // dish whose recipe has to be linked — otherwise the
@@ -232,7 +298,12 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
         <div className="flex gap-1.5 mt-2">
           <button
             type="button"
-            onClick={() => { onApply(draft, resolutions); setDraft(null); setResolutions({}); whisper.reset(); }}
+            onClick={() => {
+              onApply(draft.plan, resolutions, draft.cleared);
+              setDraft(null);
+              setResolutions({});
+              whisper.reset();
+            }}
             className="btn-primary flex-1 !py-1.5 text-xs"
           >
             <Check size={13} />

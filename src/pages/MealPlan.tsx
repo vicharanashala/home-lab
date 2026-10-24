@@ -40,6 +40,22 @@ const SLOT_META: Record<MealSlot, { emoji: string; label: string }> = {
 
 type EditKey = { day: MealPlanDay; slot: MealSlot };
 
+/**
+ * What to say after a spoken day was applied.
+ *
+ * WHY A MEAL ADDED AND A MEAL REMOVED ARE COUNTED SEPARATELY: they are two
+ * different things that happened, and one number for both of them is a lie
+ * the user reads as "the plan is now what I said". A refusal removes a meal
+ * the plan was holding; it does not add one.
+ */
+function spokenPlanToast(added: number, removed: number): string {
+  const meal = (n: number) => `${n} meal${n === 1 ? '' : 's'}`;
+  if (added && removed) return `Added ${meal(added)} and removed ${meal(removed)} by voice`;
+  if (added) return `Added ${meal(added)} by voice`;
+  if (removed) return `Removed ${meal(removed)} by voice`;
+  return 'Nothing was recognised to add';
+}
+
 function todayKey(): MealPlanDay {
   return MEAL_PLAN_DAYS[(new Date().getDay() + 6) % 7];
 }
@@ -876,17 +892,23 @@ export default function MealPlanPage() {
                 <SpeakYourPlan
                   catalogue={catalogue}
                   preferredIds={preferredIds}
-                  onApply={(plan, resolutions) => {
+                  dayPlan={dayPlan}
+                  onApply={(plan, resolutions, cleared) => {
                     // The entries to write, and the portion size that goes
                     // with them, are decided in one place so that every way
                     // of putting a dish on a day agrees.
                     const entries = spokenPlanEntries(plan, resolutions, dayPlan, household);
                     entries.forEach(({ slot, entry }) => setMealPlanSlot(day, slot, entry));
+                    // A meal the user REFUSED is removed, not written. The
+                    // shopping list buys the plan, so a dish left in the plan
+                    // is a dish the list buys — and this is the one the user
+                    // said they did not want.
+                    cleared.forEach((slot) => setMealPlanSlot(day, slot, null));
+                    const added = entries.length;
+                    const removed = cleared.length;
                     toast(
-                      entries.length
-                        ? `Added ${entries.length} meal${entries.length === 1 ? '' : 's'} by voice`
-                        : 'Nothing was recognised to add',
-                      entries.length ? 'success' : 'warning',
+                      spokenPlanToast(added, removed),
+                      added || removed ? 'success' : 'warning',
                     );
                   }}
                 />
