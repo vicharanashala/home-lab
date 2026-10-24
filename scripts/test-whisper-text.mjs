@@ -7,7 +7,7 @@
  *
  * Run with:  node scripts/test-whisper-text.mjs
  */
-import { looksLikeArtifact, hasRepeatedPhrase, foldTranscript, trimLoop, SILENCE_RMS } from '../src/utils/whisperText.ts';
+import { looksLikeArtifact, hasRepeatedPhrase, foldTranscript, trimLoop, stripHallucinations, SILENCE_RMS } from '../src/utils/whisperText.ts';
 
 /** Loud enough to be someone actually talking. */
 const LOUD = 0.08;
@@ -249,6 +249,81 @@ console.log('\nthe speech BEHIND a loop is the user’s own, and it is kept');
     'a dish spoken after a leading loop survives the fold',
     `transcript was "${transcript}"`,
   );
+}
+
+console.log('\nWhisper’s stock phrase, said TWICE, is still a hallucination');
+// The loop detector needs THREE repeats of a phrase before it calls it a
+// loop, and Whisper says its stock phrase twice as often as three times.
+// So the phrase was neither trimmed as a loop nor rejected as rubbish, and
+// it sat inside the dish: "breakfast" in one block and "I'm sorry. I'm
+// sorry. masala dosa" in the next gave a breakfast of "m sorry i m sorry
+// masala dosa" — the dish the user had just said, buried under the model
+// inventing, in a name that matches no recipe in the catalogue, so the
+// shopping list bought nothing for it.
+//
+// The other way round was worse: the dish said first and the phrase second
+// filed the breakfast as "thank you thank you" and dropped the dinner the
+// user had actually dictated.
+{
+  ok(stripHallucinations("I'm sorry. I'm sorry.") === null,
+    'a block that is nothing but the phrase is emptied');
+}
+{
+  ok(stripHallucinations('Thank you. Thank you.') === null,
+    '"thank you" twice is emptied');
+}
+{
+  ok(stripHallucinations('I am sorry. I am sorry.') === null,
+    '"I am sorry" twice is emptied');
+}
+{
+  ok(stripHallucinations('Thanks for watching! Thanks for watching!') === null,
+    '"thanks for watching" twice is emptied');
+}
+{
+  ok(stripHallucinations('Thank you very much. Thank you very much.') === null,
+    '"thank you very much" twice is emptied');
+}
+{
+  ok(stripHallucinations("I'm sorry. I'm sorry. masala dosa") === 'masala dosa',
+    'the phrase in front of the dish is taken out',
+    String(stripHallucinations("I'm sorry. I'm sorry. masala dosa")));
+}
+{
+  ok(stripHallucinations('masala dosa. Thank you. Thank you.') === 'masala dosa.',
+    'the phrase behind the dish is taken out',
+    String(stripHallucinations('masala dosa. Thank you. Thank you.')));
+}
+{
+  ok(stripHallucinations('breakfast masala dosa') === 'breakfast masala dosa',
+    'ordinary speech is untouched');
+}
+{
+  ok(stripHallucinations('thank you masala') === 'masala',
+    'the phrase is only taken out as a whole phrase',
+    String(stripHallucinations('thank you masala')));
+}
+{
+  const t = foldTranscript('breakfast', "I'm sorry. I'm sorry. masala dosa");
+  ok(t === 'breakfast masala dosa',
+    'a phrase in one block and the dish in the next leave the dish alone',
+    String(t));
+}
+{
+  const t = foldTranscript('breakfast masala dosa', "I'm sorry. I'm sorry.");
+  ok(t === 'breakfast masala dosa',
+    'a phrase after the dish does not swallow it',
+    String(t));
+}
+{
+  const t = foldTranscript('masala dosa breakfast', 'Thank you. Thank you.');
+  ok(t === 'masala dosa breakfast',
+    'a phrase after the meal word does not become the dish',
+    String(t));
+}
+{
+  ok(foldTranscript('', "I'm sorry. I'm sorry.") === null,
+    'a block that is nothing but the phrase is dropped');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

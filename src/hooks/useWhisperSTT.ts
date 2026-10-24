@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { blockedReason } from '../utils/micPermission';
-import { looksLikeArtifact, foldTranscript, trimLoop, SILENCE_RMS } from '../utils/whisperText';
+import { looksLikeArtifact, foldTranscript, trimLoop, stripHallucinations, SILENCE_RMS } from '../utils/whisperText';
 import { AUTO_MODEL, WHISPER_MODELS, modelForDevice, rememberedDevice } from '../utils/whisperModel';
 import type { WhisperModel } from '../utils/whisperModel';
 
@@ -376,12 +376,22 @@ export function useWhisperSTT(
             no_repeat_ngram_size: 3,
           });
           const text = (result?.text || '').trim();
+          // Whisper's stock phrases are not speech, and they are often said
+          // TWICE — "I'm sorry. I'm sorry." — which is one repeat short of
+          // the loop detector, so they were neither trimmed as a loop nor
+          // rejected as rubbish. They then sat inside the dish, and the dish
+          // the user had said was buried under them.
+          //
+          // They come out BEFORE the block is judged, so what is judged is
+          // the speech alone and the text handed to the caller is too.
+          const spoken = stripHallucinations(text);
+          if (spoken === null) continue;             // nothing but a hallucination
           // A block can be the user's own speech with a loop welded onto the
           // end of it, so the loop is cut off FIRST and what is left is
           // judged on its own. Asking "is this rubbish?" about the joined
           // text threw the speech away along with the loop, and the user was
           // told nothing had been picked up when it had.
-          const kept = trimLoop(text);
+          const kept = trimLoop(spoken);
           if (kept === null) continue;             // nothing but a loop
           if (isArtifact(kept, level)) continue;   // what is left is rubbish
 

@@ -66,6 +66,76 @@ export const FILLERS = new Set([
 ]);
 
 /**
+ * Whisper's stock phrases, as the words they are made of.
+ *
+ * WHY A LIST AND NOT THE SET ABOVE: the set above is an exact match on the
+ * WHOLE text, so it only catches a block that is nothing but the phrase. A
+ * block that OPENS with the phrase and then carries the dish the user said
+ * was let through with the phrase still in it.
+ *
+ * The words are compared with the apostrophe taken out, because Whisper
+ * writes both "I'm sorry" and "I am sorry" and the two have to be the same
+ * phrase.
+ */
+const HALLUCINATION_PHRASES: string[][] = [
+  // LONGEST FIRST: the first match wins, so a shorter phrase listed above a
+  // longer one would cut the longer one in half and leave its tail behind.
+  ['thank', 'you', 'very', 'much'],
+  ['thanks', 'for', 'watching'],
+  ['thank', 'you'],
+  ['im', 'sorry'],
+  ['i', 'am', 'sorry'],
+];
+
+/** The word as the phrases above are written: no punctuation, no apostrophe. */
+function phraseKey(word: string): string {
+  return bareWord(word.toLowerCase()).replace(/['’]/g, '');
+}
+
+/**
+ * Take Whisper's stock phrases out of a piece of text.
+ *
+ * Returns the text without them, or null when nothing is left.
+ *
+ * WHY THEY HAVE TO COME OUT AT ALL: the loop detector needs THREE repeats of
+ * a phrase before it calls it a loop, and Whisper's stock phrase is often
+ * said TWICE — "I'm sorry. I'm sorry." — so it was neither trimmed as a loop
+ * nor rejected as rubbish, and it sat inside the dish.
+ *
+ * "breakfast" in one block and "I'm sorry. I'm sorry. masala dosa" in the
+ * next gave a breakfast of "m sorry i m sorry masala dosa" — the dish the
+ * user had just said, buried under the model inventing, in a name that
+ * matches no recipe in the catalogue, so the shopping list bought nothing
+ * for it. The other way round it was worse: the dish said first and the
+ * phrase second filed the BREAKFAST as "thank you thank you", and the
+ * dinner the user had actually dictated was dropped.
+ */
+export function stripHallucinations(text: string): string | null {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+
+  const words = raw.split(/\s+/);
+  const keys = words.map(phraseKey);
+
+  const kept: string[] = [];
+  let i = 0;
+  while (i < words.length) {
+    const phrase = HALLUCINATION_PHRASES.find((p) =>
+      p.every((word, k) => keys[i + k] === word),
+    );
+    if (phrase) {
+      i += phrase.length;
+      continue;
+    }
+    kept.push(words[i]);
+    i++;
+  }
+
+  const out = kept.join(' ').replace(/\s+/g, ' ').trim();
+  return out || null;
+}
+
+/**
  * Where a loop starts and ends in a list of words.
  *
  * The END matters as much as the start. A loop is a span of words, and the
@@ -210,7 +280,12 @@ export function trimLoop(text: string): string | null {
  */
 export function foldTranscript(current: string, text: string): string | null {
   const joined = current ? `${current} ${text}` : text;
-  return trimLoop(joined);
+  // The stock phrases come out of the JOINED text, not only out of the new
+  // block: a phrase said in one block and the dish said in the next have to
+  // end up as the dish alone.
+  const clean = stripHallucinations(joined);
+  if (clean === null) return null;
+  return trimLoop(clean);
 }
 
 /**
