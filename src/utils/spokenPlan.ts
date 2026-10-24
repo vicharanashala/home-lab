@@ -291,6 +291,37 @@ function refusalLinksToMeal(src: string, from: number, to: number): boolean {
 }
 
 /**
+ * The stretch of text the refusal stands in.
+ *
+ * WHY A CLAUSE AND NOT THE WHOLE SENTENCE: a comma ends the clause it is in,
+ * and what a refusal says is about the clause it was said in.
+ *
+ *   "breakfast oats, lunch rice, no oats"     the refusal is in the clause
+ *                                             "no oats" — a clause of its own,
+ *                                             with no meal word in it
+ *   "dal for dinner, rice no dal for lunch"   the refusal is in the clause
+ *                                             "rice no dal for lunch", and
+ *                                             that clause names the LUNCH
+ *
+ * WHY THIS DECIDES WHETHER A REFUSAL MAY REACH FOR ANOTHER MEAL: in the first
+ * the refusal stands alone and names a dish — the oats — and the oats are the
+ * breakfast's. In the second the refusal names a dish AND a meal: it is saying
+ * "for lunch it is rice, not dal", and the dal that belongs to the dinner is
+ * a dish the user asked for, not one the refusal touches.
+ *
+ * @param src     the whole sentence
+ * @param refusal where the refusal is
+ */
+function clauseOf(src: string, refusal: RefusalAt): { start: number; end: number } {
+  const before = src.lastIndexOf(',', refusal.at - 1);
+  const after = src.indexOf(',', refusal.end);
+  return {
+    start: before >= 0 ? before + 1 : 0,
+    end: after >= 0 ? after : src.length,
+  };
+}
+
+/**
  * True when the text in front of the meal word refuses that meal.
  *
  * "no lunch dal" refuses the lunch — the refusal sits in front of the MEAL
@@ -636,7 +667,46 @@ export function parseSpokenPlan(text: string): SpokenPlan {
       }
     }
 
-    if (named && out[bound.slot] === named) delete out[bound.slot];
+    // The meal that loses the dish.
+    //
+    // WHY THE MEAL THAT HOLDS THE DISH AND NOT THE ONE THE REFUSAL IS BOUND
+    // TO: a refusal names a DISH, and the dish belongs to the meal that holds
+    // it. The refusal is bound to the meal whose word FOLLOWS it, or to the
+    // meal it was said after — and that is not always the meal the dish was
+    // filed under. "breakfast oats, lunch rice, no oats" binds the refusal to
+    // the LUNCH, but the oats are the BREAKFAST's dish: the refusal named
+    // oats, the breakfast was holding oats, and the oats stayed in the plan.
+    //
+    // WHY IT MATTERS: that is the same bug this whole pass exists to kill.
+    // The shopping list buys the plan, so a refused dish that stays in the
+    // plan is a dish the list buys — and the sheet says the meal was heard.
+    //
+    // WHY THE BOUND MEAL IS TRIED FIRST: so a refusal that names the dish of
+    // the meal it is bound to behaves exactly as it did before, and only the
+    // case that used to do NOTHING changes.
+    if (!named) continue;
+    if (out[bound.slot] === named) {
+      delete out[bound.slot];
+      continue;
+    }
+
+    // WHY ONLY A REFUSAL THAT STANDS ALONE MAY REACH FOR ANOTHER MEAL: the
+    // refusal is bound to the meal it was said about, and a refusal that
+    // NAMES a meal as well belongs to that meal. "dal for dinner, rice no dal
+    // for lunch" says "for lunch it is rice, not dal" — the dal there is the
+    // one the user does NOT want FOR LUNCH, and the dal the dinner was given
+    // is a dish they did ask for. So a refusal whose own clause names a meal
+    // may only take a dish from THAT meal.
+    //
+    // A refusal whose clause names no meal stands alone, and what it names is
+    // a dish on its own: the meal that was HOLDING that dish is the meal that
+    // loses it.
+    const clause = clauseOf(src, refusal);
+    const attachedToAMeal = mentions.some((m) => m.at >= clause.start && m.at < clause.end);
+    if (attachedToAMeal) continue;
+
+    const holder = mentions.find((m) => out[m.slot] === named);
+    if (holder) delete out[holder.slot];
   }
   return out;
 }

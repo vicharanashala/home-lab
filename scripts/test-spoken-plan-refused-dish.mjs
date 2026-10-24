@@ -73,6 +73,27 @@ console.log('\na refusal that names NO dish removes nothing');
 check('lunch dal, no', { lunch: 'dal' });
 check('dal for dinner, no', { dinner: 'dal' });
 
+console.log('\nand it takes the dish out of the MEAL THAT HOLDS IT');
+// WHY THESE ARE HERE: the refusal names a DISH, and the dish belongs to the
+// meal that holds it. The refusal was bound to the meal whose word follows it
+// — or to the meal it was said after — and that is not always the meal the
+// dish was filed under.
+//
+//   "breakfast oats, lunch rice, no oats" -> the refusal is bound to the
+//   lunch, but the oats are the BREAKFAST's dish.
+//
+// So the refusal named oats, the breakfast was holding oats, and the oats
+// stayed in the plan: the shopping list bought the very dish the user had
+// just refused, and nothing anywhere said so.
+check('breakfast oats, lunch rice, no oats', { lunch: 'rice' });
+check('dinner dal, lunch rice, no dal', { lunch: 'rice' });
+check('breakfast oats, dinner dal, no oats', { dinner: 'dal' });
+check('lunch dal, dinner rice, no dal', { dinner: 'rice' });
+check('breakfast oats, lunch rice, no oats, dinner dal', {
+  lunch: 'rice',
+  dinner: 'dal',
+});
+
 console.log('\nand a change of mind is still a change of mind');
 check('lunch biryani actually no, lunch salad', { lunch: 'salad' });
 check('for breakfast masala dosa, for lunch butter chicken', {
