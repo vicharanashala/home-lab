@@ -641,7 +641,13 @@ export interface SpokenRefusal {
    * the day is holding it.
    */
   slot: PlanSlot | null;
-  /** The dish the refusal named: the words the user refused. */
+  /**
+   * The dish the refusal named: the words the user refused.
+   *
+   * EMPTY WHEN THE REFUSAL NAMED A MEAL AND NO DISH — "no breakfast". There
+   * is no dish to take away, but the meal itself is what was refused, and
+   * the meal is emptied whatever it is holding.
+   */
   dish: string;
 }
 
@@ -928,6 +934,23 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
 
     let named = '';
 
+    // The meal a refusal that names NO DISH is about.
+    //
+    // WHY A REFUSAL CAN NAME A MEAL AND NO DISH: a refusal normally names a
+    // dish — "no dal" refuses the dal — and the meal that loses it is the one
+    // holding it. But "no breakfast" names a MEAL and no dish at all: the meal
+    // word was taken as the meal the utterance was about, the refusal was left
+    // naming nothing, and a refusal that names nothing was thrown away.
+    //
+    // So nothing was emptied, and the sheet said the app could not tell which
+    // meal it was for — the opposite of the truth, because the meal WAS told.
+    // It was the breakfast. And the sheet told the user to say the very thing
+    // they had just said they did not want.
+    //
+    // The meal is worked out here, where the meal word the refusal is bound
+    // to is in hand.
+    let mealOnly: PlanSlot | null = null;
+
     // A refusal that POINTS BACK names the dish in front of it, and it is
     // checked BEFORE the two branches below because they both read the text
     // that FOLLOWS the refusal.
@@ -957,6 +980,9 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
         const after = bound.at + bound.len;
         const nextMark = unique.find((mk) => mk.at > bound.at);
         named = dishBetween(src, after, nextMark ? nextMark.at : src.length);
+        // Nothing behind the meal word, so the refusal named the MEAL and no
+        // dish — "no breakfast". The meal is what it refuses.
+        if (!named) mealOnly = bound.slot;
       } else {
         // The dish the refusal names, up to the meal word it belongs to.
         //
@@ -986,7 +1012,16 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
     // WHY IT MATTERS: that is the same bug this whole pass exists to kill.
     // The shopping list buys the plan, so a refused dish that stays in the
     // plan is a dish the list buys — and the sheet says the meal was heard.
-    if (!named) continue;
+    //
+    // WHY A REFUSAL THAT NAMED A MEAL IS NOT THROWN AWAY HERE: a refusal
+    // that names a MEAL and no dish has no dish to take away, but the MEAL is
+    // what the user refused. "no breakfast" empties the breakfast, whatever
+    // is on it — and the shopping list buys the plan, so a breakfast the user
+    // refused and that stayed on the plan is a breakfast the list buys.
+    if (!named) {
+      if (mealOnly) refusals.push({ slot: mealOnly, dish: '' });
+      continue;
+    }
 
     // A refusal that POINTS BACK names ONE dish: the one the pronoun points
     // at, which is the dish in FRONT of the refusal.

@@ -104,7 +104,26 @@ export function spokenPlanClears(
   const cleared: MealSlot[] = [];
 
   for (const refusal of refusals) {
-    if (!refusal.dish) continue;
+    // A refusal that names a MEAL and no dish — "no breakfast" — empties that
+    // meal, whatever it is holding.
+    //
+    // WHY IT IS NOT THE SAME RULE AS THE ONE BELOW: a refusal that names a
+    // dish may only take away the meal holding THAT dish, because the user
+    // said nothing about any other dish. A refusal that names no dish has said
+    // nothing about any dish either, and so it cannot be narrowed to one
+    // meal's dish — but it named a MEAL, and the meal is what it refuses.
+    //
+    // WHY IT MATTERS: the shopping list buys the plan, so a breakfast the
+    // user refused and that stayed on the plan is a breakfast the list buys.
+    if (!refusal.dish) {
+      if (!refusal.slot) continue;
+      // A meal the utterance FILLED is the user's own dish now, and a
+      // refusal is not allowed to empty it.
+      if ((plan[refusal.slot] || '').trim()) continue;
+      if (!day[refusal.slot]) continue;
+      if (!cleared.includes(refusal.slot)) cleared.push(refusal.slot);
+      continue;
+    }
     // A refusal that named a meal is about that meal; one that named only a
     // dish is about wherever that dish is being held.
     const slots = refusal.slot ? [refusal.slot] : MEAL_SLOTS;
@@ -140,7 +159,7 @@ export function spokenPlanClears(
 export interface SpokenPlanOutcome {
   /**
    * 'plan'     the utterance filled a meal or emptied one — the sheet opens.
-   * 'refused'  the utterance refused a dish that nothing on the plan holds.
+   * 'refused'  the utterance refused a dish, or a meal, that nothing holds.
    * 'nothing'  the utterance named neither a meal nor a dish.
    */
   kind: 'plan' | 'refused' | 'nothing';
@@ -186,18 +205,35 @@ export function spokenPlanOutcome(
  */
 export function spokenPlanRefusalMessage(refusals: SpokenRefusal[]): string {
   const named = refusals.filter((refusal) => refusal.dish);
-  if (!named.length) return 'there was nothing to remove';
+  // A refusal that named a MEAL and no dish has no dish to name, so it says
+  // what it can say: there is nothing to remove FROM THAT MEAL.
+  const mealSlots = refusals
+    .filter((refusal) => !refusal.dish)
+    .map((refusal) => refusal.slot)
+    .filter((slot): slot is MealSlot => slot !== null);
+  const parts: string[] = [];
   if (named.length === 1) {
     const only = named[0];
-    return only.slot
-      ? `there is no ${only.dish} to remove from the ${only.slot}`
-      : `there is no ${only.dish} to remove from the plan`;
+    parts.push(
+      only.slot
+        ? `there is no ${only.dish} to remove from the ${only.slot}`
+        : `there is no ${only.dish} to remove from the plan`,
+    );
+  } else if (named.length > 1) {
+    // The same dish refused for two meals is ONE dish to remove, not two: the
+    // message read "there is nothing to remove for dal or dal", which is a
+    // broken sentence on the screen the owner reads it on.
+    const dishes = [...new Set(named.map((refusal) => refusal.dish))];
+    parts.push(`there is nothing to remove for ${dishes.join(' or ')}`);
   }
-  // The same dish refused for two meals is ONE dish to remove, not two: the
-  // message read "there is nothing to remove for dal or dal", which is a
-  // broken sentence on the screen the owner reads it on.
-  const dishes = [...new Set(named.map((refusal) => refusal.dish))];
-  return `there is nothing to remove for ${dishes.join(' or ')}`;
+  if (mealSlots.length === 1) {
+    parts.push(`there is nothing to remove from the ${mealSlots[0]}`);
+  } else if (mealSlots.length > 1) {
+    const slots = [...new Set(mealSlots)];
+    parts.push(`there is nothing to remove from the ${slots.join(' or the ')}`);
+  }
+  if (!parts.length) return 'there was nothing to remove';
+  return parts.join(' and ');
 }
 
 /**
