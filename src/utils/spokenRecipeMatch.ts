@@ -79,6 +79,24 @@ export interface DishResolution {
 export const CONFIDENT_SCORE = 0.75;
 
 /**
+ * The highest score a coincidence is allowed to reach.
+ *
+ * A single spoken word that needs two or more edits to become a catalogue
+ * word is not a mis-hearing — it is a coincidence. "bhatura" is two edits
+ * from "khatua" and one from "bhature"; "painter" is two from "paneer".
+ * One edit is what Whisper actually produces ("idly" for "idli", "samusa"
+ * for "samosa"), so one edit still applies. Two or more is offered as a
+ * suggestion the user can tap, but never written into the plan on its own —
+ * a wrong dish poisons the taste model and the taste-match score forever,
+ * which is worse than a rough name the user can see and fix.
+ *
+ * 0.3 is deliberately below the weakest genuine candidate for a one-word
+ * phrase (a two-word core that explains one of its words scores about 0.33),
+ * so a coincidence never outranks a real near-miss.
+ */
+const COINCIDENCE_SCORE = 0.3;
+
+/**
  * How much a curated recipe is preferred over a scraped one.
  *
  * The CSV catalogue is a bulk scrape and it contains junk: "Spinach Wada
@@ -430,6 +448,20 @@ export function matchDish(
     if (preferredIds?.has(c.recipe.id)) score += PREFERRED_BONUS;
 
     score = Math.min(1, score);
+
+    // A single spoken word that needs two edits to become a single-word
+    // catalogue core is a coincidence, not a mis-hearing. "bhatura" is two
+    // edits from "khatua" and one from "bhature", so without this the
+    // matcher scores the mutton dish 0.76 and the fried bread 0.33 — and
+    // silently writes "Khatua" into the plan where the user said "bhatura".
+    // One edit is the realistic Whisper error ("idly" for "idli") and still
+    // applies; two or more is offered as a suggestion, never applied. The
+    // cap goes on AFTER the curated bonus, so no bonus can lift a
+    // coincidence back over the confidence bar.
+    if (heardWords.length === 1 && c.words.length === 1 && edits >= 2) {
+      score = Math.min(score, COINCIDENCE_SCORE);
+    }
+
     if (score <= 0) return;
     const tier: MatchTier = anyNearMiss ? 'near-word' : 'word';
     scored.push({ recipe: c.recipe, name: c.core, score, tier });

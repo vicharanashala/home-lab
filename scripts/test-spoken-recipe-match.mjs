@@ -134,6 +134,22 @@ console.log('\nambiguous on purpose — a suggestion, never a silent correction'
     r.best ? `score ${r.best.score.toFixed(2)} -> ${r.best.name}` : 'no match');
 }
 
+console.log('\na coincidence is offered, never applied');
+{
+  // "bhatura" is two edits from "khatua" and one from "bhature". Two edits
+  // on a one-word phrase is a coincidence, not a mis-hearing: without a
+  // guard the mutton dish scored 0.76 and the fried bread 0.33, and the
+  // plan silently held "Khatua" where the user said "bhatura".
+  const r = matchDish('bhatura', catalogue, preferredIds);
+  ok(r.best !== null, '"bhatura" still offers candidates');
+  ok(r.best && r.best.score < CONFIDENT_SCORE, '"bhatura" is not confident enough to apply',
+    r.best ? `score ${r.best.score.toFixed(2)} -> ${r.best.name}` : 'no match');
+  const names = [r.best?.name, ...r.alternatives.map((a) => a.name)].filter(Boolean);
+  ok(names.some((n) => /bhat/i.test(n)), 'a bhatura is among the candidates', names.join(' | '));
+  const { plan } = resolveSpokenPlan({ dinner: 'bhatura' }, catalogue, preferredIds);
+  ok(plan.dinner === 'bhatura', 'the slot keeps the heard words', plan.dinner);
+}
+
 console.log('\nnonsense is not matched to something');
 noMatch('xyzzy plugh');
 noMatch('qqqq');
