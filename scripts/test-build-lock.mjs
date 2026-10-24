@@ -188,19 +188,46 @@ console.log('\nthe lock is never visible without its holder');
     `sleep 0.3\n`;
   let bad = 0;
   let seen = 0;
+  let incomplete = 0;
+  let unreadable = 0;
   let watching = true;
   const watcher = setInterval(() => {
-    if (!watching || !existsSync(lockPath)) return;
-    seen += 1;
+    if (!watching) return;
+    // The read decides whether the lock was there — there is no "is it
+    // there?" call in front of it.
+    //
+    // WHY NOT existsSync() FIRST: the two calls are not one step. The
+    // holder releases the lock by removing it, so a lock that was there
+    // for the check can be gone by the read — and the old watcher counted
+    // that as "the lock was visible without its holder", which is the very
+    // failure this section exists to catch.
+    //
+    // The window is a few microseconds wide, so it shows up when the
+    // machine is busy: it failed the quality gate once while a build was
+    // running alongside it, and once in sixty rounds of this section on an
+    // idle machine. Either way it blocked a commit over a lock that was
+    // complete the whole time it existed.
+    //
+    // A lock that is GONE is not a sighting at all: neither seen nor bad.
+    // A lock that IS there is read whole, and only one that is missing its
+    // pid or its command line counts against it.
     let body = '';
     try {
       body = readFileSync(lockPath, 'utf8');
-    } catch {
+    } catch (err) {
+      if (err.code === 'ENOENT') return; // Released between the look and the read.
+      // Anything else — a lock that is there but cannot be read as a file
+      // (the old directory shape, say) — is a lock with no holder in it.
+      unreadable += 1;
       bad += 1;
       return;
     }
+    seen += 1;
     const lines = body.split('\n');
-    if (!/^\d+$/.test(lines[0] || '') || !lines[1]) bad += 1;
+    if (!/^\d+$/.test(lines[0] || '') || !lines[1]) {
+      incomplete += 1;
+      bad += 1;
+    }
   }, 1);
 
   await Promise.all(
@@ -215,7 +242,11 @@ console.log('\nthe lock is never visible without its holder');
   clearInterval(watcher);
 
   ok(seen > 0, 'the watcher saw the lock at least once', `${seen} sightings`);
-  ok(bad === 0, 'the lock always carried its pid AND its command line', `${bad} incomplete sightings`);
+  ok(
+    bad === 0,
+    'the lock always carried its pid AND its command line',
+    `${bad} bad sightings (${incomplete} incomplete, ${unreadable} unreadable)`,
+  );
 }
 
 console.log('\ntwo builds: only one gets the lock');
