@@ -7,7 +7,7 @@
  *
  * Run with:  node scripts/test-whisper-text.mjs
  */
-import { looksLikeArtifact, hasRepeatedPhrase, SILENCE_RMS } from '../src/utils/whisperText.ts';
+import { looksLikeArtifact, hasRepeatedPhrase, foldTranscript, SILENCE_RMS } from '../src/utils/whisperText.ts';
 
 /** Loud enough to be someone actually talking. */
 const LOUD = 0.08;
@@ -101,6 +101,37 @@ ok(
   artifact('okay the dal and rice dal rice dal rice dal rice dal rice'),
   'a two-word loop after a few words is caught',
 );
+
+
+console.log('\na loop that spans blocks');
+// Each five-second block of a hum produces the same sentence, so no single
+// block looks wrong and the block-level check never fires. Joined together
+// they are a loop, and that is what reached the plan.
+{
+  const block = "I'm sorry. I'm sorry.";
+  let transcript = '';
+  let dropped = false;
+  for (let i = 0; i < 4; i++) {
+    const next = foldTranscript(transcript, block);
+    if (next === null) { dropped = true; transcript = ''; break; }
+    transcript = next;
+  }
+  ok(dropped, 'a loop across blocks is caught', `transcript was "${transcript}"`);
+}
+{
+  // The same dish twice in a day is normal, and the words in between are
+  // what tell a repeat from a loop.
+  const t = foldTranscript('for breakfast butter chicken', 'for lunch butter chicken');
+  ok(t !== null && /butter chicken/.test(t), 'the same dish twice in a day is kept', String(t));
+}
+{
+  const t = foldTranscript('breakfast masala dosa', 'lunch butter chicken');
+  ok(t !== null && /lunch butter chicken/.test(t), 'ordinary speech is kept', String(t));
+}
+{
+  ok(foldTranscript('', 'breakfast masala dosa') === 'breakfast masala dosa',
+    'the first block is kept as it is');
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

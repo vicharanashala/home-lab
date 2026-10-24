@@ -47,7 +47,7 @@ export const SILENCE_RMS = 0.006;
 const EDGE_PUNCTUATION_RE = /^[.,!?;:"'`…’“”]+|[.,!?;:"'`…’“”]+$/g;
 
 /** A word with the punctuation on its ends taken off. */
-function bare(word: string): string {
+export function bareWord(word: string): string {
   return word.replace(EDGE_PUNCTUATION_RE, '');
 }
 
@@ -96,6 +96,31 @@ export function hasRepeatedPhrase(words: string[]): boolean {
 }
 
 /**
+ * Fold a newly transcribed block into the transcript.
+ *
+ * Returns the transcript to show, or null when the block has to be thrown
+ * away — in which case the caller starts again from empty.
+ *
+ * A LOOP CAN SPAN BLOCKS.
+ *
+ * Each five-second block of a hum produces the same sentence, so no single
+ * block looks wrong and the block-level check never fires — but joined
+ * together they read "I'm sorry. I'm sorry. I'm sorry." six times over, and
+ * that is what reached the plan. So the joined transcript is checked too.
+ *
+ * When it loops, the whole thing is the model repeating itself, so it is
+ * dropped rather than kept in part. Leaving nothing is the honest answer:
+ * the user is told nothing was picked up, instead of being handed six
+ * sentences of rubbish.
+ */
+export function foldTranscript(current: string, text: string): string | null {
+  const joined = current ? `${current} ${text}` : text;
+  const words = joined.toLowerCase().split(/\s+/).map(bareWord);
+  if (hasRepeatedPhrase(words)) return null;
+  return joined;
+}
+
+/**
  * Is this transcript rubbish?
  *
  * @param text   what Whisper produced
@@ -111,7 +136,7 @@ export function looksLikeArtifact(text: string, level: number, silenceRms: numbe
   // it hears, and the sets above hold bare words, so the lookup has to be
   // done on the bare form too — otherwise "um." was not "um", and a filler
   // said on quiet audio reached the plan as if it were a dish.
-  const words = t.split(/\s+/).map(bare);
+  const words = t.split(/\s+/).map(bareWord);
   const bareText = words.join(' ').trim();
   if (!bareText) return true;
   if (HALLUCINATIONS.has(bareText)) return true;

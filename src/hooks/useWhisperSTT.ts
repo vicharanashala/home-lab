@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { blockedReason } from '../utils/micPermission';
-import { looksLikeArtifact, SILENCE_RMS } from '../utils/whisperText';
+import { looksLikeArtifact, foldTranscript, SILENCE_RMS } from '../utils/whisperText';
 import { AUTO_MODEL, WHISPER_MODELS, modelForDevice } from '../utils/whisperModel';
 import type { WhisperModel } from '../utils/whisperModel';
 
@@ -365,7 +365,17 @@ export function useWhisperSTT(
           });
           const text = (result?.text || '').trim();
           if (isArtifact(text, level)) continue;
-          const next = transcriptRef.current ? `${transcriptRef.current} ${text}` : text;
+
+          // A LOOP CAN SPAN BLOCKS, so the joined transcript is checked, not
+          // only the block. See foldTranscript for why it starts again from
+          // empty rather than keeping part of it.
+          const next = foldTranscript(transcriptRef.current, text);
+          if (next === null) {
+            transcriptRef.current = '';
+            setTranscript('');
+            continue;
+          }
+
           transcriptRef.current = next;
           setTranscript(next);
           textRef.current?.(text);
