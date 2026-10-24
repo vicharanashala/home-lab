@@ -97,8 +97,31 @@ const PRE_CONNECTOR_RE = /^(.*?)\b(?:for|as|to be|will be|will have)\s*$/i;
  * uses the SAME words — the rules below look for a refusal in three
  * different places, and a list that each of them spelled out separately
  * would drift.
+ *
+ * "do not" is in the list because "not" on its own is not enough. "I do not
+ * want dal for dinner" IS a refusal, but the word in front of the "not" —
+ * the "do" — is what the split leaves behind, and a leftover is a dish. The
+ * plan held the word "do" as the dinner: neither a dish nor a refusal, while
+ * the dal the user refused was the only thing they had mentioned.
  */
-const REFUSAL_WORDS = ['no', 'not', 'without', 'skip', 'avoid'];
+const REFUSAL_WORDS = ['no', 'not', 'without', 'skip', 'avoid', 'do not'];
+
+/**
+ * "don't" is "do not" with the apostrophe left out.
+ *
+ * WHY IT IS EXPANDED BEFORE THE TEXT IS PARSED: the parser strips the
+ * apostrophe out of every dish it builds, so a refusal written as "don't"
+ * reached the refusal rules as "don t" — two words, and neither of them is
+ * a refusal. The user said they did not want the dal and the plan wrote
+ * "don t want dal" into the dinner slot: the sheet said it had heard
+ * something, the plan held it, and the shopping list bought nothing for it.
+ *
+ * WHY IT BECOMES "do not" AND NOT "dont": the word in front of the "not"
+ * decides whether the leftover is a dish. "I do not want dal" has a "do" in
+ * front of the "not", and that "do" has to be part of the refusal or it is
+ * filed as the dish.
+ */
+const CONTRACTED_REFUSAL_RE = /\bdon['’]?t\b/gi;
 
 /** A dish the user explicitly did NOT want. "no dal for dinner" is not dal. */
 const NEGATION_RE = new RegExp(`^\\s*(?:${REFUSAL_WORDS.join('|')})\\b\\s*`, 'i');
@@ -205,7 +228,10 @@ function dishWithoutRefusal(text: string): string {
  * legitimate result and the caller fills just those slots.
  */
 export function parseSpokenPlan(text: string): SpokenPlan {
-  const src = (text || '').trim();
+  // The contraction is expanded first so that EVERY rule below — the one
+  // that reads the text in front of a meal word and the one that reads the
+  // dish itself — sees the refusal in the same words.
+  const src = (text || '').trim().replace(CONTRACTED_REFUSAL_RE, 'do not');
   if (!src) return {};
 
   // Locate every slot marker, keeping the LENGTH OF THE MATCH. Earlier this

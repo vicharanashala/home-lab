@@ -98,5 +98,21 @@ check('no dal lunch rice', { lunch: 'rice' });
 check('dinner fish, lunch rice', { dinner: 'fish', lunch: 'rice' });
 check('breakfast oats, no lunch, dal for dinner', { breakfast: 'oats', dinner: 'dal' });
 
+console.log('\na refusal written with a contraction');
+// "don't" is "do not" with the apostrophe left out. The parser strips the
+// apostrophe out of every dish it builds, so the refusal reached the rules
+// as "don t" — two words, and neither of them is a refusal. The user's
+// refusal of the dal was filed as the dinner instead.
+check("I don't want dal for dinner", {});
+check("don't want dal for dinner", {});
+check("lunch don't want dal", {});
+check('do not dal for dinner', {});
+check('I do not want dal for dinner', {});
+
+// A refusal said with a contraction must not replace the dish the user DID
+// ask for — the same rule the plain "no" already had.
+check("lunch rice, don't want dal", { lunch: 'rice' });
+check("lunch rice, I don't want dal", { lunch: 'rice' });
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
