@@ -93,6 +93,15 @@ case "$supervisor_state" in
   stale)
     say "   the supervisor is running a DIFFERENT copy of watchdog.sh from the one on disk"
     ;;
+  orphaned)
+    say "   the supervisor that published this state is gone — the one running now"
+    say "   may be an older copy, so the app cannot be trusted to notice an edit"
+    say "   to watchdog.sh"
+    ;;
+  unknown)
+    say "   the supervisor's published state could not be read — the app cannot be"
+    say "   told apart from one that is out of date"
+    ;;
 esac
 
 say ""

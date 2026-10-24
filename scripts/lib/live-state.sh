@@ -87,10 +87,12 @@ live_bridge_state() {
 #
 #   current      a supervisor is running the copy of watchdog.sh on disk
 #   stale        a supervisor is running a DIFFERENT copy of watchdog.sh
-#   unpublished  no supervisor has ever written its checksum down — every
+#   unpublished  no supervisor has ever written its state down — every
 #                running supervisor is older than the rule that writes it, so
 #                not one of them will ever notice a later edit to watchdog.sh
-#   unknown      the checksum could not be read
+#   orphaned     the supervisor that wrote the state down is gone, so whoever
+#                is running now may be an older copy
+#   unknown      the state could not be read
 #
 # WHY "unpublished" IS NOT "current": the supervisor publishes the checksum
 # of the copy it is running, and the copy it is running is what decides
@@ -104,8 +106,16 @@ live_bridge_state() {
 # time. So a supervisor that has already reloaded looks exactly like one
 # that never did, and a start time cannot tell them apart. The checksum of
 # the copy that is running can.
+#
+# WHY THE PUBLISHER'S PID IS READ AS WELL: a checksum says WHICH copy was
+# running when the state was written; it says nothing about whether that
+# supervisor is still the one running. A state file that outlives its writer
+# says "current" for ever while an older supervisor — one that cannot notice
+# an edit to watchdog.sh — is the only one left alive. The pid is what tells
+# a live publisher from a dead one, and a dead publisher means the state
+# cannot vouch for anything.
 live_supervisor_state() {
-  local script="$1" published_file="$2" current published
+  local script="$1" published_file="$2" current published publisher
   current="$(supervisor_script_sum "$script")"
   case "$current" in
     '' | *[!0-9]*) echo unknown; return 0 ;;
@@ -114,14 +124,27 @@ live_supervisor_state() {
     echo unpublished
     return 0
   fi
-  published="$(tr -d '[:space:]' < "$published_file" 2>/dev/null)"
+  published="$(awk 'NR==1 {print $1}' "$published_file" 2>/dev/null)"
+  publisher="$(awk 'NR==1 {print $2}' "$published_file" 2>/dev/null)"
   case "$published" in
     '' | *[!0-9]*) echo unknown; return 0 ;;
   esac
-  if [ "$published" = "$current" ]; then
+  # The checksum is compared FIRST, because it is the more specific answer: a
+  # state that names a different copy is stale, whatever else it says.
+  if [ "$published" != "$current" ]; then
+    echo stale
+    return 0
+  fi
+  case "$publisher" in
+    '' | *[!0-9]*) echo unknown; return 0 ;;
+  esac
+  # The copy on disk is the copy that was published — but the supervisor that
+  # published it may be gone, and the one running now may be an older copy
+  # that cannot notice an edit to watchdog.sh. Say so.
+  if supervisor_process_alive "$publisher"; then
     echo current
   else
-    echo stale
+    echo orphaned
   fi
 }
 

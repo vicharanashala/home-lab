@@ -96,6 +96,11 @@ function sumOf(path) {
   return sh(`supervisor_script_sum "${path}"`).trim();
 }
 
+/** True when a process with that pid is running, as the rule decides it. */
+function supervisorProcessAlive(pid) {
+  return shStatus(`supervisor_process_alive "${pid}"`) === 0;
+}
+
 /* -------------------------------------------------------------------------- */
 
 console.log('\nthe rule: the running copy writes its checksum where it can be read');
@@ -105,11 +110,28 @@ const stateFile = join(work, 'published');
 writeFileSync(script, '#!/bin/bash\necho hello\n');
 const sum = sumOf(script);
 
-sh(`supervisor_publish_state "${script}" "${sum}" "${stateFile}"`);
+/**
+ * The sum and the pid of the supervisor that published, as the file reads it.
+ *
+ * @param path the published state file
+ */
+function recordOf(path) {
+  const parts = existsSync(path) ? readFileSync(path, 'utf8').trim().split(/\s+/) : [];
+  return { sum: parts[0] ?? '', pid: parts[1] ?? '', raw: parts.join(' ') };
+}
+
+// The pid is the one the test itself runs under, so the publisher is alive
+// for as long as the test is.
+sh(`supervisor_publish_state "${script}" "${sum}" "${stateFile}" "${process.pid}"`);
 check(
   'the checksum of the running copy is written down',
-  existsSync(stateFile) && readFileSync(stateFile, 'utf8').trim() === sum,
-  `published=${existsSync(stateFile) ? readFileSync(stateFile, 'utf8').trim() : 'nothing'}`,
+  recordOf(stateFile).sum === sum,
+  `published=${recordOf(stateFile).raw}`,
+);
+check(
+  'and so is the pid of the supervisor that published it',
+  recordOf(stateFile).pid === String(process.pid),
+  `published=${recordOf(stateFile).raw}`,
 );
 
 console.log('\nand the outside world can tell the supervisor is current');
@@ -121,28 +143,29 @@ check(
 
 console.log('\nand a supervisor that is on the copy on disk repairs what is wrong');
 writeFileSync(stateFile, '999999\n');
-sh(`supervisor_publish_state "${script}" "${sum}" "${stateFile}"`);
+sh(`supervisor_publish_state "${script}" "${sum}" "${stateFile}" "${process.pid}"`);
 check(
   'a wrong published checksum is put right',
-  readFileSync(stateFile, 'utf8').trim() === sum,
-  `published=${readFileSync(stateFile, 'utf8').trim()}`,
+  recordOf(stateFile).sum === sum,
+  `published=${recordOf(stateFile).raw}`,
 );
 
 console.log('\nbut one that is NOT on the copy on disk must not overrule it');
-writeFileSync(stateFile, `${sum}\n`);
-sh(`supervisor_publish_state "${script}" "12345" "${stateFile}"`);
+writeFileSync(stateFile, `${sum} ${process.pid}\n`);
+sh(`supervisor_publish_state "${script}" "12345" "${stateFile}" "${process.pid}"`);
 check(
   'a stale supervisor does not overwrite what a current one published',
-  readFileSync(stateFile, 'utf8').trim() === sum,
-  `published=${readFileSync(stateFile, 'utf8').trim()}`,
+  recordOf(stateFile).sum === sum,
+  `published=${recordOf(stateFile).raw}`,
 );
 
 console.log('\nthough it does speak when nothing else has said anything');
 rmSync(stateFile, { force: true });
-sh(`supervisor_publish_state "${script}" "12345" "${stateFile}"`);
+sh(`supervisor_publish_state "${script}" "12345" "${stateFile}" "${process.pid}"`);
 check(
   'a stale supervisor writes when the file is missing',
-  existsSync(stateFile) && readFileSync(stateFile, 'utf8').trim() === '12345',
+  recordOf(stateFile).sum === '12345',
+  `published=${recordOf(stateFile).raw}`,
 );
 check(
   'and the outside world can tell that it is not current',
@@ -161,6 +184,55 @@ check(
   !existsSync(missingState),
 );
 rmSync(work, { recursive: true, force: true });
+
+/* ---- the state file must not outlive the supervisor that wrote it ---- */
+
+console.log('\nand a state whose publisher is gone cannot call the supervisor current');
+
+// The supervisor running the copy on disk publishes its state — and then
+// dies. It is published from a process that has already exited, which is
+// exactly what the publisher's pid records.
+const deadWork = mkdtempSync(join(tmpdir(), 'hh-publish-dead-'));
+const deadScript = join(deadWork, 'supervisor.sh');
+const deadState = join(deadWork, 'published');
+writeFileSync(deadScript, '#!/bin/bash\necho hello\n');
+const deadSum = sumOf(deadScript);
+
+const deadPublisher = spawnSync(
+  'bash',
+  ['-c', `source "${lib}"; supervisor_publish_state "${deadScript}" "${deadSum}" "${deadState}"`],
+  { encoding: 'utf8' },
+);
+check(
+  'the publisher wrote the state and then exited',
+  recordOf(deadState).sum === deadSum,
+  `published=${recordOf(deadState).raw}`,
+);
+check(
+  'and the publisher really is gone',
+  !supervisorProcessAlive(deadPublisher.pid),
+  `pid=${deadPublisher.pid}`,
+);
+
+// An older supervisor is still alive. Its rule says it must not overrule
+// what is already in the file.
+sh(`supervisor_publish_state "${deadScript}" "12345" "${deadState}" "${process.pid}"`);
+check(
+  'the older supervisor does not overrule it',
+  recordOf(deadState).sum === deadSum,
+  `published=${recordOf(deadState).raw}`,
+);
+check(
+  'and the outside world does NOT call the supervisor current',
+  outsideState(deadScript, deadState) !== 'current',
+  `state=${outsideState(deadScript, deadState)}`,
+);
+check(
+  'it says the publisher is gone instead',
+  outsideState(deadScript, deadState) === 'orphaned',
+  `state=${outsideState(deadScript, deadState)}`,
+);
+rmSync(deadWork, { recursive: true, force: true });
 
 /* ---- end to end: a fake supervisor whose published file is taken away ---- */
 

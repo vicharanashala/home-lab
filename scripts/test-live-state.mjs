@@ -23,7 +23,7 @@
  *
  * Run with:  node scripts/test-live-state.mjs
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -121,7 +121,10 @@ const supervisorScript = join(work, 'watchdog.sh');
 const publishedFile = join(work, 'published.checksum');
 writeFileSync(supervisorScript, '#!/bin/bash\necho supervisor\n');
 
-writeFileSync(publishedFile, `${checksumOf(supervisorScript)}\n`);
+// The published state carries the checksum AND the pid of the supervisor that
+// wrote it, because a checksum alone cannot say whether the supervisor that
+// wrote it is still the one running.
+writeFileSync(publishedFile, `${checksumOf(supervisorScript)} ${process.pid}\n`);
 check(
   'a supervisor running the copy on disk is current',
   supervisorState(supervisorScript, publishedFile) === 'current',
@@ -149,10 +152,28 @@ check(
   `state=${supervisorState(supervisorScript, publishedFile)}`,
 );
 
+writeFileSync(publishedFile, `${checksumOf(supervisorScript)}\n`);
+check(
+  'a state with no publisher in it is unknown, never current',
+  supervisorState(supervisorScript, publishedFile) === 'unknown',
+  `state=${supervisorState(supervisorScript, publishedFile)}`,
+);
+
 check(
   'a script that cannot be read is unknown, never current',
   supervisorState(join(work, 'missing.sh'), publishedFile) === 'unknown',
   `state=${supervisorState(join(work, 'missing.sh'), publishedFile)}`,
+);
+
+// The publisher is gone. The state still says the copy on disk — but the
+// supervisor that wrote it has died, and the one running now may be an older
+// copy that cannot notice an edit to watchdog.sh at all.
+const deadPublisher = spawnSync('bash', ['-c', 'exit 0']);
+writeFileSync(publishedFile, `${checksumOf(supervisorScript)} ${deadPublisher.pid}\n`);
+check(
+  'a state whose publisher is gone is orphaned, never current',
+  supervisorState(supervisorScript, publishedFile) === 'orphaned',
+  `state=${supervisorState(supervisorScript, publishedFile)}`,
 );
 
 console.log('\nthe bridge: is it up, and is it on the code on disk?');
@@ -212,6 +233,10 @@ try {
     verdict('current', 'unpublished', 'reachable').startsWith('unhealthy'),
   );
   check(
+    'a supervisor whose publisher is gone is not healthy',
+    verdict('current', 'orphaned', 'reachable').startsWith('unhealthy'),
+  );
+  check(
     'an unreadable state is not healthy',
     verdict('current', 'unknown', 'reachable').startsWith('unhealthy'),
   );
@@ -224,7 +249,7 @@ try {
   const fakeSupervisor = join(work, 'live-watchdog.sh');
   writeFileSync(fakeSupervisor, '#!/bin/bash\necho supervisor\n');
   const fakePublished = join(work, 'live-published.checksum');
-  writeFileSync(fakePublished, `${checksumOf(fakeSupervisor)}\n`);
+  writeFileSync(fakePublished, `${checksumOf(fakeSupervisor)} ${process.pid}\n`);
 
   const runCheck = () => {
     try {

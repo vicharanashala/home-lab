@@ -119,11 +119,50 @@ supervisor_self_state() {
   fi
 }
 
-# supervisor_publish_state <script> <loaded_sum> <state-file>
+# supervisor_process_alive <pid>
 #
-# Write down the checksum of the copy of the supervisor that is running, so
-# that anything watching the app from OUTSIDE can tell whether the supervisor
-# is on the code that is on disk.
+# True when a process with that pid is running.
+#
+# WHY PS AND NOT `kill -0`: `kill -0` fails with EPERM for a process owned by
+# another user, so a process that exists but cannot be signalled would be read
+# as gone. `ps` sees every process on the machine, whoever owns it.
+#
+# WHY IT IS NEEDED AT ALL: the published state is only evidence while the
+# process that wrote it is still running. See supervisor_publish_state.
+#
+# @param pid the process id
+supervisor_process_alive() {
+  local pid="$1" found
+  case "$pid" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  found="$(ps -p "$pid" -o pid= 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$found" ]
+}
+
+# supervisor_publish_state <script> <loaded_sum> <state-file> [publisher_pid]
+#
+# Write down the checksum of the copy of the supervisor that is running, AND
+# the pid of the supervisor that wrote it, so that anything watching the app
+# from OUTSIDE can tell whether the supervisor is on the code that is on disk.
+#
+# WHY THE PID GOES IN THE FILE AS WELL: the checksum alone does not say
+# whether the supervisor that wrote it is still running, and a state file that
+# outlives its writer is a state file that LIES.
+#
+# MEASURED ON THE LIVE MACHINE
+# The supervisor that published the checksum of the copy on disk died. An older
+# supervisor was still alive — launchd has had one running since 11:21 — and
+# the rule below says a supervisor that is not on the copy on disk must not
+# overrule one that is, so the file kept the checksum of the copy on disk. The
+# check compared the file with the copy on disk, they matched, and it said
+# "current" — while the only supervisor alive was running a copy from hours
+# ago, one that cannot notice an edit to watchdog.sh at all.
+#
+# That is the false all-clear this whole check exists to prevent: a health
+# check that says "all good" about an app that is not stops people looking.
+# The pid is what tells the two apart — the publisher is either alive or it
+# is not.
 #
 # WHY IT RUNS AGAIN EVERY ROUND AND NOT ONLY AT START-UP: the file it writes
 # is the only evidence that a supervisor is running the current code, and it
@@ -150,12 +189,21 @@ supervisor_self_state() {
 # that is merely out of date. So the write is best-effort, and the cost of it
 # failing is that the check says "unknown" — which it treats as not healthy.
 #
-# @param script     the supervisor script on disk
-# @param loaded_sum the checksum of the copy that is running
-# @param state_file where the checksum is written
+# WHY THE PID IS A PARAMETER AND NOT ALWAYS `$$`: a test has to be able to
+# publish as a process it controls, and `$$` inside a function is the pid of
+# the shell that called it. The default is that shell, which IS the supervisor
+# in the real one.
+#
+# @param script        the supervisor script on disk
+# @param loaded_sum    the checksum of the copy that is running
+# @param state_file    where the state is written
+# @param publisher_pid the pid of the supervisor writing it (default: $$)
 supervisor_publish_state() {
-  local script="$1" loaded="$2" state_file="$3" current
+  local script="$1" loaded="$2" state_file="$3" publisher="${4:-$$}" current
   case "$loaded" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  case "$publisher" in
     '' | *[!0-9]*) return 1 ;;
   esac
   current="$(supervisor_script_sum "$script")"
@@ -164,7 +212,7 @@ supervisor_publish_state() {
     # which copy it is running. Say nothing, rather than overrule it.
     return 0
   fi
-  printf '%s\n' "$loaded" > "$state_file" 2>/dev/null || return 1
+  printf '%s %s\n' "$loaded" "$publisher" > "$state_file" 2>/dev/null || return 1
   return 0
 }
 
