@@ -138,11 +138,22 @@ On each pass it:
 
 - type-checks, builds and runs the test suite
 - checks that the bridge and the ts.net link actually respond
+- runs `npm run check:live` — whether the RUNNING app is running the code on
+  disk, and not merely whether it answers
 - reviews the diff since the last pass for swallowed errors, false success
   messages, secrets, dead code and regressions
 - fixes what it can *prove* is broken, and commits the fix under the rule
   above
 - reports plainly anything it could not fix, and what it did not check
+
+WHY THE LIVE CHECK IS A SEPARATE LINE: every other check on this list looks
+at the COMMIT — the gate asks whether the staged change type-checks and passes
+its tests, and the test suite asks whether a rule does what it says. None of
+them ask the running app anything. On 2026-10-24 the bridge serving the
+owner's link ran code from five hours before the code on disk, every check
+stayed green, and the live app still answered with the exact error the
+repository had already fixed. A green repository and a stale app are the same
+state, and `npm run check:live` is what tells them apart.
 
 What it will not do:
 
