@@ -213,10 +213,6 @@ export function planRecipeDeduction(
     // spoons ("2 tbsp oil") and the stock is held in grams, the ingredient is
     // converted with its density so the two can actually be compared — this is
     // what used to fail for 55% of the catalogue.
-    // Resolve both sides to a COMMON dimension. When the recipe measures in
-    // spoons ("2 tbsp oil") and the stock is held in grams, the ingredient is
-    // converted with its density so the two can actually be compared — this is
-    // what used to fail for 55% of the catalogue.
     const common = resolveToCommonDimension(
       ing.quantity * multiplier,
       ing.unit,
