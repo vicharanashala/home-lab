@@ -61,9 +61,10 @@ const NOISE = new Set([
   // here, which is why this went unnoticed: the set had the words people
   // SHOULD use but not the ones they DO use.
   //
-  // "no" is NOT here: it is how a dish is refused ("no dal for dinner"),
-  // and dropping it would throw the refusal away and keep the dal.
-  'yeah', 'yep', 'nah', 'nope', 'huh', 'right', 'hmm', 'mm', 'hello', 'hi',
+  // "no" is NOT here, and neither are "nah" and "nope": they are how a dish
+  // is refused ("no dal for dinner"), and dropping them would throw the
+  // refusal away and keep the dal.
+  'yeah', 'yep', 'huh', 'right', 'hmm', 'mm', 'hello', 'hi',
   'hey', 'bye', 'yes', 'um', 'uh', 'ah', 'oh',
 ]);
 
@@ -103,8 +104,19 @@ const PRE_CONNECTOR_RE = /^(.*?)\b(?:for|as|to be|will be|will have)\s*$/i;
  * the "do" — is what the split leaves behind, and a leftover is a dish. The
  * plan held the word "do" as the dinner: neither a dish nor a refusal, while
  * the dal the user refused was the only thing they had mentioned.
+ *
+ * "nope" and "nah" are here because they are the SAME refusal as "no" — they
+ * are what people say instead of it. They were in the set of words that carry
+ * no dish information, so the parser dropped them and kept the dish the user
+ * had refused: "nope dal for dinner" filed the dinner as "dal", the dal the
+ * user had said they did not want, and the shopping list bought it.
+ *
+ * WHY THEY ARE NOT MERELY ADDED HERE BUT TAKEN OUT OF THE NOISE SET: a word
+ * that refuses a dish has to refuse it whichever word it is, or the same
+ * intent is parsed two ways depending on what the user happened to say. One
+ * list for all of them is what keeps the three rules below from drifting.
  */
-const REFUSAL_WORDS = ['no', 'not', 'without', 'skip', 'avoid', 'do not'];
+const REFUSAL_WORDS = ['no', 'not', 'without', 'skip', 'avoid', 'do not', 'nope', 'nah'];
 
 /**
  * "don't" is "do not" with the apostrophe left out.

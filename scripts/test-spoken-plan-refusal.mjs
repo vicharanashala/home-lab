@@ -114,5 +114,51 @@ check('I do not want dal for dinner', {});
 check("lunch rice, don't want dal", { lunch: 'rice' });
 check("lunch rice, I don't want dal", { lunch: 'rice' });
 
+console.log('\na refusal said as "nah" or "nope"');
+// "nah" and "nope" ARE refusals — they are what people say instead of "no" —
+// but they sat in the set of words that carry no dish information, so the
+// parser dropped them and kept the dish the user had refused.
+//
+// The cost was not a missing slot but a WRONG one: "nope dal for dinner"
+// filed the dinner as "dal", the very dish the user had said they did not
+// want, and the shopping list bought it.
+check('nah dal for dinner', {});
+check('nope dal for dinner', {});
+check('nah lunch dal', {});
+check('nope lunch dal', {});
+check('lunch rice, nope dal', { lunch: 'rice' });
+check('lunch rice, nah dal', { lunch: 'rice' });
+
+console.log('\nevery word of the refusal family gives the same answer');
+// The family is "no", "nope" and "nah". The same sentence said with each of
+// them has to come out the same, or the same intent is parsed two ways
+// depending on the word the user happened to say.
+const FAMILY = ['no', 'nope', 'nah'];
+const SHAPES = [
+  'X dal for dinner',
+  'X lunch dal',
+  'lunch rice, X dal',
+  'X dal, lunch rice',
+  'X, lunch rice',
+];
+for (const shape of SHAPES) {
+  const answers = FAMILY.map((w) => JSON.stringify(parseSpokenPlan(shape.replace('X', w))));
+  const shown = shape.replace('X', FAMILY.join('|'));
+  if (answers.every((a) => a === answers[0])) {
+    passed += 1;
+    console.log(`  ok   ${JSON.stringify(shown)} -> ${answers[0]}`);
+  } else {
+    failed += 1;
+    console.log(`  FAIL ${JSON.stringify(shown)} -> ${answers.join(' | ')}`);
+  }
+}
+
+console.log('\n"nope" on its own does not swallow the meal that follows it');
+// The comma is what says the refusal belongs to the meal before it, so the
+// meal after it keeps its dish — the same rule "no dal, lunch rice" already
+// had.
+check('nope, lunch rice', { lunch: 'rice' });
+check('nope dal, lunch rice', { lunch: 'rice' });
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
