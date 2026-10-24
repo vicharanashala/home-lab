@@ -176,6 +176,7 @@ check(
 console.log('\nend to end: the rule puts new code live on a spare port');
 const work = mkdtempSync(join(tmpdir(), 'hh-bridge-'));
 const port = await freePort();
+const deadPort = await freePort();
 const log = join(work, 'bridge.log');
 let started = null;
 
@@ -196,6 +197,25 @@ try {
     'a bridge running the current code is left alone',
     bridgeState(port, work) === 'current',
     `state=${bridgeState(port, work)}`,
+  );
+
+  // A state that cannot be read is NOT "current".
+  //
+  // WHY THIS MATTERS: the rule's own contract lists "unknown" for exactly
+  // this case — the bridge, or its start time, cannot be read — and the live
+  // check treats "unknown" as never healthy. A rule that answered "current"
+  // about a bridge whose code on disk cannot be read hands the outside world
+  // a false all-clear about an app it cannot vouch for, which is the one
+  // thing the whole live check exists to prevent.
+  check(
+    'a bridge whose code on disk cannot be read is unknown, never current',
+    bridgeState(port, join(work, 'missing-dir')) === 'unknown',
+    `state=${bridgeState(port, join(work, 'missing-dir'))}`,
+  );
+  check(
+    'a bridge whose start time cannot be read is unknown, never current',
+    bridgeState(deadPort, work) === 'unknown',
+    `state=${bridgeState(deadPort, work)}`,
   );
 
   // The file time has one-second resolution, so the new code is written in a

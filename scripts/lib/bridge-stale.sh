@@ -114,10 +114,37 @@ bridge_code_parses() {
 # starts a node process, and the supervisor looks at this every twenty
 # seconds. Asking "does this parse?" about a file that has not changed since
 # the bridge started is work for nothing.
+#
+# WHY A STATE THAT CANNOT BE READ IS "unknown" AND NOT "current": "the code
+# on disk is not newer than the bridge" is a claim that needs TWO numbers to
+# make — the time of the code on disk and the time the bridge started. With
+# one of them missing there is nothing to compare, and "current" would be a
+# guess dressed up as a measurement.
+#
+# MEASURED ON THE LIVE MACHINE (2026-10-25)
+# The bridge directory could not be read, so the code time was empty. The rule
+# answered "current", the live check said "current", and the verdict said
+# "healthy" — about an app that could have been running code from hours ago,
+# with a bridge directory that had been renamed or moved out from under it.
+# The rule's own contract lists "unknown" for exactly this case, and the
+# contract was never implemented: the word appeared in the comment and
+# nowhere else, so the guard that was written to catch it did nothing.
+#
+# The same false all-clear is the one the whole live check exists to end. A
+# health check that says "all good" about an app it cannot vouch for stops
+# people looking.
+#
+# WHY THE SUPERVISOR STILL LEAVES THE BRIDGE ALONE: "unknown" is not a reason
+# to restart. A restart that happens when it should not is worse than no
+# restart at all, so the supervisor does what it did before this change —
+# nothing — and the REPORT is what changes. What the supervisor cannot tell
+# is now said out loud instead of being passed off as "current".
 bridge_code_state() {
   local port="$1" dir="$2" code_mtime started
   code_mtime="$(bridge_code_mtime "$dir")"
   started="$(bridge_started_at "$port")"
+  case "$code_mtime" in '' | *[!0-9]*) echo unknown; return 0 ;; esac
+  case "$started" in '' | *[!0-9]*) echo unknown; return 0 ;; esac
   if ! bridge_is_stale "$code_mtime" "$started"; then
     echo current
     return 0

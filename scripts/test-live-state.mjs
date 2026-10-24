@@ -224,6 +224,20 @@ try {
     `state=${bridgeState(deadPort, bridgeDir)}`,
   );
 
+  // The bridge is up and answering, but the code on disk cannot be read.
+  //
+  // WHY IT MATTERS: "the code on disk is not newer than the bridge" needs
+  // two numbers to say — the time of the code on disk and the time the
+  // bridge started. With one of them missing there is nothing to compare,
+  // and the answer has to be "unknown". Answering "current" instead is a
+  // false all-clear: the app could be running code from hours ago and the
+  // report would still say healthy.
+  check(
+    'a bridge whose code on disk cannot be read is unknown, never current',
+    bridgeState(port, join(work, 'missing-bridge-dir')) === 'unknown',
+    `state=${bridgeState(port, join(work, 'missing-bridge-dir'))}`,
+  );
+
   console.log('\nthe verdict: nothing unknown is ever healthy');
   const verdict = (b, s, l) => sh(`live_verdict ${b} ${s} ${l}`);
   check('everything current is healthy', verdict('current', 'current', 'reachable') === 'healthy');
@@ -234,6 +248,10 @@ try {
   check(
     'a down bridge is not healthy',
     verdict('down', 'current', 'reachable').startsWith('unhealthy'),
+  );
+  check(
+    'a bridge whose state cannot be read is not healthy',
+    verdict('unknown', 'current', 'reachable').startsWith('unhealthy'),
   );
   check(
     'a supervisor that cannot notice changes is not healthy',

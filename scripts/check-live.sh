@@ -82,6 +82,11 @@ case "$bridge_state" in
   down) say "   the bridge is not listening — the supervisor will restart it" ;;
   stale) say "   the bridge is running OLDER code than the code on disk" ;;
   unparsable) say "   the bridge code on disk does not parse — the running bridge was left alone" ;;
+  unknown)
+    say "   the bridge's state could not be read — the code on disk, or the time"
+    say "   the bridge started, is not something this check could see, so the app"
+    say "   cannot be told apart from one that is running old code"
+    ;;
 esac
 
 case "$supervisor_state" in

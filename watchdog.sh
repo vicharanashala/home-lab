@@ -253,6 +253,9 @@ while true; do
       unparsable)
         log "bridge code on disk does not parse — leaving the running bridge alone"
         ;;
+      unknown)
+        log "the bridge's state could not be read — leaving the running bridge alone"
+        ;;
     esac
   fi
 
