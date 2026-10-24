@@ -270,6 +270,36 @@ try {
     verdict('current', 'current', 'unreachable').startsWith('unhealthy'),
   );
 
+  // WHY THE VERDICT HAS TO NAME BOTH WHEN BOTH ARE WRONG: the bridge is
+  // restarted onto the code on disk by the SUPERVISOR, so a stale bridge and a
+  // supervisor that cannot notice changes are one problem, not two — and the
+  // verdict named only the bridge.
+  //
+  // The owner read "the bridge is stale" and waited for the supervisor to put
+  // it back, because that is what the supervisor does. The supervisor running
+  // at the time could not do it: it was older than the rule that lets it
+  // notice an edit to watchdog.sh. The report said the same one line as it
+  // would have said about a healthy supervisor, so the one thing that made
+  // the app unrecoverable was the thing the report left out.
+  check(
+    'a stale bridge with a broken supervisor names both',
+    verdict('stale', 'unpublished', 'reachable').includes('bridge is stale') &&
+      verdict('stale', 'unpublished', 'reachable').includes('supervisor is unpublished'),
+    verdict('stale', 'unpublished', 'reachable'),
+  );
+  check(
+    'a down bridge with a broken supervisor names both',
+    verdict('down', 'orphaned', 'reachable').includes('bridge is down') &&
+      verdict('down', 'orphaned', 'reachable').includes('supervisor is orphaned'),
+    verdict('down', 'orphaned', 'reachable'),
+  );
+  check(
+    'a stale bridge with a healthy supervisor says only about the bridge',
+    verdict('stale', 'current', 'reachable').includes('bridge is stale') &&
+      !verdict('stale', 'current', 'reachable').includes('supervisor'),
+    verdict('stale', 'current', 'reachable'),
+  );
+
   console.log('\nthe check script, end to end, against the fake bridge');
   const fakeSupervisor = join(work, 'live-watchdog.sh');
   writeFileSync(fakeSupervisor, '#!/bin/bash\necho supervisor\n');

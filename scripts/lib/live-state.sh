@@ -194,8 +194,32 @@ live_link_state() {
 #
 # WHY "unknown" IS NOT HEALTHY: a state that could not be read is not
 # evidence that anything is fine.
+#
+# WHY BOTH ARE NAMED WHEN BOTH ARE WRONG: the bridge is put back onto the
+# code on disk BY THE SUPERVISOR, so a bridge on old code and a supervisor
+# that cannot notice changes are one problem and not two. The verdict named
+# only the bridge, and the owner read it and waited for the supervisor to put
+# the bridge back — which is what the supervisor does.
+#
+# The supervisor running at the time could do neither half of the job: it was
+# older than the rule that puts the bridge back onto the code on disk, and
+# older than the rule that lets it notice an edit to watchdog.sh. The report
+# said exactly what it would have said about a healthy supervisor, so the one
+# thing that made the app unrecoverable was the thing the report left out.
+#
+# MEASURED ON THE LIVE MACHINE (2026-10-25)
+#   live_verdict stale unpublished reachable  ->  "unhealthy — the bridge is stale"
+#   live_verdict stale current    reachable  ->  "unhealthy — the bridge is stale"
+#
+# Two different apps, one report. The verdict now names both when both are
+# wrong, so the line an owner reads on a phone cannot be the same line for an
+# app that can recover and an app that cannot.
 live_verdict() {
   local bridge="$1" supervisor="$2" link="$3"
+  if [ "$bridge" != "current" ] && [ "$supervisor" != "current" ]; then
+    echo "unhealthy — the bridge is $bridge and the supervisor is $supervisor"
+    return 0
+  fi
   if [ "$bridge" != "current" ]; then
     echo "unhealthy — the bridge is $bridge"
     return 0
