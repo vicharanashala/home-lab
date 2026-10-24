@@ -51,6 +51,130 @@ supervisor_script_sum() {
   cksum "$script" 2>/dev/null | awk '{print $1}'
 }
 
+# The rule libraries the supervisor runs, relative to the tree the supervisor
+# script sits in.
+#
+# WHY THIS EXISTS: the supervisor watched ONE file for changes — watchdog.sh —
+# but watchdog.sh does not hold the rules, it SOURCES them. So "the copy of
+# watchdog.sh on disk" was not the code the supervisor was running: an edit to
+# scripts/lib/bridge-stale.sh changed the rule the supervisor applies, and
+# every supervisor alive at the time went on applying the old one, for ever.
+# That is the same defect as the one before it, one level down.
+#
+# MEASURED ON THE LIVE MACHINE (2026-10-25)
+# A copy of the supervisor's wiring was run with a rule library beside it. The
+# library was edited. The supervisor went on printing the OLD rule:
+#
+#   RUNNING rule=ONE
+#   RUNNING rule=ONE      <-- after the edit to the library
+#
+# WHY IT IS A LIST AND NOT A DISCOVERY: the supervisor has to know WHICH files
+# it is running, so it can checksum them, and the check that runs OUTSIDE the
+# supervisor has to checksum the same files. If the two sides worked the set
+# out for themselves they could disagree about what "the code on disk" means,
+# and a disagreement here is invisible: one side says "current" and the other
+# says "stale" about the same app. One list, used by both.
+#
+# WHY THE PATHS ARE RELATIVE TO THE SCRIPT'S DIRECTORY: the supervisor script
+# sits at the top of the tree and the libraries sit under it, so a copy of the
+# tree anywhere — a test's temporary directory — resolves to its own copy of
+# the libraries rather than to the ones in the repository.
+#
+# WHY THE LIST CANNOT DRIFT AWAY FROM WHAT WATCHDOG.SH LOADS:
+# scripts/test-supervisor-watched-set.mjs reads the files watchdog.sh loads
+# and fails if this list and that are not the same set. A library that is
+# loaded but not watched is a rule that cannot be changed while the app runs.
+SUPERVISOR_RULE_LIBS=(
+  "scripts/lib/bridge-stale.sh"
+  "scripts/lib/supervisor-reload.sh"
+)
+
+# supervisor_watched_files <script>
+#
+# The files the supervisor runs: the script itself, and each rule library
+# beside it. One path per line.
+#
+# WHY A SCRIPT WITH NO LIBRARIES BESIDE IT IS NOT AN ERROR: the rule has to
+# work on a tree that is not the whole tree — a script with no rules beside it
+# is a script that runs no rules, and the set of files it runs is itself.
+#
+# WHY A TREE THAT HAS THE DIRECTORY AND IS MISSING A LIBRARY IS AN ERROR: the
+# tree is broken, and the code that is running cannot be said to be on disk.
+# The rule refuses to answer rather than answer about half a tree, and the
+# supervisor stays on the copy it is running instead of reloading onto a tree
+# that cannot load its own rules.
+#
+# @param script the supervisor script on disk
+supervisor_watched_files() {
+  local script="$1" dir lib
+  dir="$(cd "$(dirname "$script")" 2>/dev/null && pwd)"
+  [ -n "$dir" ] || return 1
+  printf '%s\n' "$dir/$(basename "$script")"
+  [ -d "$dir/scripts/lib" ] || return 0
+  for lib in "${SUPERVISOR_RULE_LIBS[@]}"; do
+    if [ ! -f "$dir/$lib" ]; then
+      return 1
+    fi
+    printf '%s\n' "$dir/$lib"
+  done
+  return 0
+}
+
+# supervisor_watched_sum <script>
+#
+# One checksum for the whole set of files the supervisor runs.
+#
+# WHY ONE NUMBER FOR THE WHOLE SET: the supervisor publishes a single number
+# and the check outside compares a single number. A number per file would have
+# to be matched up on both sides, and matching numbers up is exactly where two
+# sides drift apart.
+#
+# WHY THE NAMES GO INTO THE NUMBER AND NOT ONLY THE CONTENTS: two files in
+# the set can swap their contents, and the code the supervisor runs is then
+# different while the bytes are not.
+#
+# WHY IT FAILS WHEN A FILE IS MISSING: a checksum that could not be read is
+# not evidence of anything, and every guard in this file fails closed.
+#
+# @param script the supervisor script on disk
+supervisor_watched_sum() {
+  local script="$1" dir file name sum="" file_sum files
+  dir="$(cd "$(dirname "$script")" 2>/dev/null && pwd)"
+  [ -n "$dir" ] || return 1
+  files="$(supervisor_watched_files "$script")" || return 1
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    file_sum="$(supervisor_script_sum "$file")" || return 1
+    name="${file#$dir/}"
+    sum="$sum$name:$file_sum"$'\n'
+  done <<FILES
+$files
+FILES
+  printf '%s' "$sum" | cksum | awk '{print $1}'
+}
+
+# supervisor_watched_parses <script>
+#
+# True when every file the supervisor runs parses as bash.
+#
+# WHY EVERY FILE AND NOT ONLY THE SCRIPT: a rule library that is half-written
+# does not parse either, and the supervisor loads it. Reloading onto a
+# half-written library is a supervisor that stops supervising — the app keeps
+# running for a while and then nothing brings it back.
+#
+# @param script the supervisor script on disk
+supervisor_watched_parses() {
+  local script="$1" file files
+  files="$(supervisor_watched_files "$script")" || return 1
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    supervisor_script_parses "$file" || return 1
+  done <<FILES
+$files
+FILES
+  return 0
+}
+
 # supervisor_reload_needed <loaded_sum> <current_sum>
 #
 # True when the copy on disk is NOT the copy that is running.
@@ -85,12 +209,12 @@ supervisor_script_parses() {
 
 # supervisor_self_state <script> <loaded_sum>
 #
-# What the running supervisor is doing, as far as the script on disk goes.
+# What the running supervisor is doing, as far as the code on disk goes.
 #
-#   current      the running copy IS the copy on disk
-#   reload       the copy on disk is different AND it parses — run it
-#   unparsable   the copy on disk is different AND it does not parse — stay
-#   unknown      the file cannot be read or checksummed — stay
+#   current      the running copy IS the code on disk
+#   reload       the code on disk is different AND it parses — run it
+#   unparsable   the code on disk is different AND it does not parse — stay
+#   unknown      the code cannot be read or checksummed — stay
 #
 # WHY IT IS A WORD AND NOT A BOOLEAN: "do not reload" has two very different
 # reasons, and only one of them is a problem. "current" is the supervisor
@@ -99,11 +223,17 @@ supervisor_script_parses() {
 # be silent, or a broken watchdog.sh looks exactly like one that was never
 # changed.
 #
+# WHY THE COMPARISON IS OVER THE WHOLE SET AND NOT OVER THE SCRIPT ALONE:
+# the script is not the code. The code is the script AND the rule libraries
+# it loads, and a change to any of them is a change to the code the
+# supervisor is running. Comparing the script alone is what made an edit to
+# scripts/lib/ invisible to the supervisor that had loaded it.
+#
 # @param script     the supervisor script on disk
-# @param loaded_sum the checksum of the copy that is running
+# @param loaded_sum the checksum of the code that is running
 supervisor_self_state() {
   local script="$1" loaded="$2" current
-  current="$(supervisor_script_sum "$script")"
+  current="$(supervisor_watched_sum "$script")"
   if [ -z "$current" ]; then
     echo unknown
     return 0
@@ -112,7 +242,7 @@ supervisor_self_state() {
     echo current
     return 0
   fi
-  if supervisor_script_parses "$script"; then
+  if supervisor_watched_parses "$script"; then
     echo reload
   else
     echo unparsable
@@ -195,7 +325,7 @@ supervisor_process_alive() {
 # in the real one.
 #
 # @param script        the supervisor script on disk
-# @param loaded_sum    the checksum of the copy that is running
+# @param loaded_sum    the checksum of the code that is running
 # @param state_file    where the state is written
 # @param publisher_pid the pid of the supervisor writing it (default: $$)
 supervisor_publish_state() {
@@ -206,7 +336,7 @@ supervisor_publish_state() {
   case "$publisher" in
     '' | *[!0-9]*) return 1 ;;
   esac
-  current="$(supervisor_script_sum "$script")"
+  current="$(supervisor_watched_sum "$script")"
   if [ -n "$current" ] && [ "$current" != "$loaded" ] && [ -f "$state_file" ]; then
     # This copy is not the one on disk, and something else has already said
     # which copy it is running. Say nothing, rather than overrule it.
@@ -244,7 +374,7 @@ supervisor_log() {
 # rule can be run from a test without one.
 #
 # @param script     the supervisor script on disk
-# @param loaded_sum the checksum of the copy that is running
+# @param loaded_sum the checksum of the code that is running
 # @param logger     the name of the function that writes a log line
 supervisor_reload_if_changed() {
   local script="$1" loaded="$2" logger="${3:-supervisor_log}" state

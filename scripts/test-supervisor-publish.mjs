@@ -91,9 +91,17 @@ function outsideState(script, publishedFile) {
   ).trim();
 }
 
-/** The checksum of a file, as the rule computes it. */
+/**
+ * The checksum of the code the supervisor runs, as the rule computes it.
+ *
+ * WHY IT IS NOT THE CHECKSUM OF ONE FILE: the rule watches the script AND
+ * the rule libraries it loads, so "the code that is running" is the whole
+ * set and the checksum covers all of it.
+ *
+ * @param path the supervisor script on disk
+ */
 function sumOf(path) {
-  return sh(`supervisor_script_sum "${path}"`).trim();
+  return sh(`supervisor_watched_sum "${path}"`).trim();
 }
 
 /** True when a process with that pid is running, as the rule decides it. */
@@ -252,7 +260,7 @@ function supervisorSource(libPath, stateFile, republish) {
 set -u
 . "${libPath}"
 SELF_PATH="$0"
-SELF_LOADED_SUM="$(supervisor_script_sum "$SELF_PATH")"
+SELF_LOADED_SUM="$(supervisor_watched_sum "$SELF_PATH")"
 SUPERVISOR_STATE="${stateFile}"
 ${
   republish

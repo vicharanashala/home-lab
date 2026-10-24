@@ -83,11 +83,18 @@ function bridgeState(port, dir) {
   }
 }
 
-/** The checksum of a file, the way the supervisor computes it. */
+/**
+ * The checksum of the code the supervisor runs, the way the rule computes it.
+ *
+ * WHY IT IS NOT A PLAIN CHECKSUM OF ONE FILE: the rule watches the script
+ * AND the rule libraries it loads, and the check compares the published
+ * number with the number for the whole set. A plain checksum of the script
+ * alone would never match what the supervisor publishes.
+ *
+ * @param path the supervisor script on disk
+ */
 function checksumOf(path) {
-  return execFileSync('bash', ['-c', `cksum "${path}" | awk '{print $1}'`], {
-    encoding: 'utf8',
-  }).trim();
+  return sh(`supervisor_watched_sum "${path}"`);
 }
 
 /** A port nothing is listening on. */
@@ -300,11 +307,12 @@ try {
   rmSync(work, { recursive: true, force: true });
 }
 
-console.log('\nthe supervisor publishes the checksum of the copy that is running');
+console.log('\nthe supervisor publishes the checksum of the code that is running');
 const watchdogSource = execFileSync('bash', ['-c', `cat "${watchdog}"`], { encoding: 'utf8' });
 check(
   'watchdog.sh writes its checksum down',
-  /SUPERVISOR_STATE/.test(watchdogSource) && /supervisor_script_sum/.test(watchdogSource),
+  /SUPERVISOR_STATE/.test(watchdogSource) && /supervisor_watched_sum/.test(watchdogSource),
+  'the checksum has to cover the rule libraries the supervisor loads, not the script alone',
 );
 check(
   'the check script reads the file the supervisor writes',

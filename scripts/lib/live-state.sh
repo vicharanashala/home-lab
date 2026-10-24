@@ -114,9 +114,16 @@ live_bridge_state() {
 # an edit to watchdog.sh — is the only one left alive. The pid is what tells
 # a live publisher from a dead one, and a dead publisher means the state
 # cannot vouch for anything.
+#
+# WHY THIS SIDE WATCHES THE SAME SET THE SUPERVISOR WATCHES: the supervisor
+# watches the script AND the rule libraries it loads, and publishes one
+# number for the whole set. If the two sides worked the set out for
+# themselves they would compare different numbers, and one side would say
+# "current" while the other said "stale" about the same app — which is the
+# failure this whole check exists to prevent.
 live_supervisor_state() {
   local script="$1" published_file="$2" current published publisher
-  current="$(supervisor_script_sum "$script")"
+  current="$(supervisor_watched_sum "$script")"
   case "$current" in
     '' | *[!0-9]*) echo unknown; return 0 ;;
   esac

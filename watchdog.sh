@@ -72,7 +72,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
-# This script, as an absolute path, and the checksum of the copy that is
+# This script, as an absolute path, and the checksum of the code that is
 # running.
 #
 # WHY THE PATH IS MADE ABSOLUTE: the reload below replaces this process with
@@ -85,12 +85,19 @@ listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 # on disk does nothing to the supervisor that is already running it — which is
 # how the stale-bridge rule above sat in this file, committed and tested, and
 # was never executed by any of the supervisors alive at the time.
+#
+# WHY THE CHECKSUM COVERS THE RULE LIBRARIES AND NOT ONLY THIS FILE: the
+# rules this supervisor applies live in scripts/lib/ and are SOURCED from
+# there. A checksum of this file alone cannot see an edit to a rule, so the
+# supervisor would go on applying the old rule for ever — the same defect as
+# the one above, one level down. The rule library works out the whole set and
+# checksums all of it; see supervisor_watched_sum.
 SELF_PATH="$0"
 case "$SELF_PATH" in
   /*) ;;
   *) SELF_PATH="$PWD/$SELF_PATH" ;;
 esac
-SELF_LOADED_SUM="$(supervisor_script_sum "$SELF_PATH")"
+SELF_LOADED_SUM="$(supervisor_watched_sum "$SELF_PATH")"
 
 # Write down the checksum of the copy that is running, so that anything
 # watching the app from OUTSIDE can tell whether the supervisor is on the

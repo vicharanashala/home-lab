@@ -85,9 +85,18 @@ function selfState(script, loadedSum) {
   }
 }
 
-/** The checksum of a file, as the rule computes it. */
+/**
+ * The checksum of the code the supervisor runs, as the rule computes it.
+ *
+ * WHY IT IS NOT THE CHECKSUM OF ONE FILE: the rule watches the script AND
+ * the rule libraries it loads, so "the code that is running" is the whole
+ * set and the checksum covers all of it. A test that took the checksum of the
+ * script alone would be measuring something the rule no longer uses.
+ *
+ * @param path the supervisor script on disk
+ */
 function sumOf(path) {
-  return sh(`supervisor_script_sum "${path}"`).trim();
+  return sh(`supervisor_watched_sum "${path}"`).trim();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -163,7 +172,7 @@ function supervisorSource(libPath, logFile, version, reload) {
 set -u
 . "${libPath}"
 SELF_PATH="$0"
-SELF_LOADED_SUM="$(supervisor_script_sum "$SELF_PATH")"
+SELF_LOADED_SUM="$(supervisor_watched_sum "$SELF_PATH")"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${logFile}"; }
 echo "RUNNING ${version} pid=$$" >> "${logFile}"
 while true; do
