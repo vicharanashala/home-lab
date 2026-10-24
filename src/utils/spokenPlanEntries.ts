@@ -1,7 +1,7 @@
 import type { HouseholdProfile, MealPlanDayPlan, MealPlanEntry, MealSlot } from '../types';
 import type { SpokenPlan } from './spokenPlan';
 import type { DishResolution } from './spokenRecipeMatch';
-import { CONFIDENT_SCORE, sameDish } from './spokenRecipeMatch';
+import { decideDish } from './spokenRecipeMatch';
 import { MEAL_SLOTS, suggestedServingsForDay } from './portions';
 
 /**
@@ -21,30 +21,6 @@ import { MEAL_SLOTS, suggestedServingsForDay } from './portions';
 export interface SpokenPlanEntry {
   slot: MealSlot;
   entry: MealPlanEntry;
-}
-
-/**
- * Whether a resolution still describes the dish being written.
- *
- * WHY THIS HAS TO BE CHECKED: the resolution is what the sheet worked out
- * from what it heard, and the name is what the slot holds NOW. The user can
- * change the slot — by tapping another dish, or by typing over it — and when
- * they do, the resolution has to change with it.
- *
- * When it does not, the two disagree: the plan is written with the name of
- * one dish and linked to the recipe of a different one, and the shopping
- * list — which is built from the recipe — buys the wrong food for it.
- */
-function describesDish(resolution: DishResolution, name: string): boolean {
-  const best = resolution.best;
-  if (!best) return false;
-  // The resolution was worked out from exactly this text.
-  if (resolution.heard === name) return true;
-  // The slot holds the name the match was written under.
-  if (best.name === name) return true;
-  // Or the same dish under a longer name, e.g. "Masala Dosa" and
-  // "Masala Dosa Recipe - Spiced Lentil Crepe".
-  return sameDish(best.name, name);
 }
 
 /**
@@ -77,17 +53,12 @@ export function spokenPlanEntries(
     // buy. Without this a spoken dish was stored as a bare string and linked
     // to nothing.
     //
-    // The recipe is only linked when the resolution STILL describes the dish
-    // being written. A match the user chose is taken at the user's word; a
-    // match the matcher made is only taken when it is confident. Either way,
-    // a resolution describing a different dish links nothing at all — a plan
+    // WHETHER THE RECIPE IS LINKED IS ONE SHARED QUESTION, not one asked
+    // here: `decideDish` is the same answer the sheet shows the user, so the
+    // plan can never hold the name of one dish and the recipe of another. A
+    // resolution describing a different dish links nothing at all — a plan
     // entry with the wrong recipe on it is worse than one with none.
-    const recipe =
-      res?.best &&
-      (res.picked === true || res.best.score >= CONFIDENT_SCORE) &&
-      describesDish(res, name)
-        ? res.best.recipe
-        : null;
+    const { recipe } = decideDish(res, name);
 
     out.push({
       slot,

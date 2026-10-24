@@ -3,7 +3,8 @@ import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
 import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES, AUTO_MODEL } from '../hooks/useWhisperSTT';
 import { parseSpokenPlan } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
-import { resolveSpokenPlan, CONFIDENT_SCORE, retypeDish, pickDish, sameDish } from '../utils/spokenRecipeMatch';
+import { resolveSpokenPlan, retypeDish, pickDish } from '../utils/spokenRecipeMatch';
+import { sheetNoteFor } from '../utils/spokenPlanSheet';
 import type { DishResolution } from '../utils/spokenRecipeMatch';
 import type { Recipe } from '../types';
 
@@ -129,66 +130,21 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
         {(['breakfast', 'lunch', 'dinner'] as const).map((slot) => {
           const res = resolutions[slot];
           const current = draft[slot] ?? '';
-          const best = res?.best ?? null;
-          const alternatives = res?.alternatives ?? [];
-          // The correction is only shown while the slot still holds what the
-          // matcher put there. Once the user types over it, the note would be
-          // describing something that is no longer on screen.
-          const corrected = best && best.score >= CONFIDENT_SCORE;
-          // Whether the resolution STILL describes the dish in this slot.
+          // What the slot says about itself, and which dishes are offered
+          // beside it.
           //
-          // It has to be the SAME question the writer asks, because the writer
-          // is what decides which recipe the shopping list buys — see
-          // `describesDish` in utils/spokenPlanEntries.ts. The two have to
-          // agree, or the sheet says one thing and the plan does another.
+          // WHY IT IS ASKED IN ONE PLACE: the writer decides which recipe the
+          // shopping list buys, and it asks `decideDish` too — so the note
+          // under this slot says what the plan is about to do rather than the
+          // two screens answering the same question differently.
           //
-          // WHY THE COMPARISON IS ON THE DISH AND NOT ON THE STRING: the
-          // writer compares the CORE of each name in lower case — so "paneer
-          // tikka" and "Paneer Tikka" are one dish. Comparing the raw strings
-          // made the two disagree the moment the case differed: the plan was
-          // written correctly and linked to the right recipe, while the sheet
-          // showed nothing at all — no "matched" note, no alternatives, and no
-          // way for the user to say they had meant a different dish. One
-          // question, one answer.
-          //
-          // WHY THE FIRST TEST IS "THE TEXT THIS RESOLUTION WAS WORKED OUT
-          // FROM": the sheet used to compare the slot with the CATALOGUE's
-          // spelling of the dish, and the writer compares it with the text the
-          // resolution was worked out FROM. Those are the same text only when
-          // the two spellings are identical — so a dish the user TYPED with
-          // one wrong character ("painter tikka" for "Paneer Tikka", which is
-          // exactly the mis-hearing the matcher exists to survive) left the
-          // sheet saying nothing at all, while the plan quietly linked the
-          // recipe. The user was shown no decision and asked to accept one.
-          const settled = res && (
-            // The resolution was worked out from exactly the text in the slot.
-            res.heard === current ||
-            // Or the slot holds the name the match was written under.
-            best?.name === current ||
-            // Or the same dish under a longer name.
-            sameDish(current, best?.name ?? '')
-          );
-          const options = best
-            // The chips are the OTHER dishes, so the slot's own dish is not
-            // one of them. This has to ask the question in the same way the
-            // note above does — by DISH and not by string — because the slot
-            // holds what the user typed while the match holds the
-            // catalogue's spelling of it: "paneer tikka" and "Paneer Tikka"
-            // are one dish, and offering the chip "Paneer Tikka" back to a
-            // slot that already says "paneer tikka" is the sheet saying the
-            // same thing twice, in two spellings.
-            //
-            // And the dish the note calls a MATCH is not an alternative to
-            // itself: once the note says "matched Paneer Tikka", the chip
-            // "Paneer Tikka" underneath it is the sheet asking the same
-            // question two ways. It is only a suggestion while the match is
-            // NOT confident — that is what the "did you mean" note is for.
-            ? [best, ...alternatives].filter(
-                (m) =>
-                  !sameDish(m.name, current) &&
-                  (!corrected || !sameDish(m.name, best.name)),
-              )
-            : [];
+          // They DID answer it differently. The sheet asked "is the match
+          // confident?" and the writer asked "is it confident OR did the user
+          // pick it?", so a user who tapped a dish the matcher had been
+          // unsure of was told "did you mean" and asked to choose again,
+          // while the plan had already written that dish and linked its
+          // recipe.
+          const note = sheetNoteFor(res, current);
           return (
             <label key={slot} className="block mb-2">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-sage-600 dark:text-sage-300">
@@ -223,24 +179,24 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
                 className="input w-full text-xs py-1.5 mt-0.5"
               />
 
-              {settled && res && corrected && (
+              {note.kind === 'matched' && res && (
                 <span className="block text-[10px] text-sage-600 dark:text-sage-300 mt-0.5">
                   heard “{res.heard}” → matched{' '}
                   <span className="font-semibold text-sage-800 dark:text-cream-100">
-                    {res.best!.name}
+                    {note.matchedName}
                   </span>
                 </span>
               )}
 
-              {settled && res && !corrected && res.best && (
+              {note.kind === 'suggest' && res && (
                 <span className="block text-[10px] text-sage-600 dark:text-sage-300 mt-0.5">
                   heard “{res.heard}” — did you mean
                 </span>
               )}
 
-              {settled && options.length > 0 && (
+              {note.chips.length > 0 && (
                 <span className="flex flex-wrap gap-1 mt-1">
-                  {options.slice(0, 5).map((m) => (
+                  {note.chips.slice(0, 5).map((m) => (
                     <button
                       key={m.recipe.id}
                       type="button"

@@ -569,3 +569,67 @@ export function pickDish(
     picked: true,
   };
 }
+
+/** What a slot holds, and whether that dish is linked to a recipe. */
+export interface DishDecision {
+  /**
+   * The resolution still describes the dish in the slot.
+   *
+   * False when the slot was changed without the resolution being re-matched —
+   * the two then talk about different dishes, and the slot wins.
+   */
+  settled: boolean;
+  /**
+   * The slot's dish IS linked to a recipe: either the matcher was confident,
+   * or the user chose the dish themselves.
+   */
+  matched: boolean;
+  /** The recipe to write onto the entry, or null when the dish links none. */
+  recipe: Recipe | null;
+}
+
+/**
+ * The ONE answer to "what does this slot hold, and is it linked to a recipe?".
+ *
+ * WHY THIS IS ASKED IN ONE PLACE: the sheet tells the user what is about to
+ * happen and the writer decides what actually happens, so the two have to say
+ * the same thing. They used to ask it separately — the sheet asked "is the
+ * match confident?", the writer asked "is the match confident OR did the
+ * user pick it?" — and on a dish the user CHOSE, they answered differently.
+ *
+ * So a user who said "bhatura", was offered "Chole bhature / Khatua /
+ * Paneer Bhutuwa" and tapped "Khatua" was told "did you mean" and asked to
+ * choose again, while the plan quietly wrote "Khatua" and linked the khatua
+ * recipe the shopping list would buy from. The choice had been made and the
+ * screen was still asking the question.
+ *
+ * One function, one answer: what the sheet says is what the writer writes.
+ */
+export function decideDish(
+  resolution: DishResolution | undefined,
+  name: string,
+): DishDecision {
+  const best = resolution?.best ?? null;
+  if (!resolution || !best) {
+    return { settled: false, matched: false, recipe: null };
+  }
+
+  // The resolution still describes this dish when it was worked out from
+  // exactly this text, when the slot holds the name the match was written
+  // under, or when the two are the same dish under different names.
+  const settled =
+    resolution.heard === name ||
+    best.name === name ||
+    sameDish(best.name, name);
+  if (!settled) {
+    return { settled: false, matched: false, recipe: null };
+  }
+
+  // A dish the USER picked is taken at their word, even when the matcher
+  // scored it low: they have already said which dish they meant, and a low
+  // score only ever meant the matcher was unsure — never that they were
+  // wrong. The sheet has to honour that too, or it asks a question the user
+  // has already answered.
+  const matched = resolution.picked === true || best.score >= CONFIDENT_SCORE;
+  return { settled: true, matched, recipe: matched ? best.recipe : null };
+}
