@@ -65,6 +65,14 @@ SUPERVISOR_SCRIPT="${HH_SUPERVISOR_SCRIPT:-$ROOT/watchdog.sh}"
 SUPERVISOR_STATE="${HH_SUPERVISOR_STATE:-/tmp/hh_supervisor.checksum}"
 PUBLIC_URL="${HH_PUBLIC_URL:-https://narayana.tailac25b4.ts.net}"
 
+# The launchd agent that runs the supervisor.
+#
+# WHY THE LABEL IS A VARIABLE AND NOT A CONSTANT BURIED IN THE TEXT: the label
+# is a fact about ONE machine, and the recovery below has to name the agent
+# that machine actually has. It is overridable for the same reason the rest of
+# this check is — a test has to be able to point the check at a fixture.
+SUPERVISOR_LABEL="${HH_SUPERVISOR_LABEL:-com.homehub.supervisor}"
+
 bridge_state="$(live_bridge_state "$BRIDGE_PORT" "$BRIDGE_DIR")"
 supervisor_state="$(live_supervisor_state "$SUPERVISOR_SCRIPT" "$SUPERVISOR_STATE")"
 link_state="$(live_link_state "$PUBLIC_URL")"
@@ -106,6 +114,29 @@ case "$supervisor_state" in
   unknown)
     say "   the supervisor's published state could not be read — the app cannot be"
     say "   told apart from one that is out of date"
+    ;;
+esac
+
+# How to put the supervisor back onto the copy of watchdog.sh on disk.
+#
+# WHY THIS IS HERE AND NOT ONLY IN A COMMIT MESSAGE: this check is what a
+# person reads on a phone when the app is not keeping itself current, and
+# "until one of them is restarted" without the command is a note to self.
+#
+# WHY IT IS A RESTART AND NOT A COPY: a bash script is read into memory when
+# it starts, so the copy on disk cannot reach a supervisor that is already
+# running. launchd brings the supervisor straight back on the copy that is on
+# disk, and from then on the supervisor reloads itself whenever that copy
+# changes — so this is a one-time recovery, not a recurring chore.
+#
+# WHY IT IS NOT RUN FROM HERE: the check only LOOKS at the app. Restarting a
+# service is the caller's, and a health check that restarts the thing it is
+# checking is a health check that cannot be trusted to say the app is broken.
+case "$supervisor_state" in
+  unpublished | stale | orphaned)
+    say ""
+    say "   to put the supervisor back on the code on disk:"
+    say "     launchctl kickstart -k gui/\$(id -u)/$SUPERVISOR_LABEL"
     ;;
 esac
 

@@ -306,7 +306,7 @@ try {
   const fakePublished = join(work, 'live-published.checksum');
   writeFileSync(fakePublished, `${checksumOf(fakeSupervisor)} ${process.pid}\n`);
 
-  const runCheck = () => {
+  const runCheck = (extra = {}) => {
     try {
       const out = execFileSync('bash', [checker], {
         encoding: 'utf8',
@@ -317,6 +317,7 @@ try {
           HH_SUPERVISOR_SCRIPT: fakeSupervisor,
           HH_SUPERVISOR_STATE: fakePublished,
           HH_PUBLIC_URL: `http://127.0.0.1:${port}`,
+          ...extra,
         },
       });
       return { code: 0, out };
@@ -330,6 +331,31 @@ try {
     'a live app on the current code passes the check',
     current.code === 0 && current.out.includes('healthy'),
     `exit=${current.code}`,
+  );
+
+  // The check that finds the supervisor out of date has to say HOW to put it
+  // back, not only that it is out of date.
+  //
+  // WHY IT MATTERS: the check is read on a phone, by whoever is holding the
+  // phone, and "the app cannot keep itself current until one of them is
+  // restarted" without the command is a note to self. The supervisor cannot
+  // restart itself — a bash script is read into memory when it starts, so the
+  // copy on disk never reaches a supervisor that is already running — so the
+  // command is the whole recovery, and the only part of it that cannot be
+  // worked out from the message.
+  console.log('\nand the check says how to put the supervisor back');
+  const unpublished = runCheck({
+    HH_SUPERVISOR_STATE: join(work, 'never-published.checksum'),
+  });
+  check(
+    'a supervisor that never published is reported as unpublished',
+    unpublished.out.includes('supervisor is unpublished'),
+    `exit=${unpublished.code}`,
+  );
+  check(
+    'and the report names the command that puts it back',
+    unpublished.out.includes('launchctl kickstart -k gui/$(id -u)/com.homehub.supervisor'),
+    'the command has to name the launchd agent that runs the supervisor',
   );
 
   // The file time has one-second resolution, so the new code is written in a
