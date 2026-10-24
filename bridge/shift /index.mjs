@@ -30,6 +30,7 @@ import dns from 'node:dns';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { resolveOpenclaw } from './openclaw-cli.mjs';
 
 const PORT = Number(process.env.PORT ?? 8789);
 const DATA_DIR = path.join(os.homedir(), '.minimax', 'vision-overwatch');
@@ -761,12 +762,16 @@ app.delete('/api/results/:id', asyncRoute(async (req, res) => {
 
 /** Run the local openclaw CLI to talk to the overwatch agent. Returns
  *  parsed JSON from the agent, plus timing. */
-function callOverwatch(args) {
+async function callOverwatch(args) {
+  // The CLI is found where it was installed rather than left to the PATH:
+  // the bridge inherits the PATH the supervisor gives it, and that PATH does
+  // not have ~/.openclaw/bin on it. See openclaw-cli.mjs for what that cost.
+  const bin = await resolveOpenclaw();
   return new Promise((resolve) => {
     const t0 = Date.now();
     let proc;
     try {
-      proc = spawn('openclaw', args, { env: { ...process.env } });
+      proc = spawn(bin, args, { env: { ...process.env } });
     } catch (err) {
       resolve({
         ok: false, stdout: '', stderr: `[spawn error] ${err.message}`,
