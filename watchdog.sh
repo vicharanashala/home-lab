@@ -44,6 +44,12 @@ TTS_SERVER="$HOME/tools/tts/speak_server.py"
 # See scripts/lib/bridge-stale.sh for why it is there at all.
 . "$ROOT/scripts/lib/bridge-stale.sh"
 
+# The rule that decides whether THIS supervisor is running the copy of this
+# script that is on disk. Same reason it is its own file: this script is a
+# loop that never returns, so a rule written inside it cannot be tested.
+# See scripts/lib/supervisor-reload.sh for why it is there at all.
+. "$ROOT/scripts/lib/supervisor-reload.sh"
+
 # Only one supervisor may restart the bridge at a time. launchd has left more
 # than one copy of this script running over the years, and every copy runs
 # this loop.
@@ -52,6 +58,26 @@ RESTART_LOCK="/tmp/hh_bridge_restart.lock"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+
+# This script, as an absolute path, and the checksum of the copy that is
+# running.
+#
+# WHY THE PATH IS MADE ABSOLUTE: the reload below replaces this process with
+# a fresh copy of the script, and `exec` needs a path that does not depend on
+# where the process happens to be standing.
+#
+# WHY THE CHECKSUM IS RECORDED: a bash script is read into memory when it
+# starts, and this one is a `while true` loop, so the whole loop is parsed
+# ONCE and this process keeps running that copy for ever. Editing watchdog.sh
+# on disk does nothing to the supervisor that is already running it — which is
+# how the stale-bridge rule above sat in this file, committed and tested, and
+# was never executed by any of the supervisors alive at the time.
+SELF_PATH="$0"
+case "$SELF_PATH" in
+  /*) ;;
+  *) SELF_PATH="$PWD/$SELF_PATH" ;;
+esac
+SELF_LOADED_SUM="$(supervisor_script_sum "$SELF_PATH")"
 
 # Each starter is written out in full, with no "$@" forwarding. An earlier
 # version passed the log path positionally and read the wrong argument, so the
@@ -70,7 +96,32 @@ start_voice() {
 
 log "supervisor started (root=$ROOT)"
 
+# WHY THIS IS SAID OUT LOUD: a supervisor that cannot checksum its own file
+# can never tell that it is out of date, so it would sit on its copy for ever
+# and the rule above would look like it had been installed and did nothing.
+# That has to be visible in the log, not something to find out later.
+if [ -z "$SELF_LOADED_SUM" ]; then
+  log "could not checksum $SELF_PATH — this supervisor will not notice later edits to itself"
+fi
+
 while true; do
+  # ── This script ───────────────────────────────────────────────────────────
+  # Is this supervisor running the copy of watchdog.sh that is on disk?
+  #
+  # WHY THIS IS HERE: a bash script is read into memory when it starts, so the
+  # supervisors running today kept the watchdog.sh they started with — the one
+  # from before the stale-bridge rule was committed. That rule was correct,
+  # tested, and INERT: the bridge went on serving code from hours earlier
+  # while every check stayed green, which is the quietest kind of broken.
+  #
+  # So the supervisor has to be able to pick up its own file, the same way the
+  # bridge rule makes the bridge pick up its own file.
+  #
+  # WHY IT IS EXEC AND NOT A RE-SOURCE: an exec replaces this process
+  # outright, so the new copy runs from its first line with none of the old
+  # one left. The PID is unchanged, so launchd still owns the same process.
+  supervisor_reload_if_changed "$SELF_PATH" "$SELF_LOADED_SUM" log
+
   # ── Tailscale ────────────────────────────────────────────────────────────
   # Without it the hostname does not resolve at all, so every request 502s
   # even though the app server is perfectly healthy.
