@@ -86,8 +86,58 @@ const NOISE = new Set([
  */
 const PRE_CONNECTOR_RE = /^(.*?)\b(?:for|as|to be|will be|will have)\s*$/i;
 
+/**
+ * The words that refuse a dish.
+ *
+ * "no" is deliberately NOT in the noise set above: it is how a dish is
+ * refused, and dropping it would keep the dal the user said they did not
+ * want.
+ *
+ * They are held in one list so that every rule that recognises a refusal
+ * uses the SAME words — the rules below look for a refusal in three
+ * different places, and a list that each of them spelled out separately
+ * would drift.
+ */
+const REFUSAL_WORDS = ['no', 'not', 'without', 'skip', 'avoid'];
+
 /** A dish the user explicitly did NOT want. "no dal for dinner" is not dal. */
-const NEGATION_RE = /^\s*(?:no|not|without|skip|avoid)\b\s*/i;
+const NEGATION_RE = new RegExp(`^\\s*(?:${REFUSAL_WORDS.join('|')})\\b\\s*`, 'i');
+
+/**
+ * A refusal anywhere in a stretch of speech, not only at the front of a
+ * dish. The capture holds everything BEFORE the refusal.
+ */
+const REFUSAL_ANYWHERE_RE = new RegExp(`^(.*?)\\b(?:${REFUSAL_WORDS.join('|')})\\b`, 'i');
+
+/**
+ * The part of a stretch of speech that comes BEFORE a refusal, or null when
+ * there is no refusal in it.
+ *
+ * "rice, no dal" is "rice" — the dal was refused, not eaten. Without this
+ * the refusal was swallowed as part of the dish and the plan held
+ * "rice no dal", a name that matches no recipe in the catalogue and so
+ * buys nothing from the shopping list.
+ */
+function dishBeforeRefusal(text: string): string | null {
+  const m = text.match(REFUSAL_ANYWHERE_RE);
+  return m ? m[1] : null;
+}
+
+/**
+ * True when the text ENDS with a refusal word that is attached to whatever
+ * comes next.
+ *
+ * "no lunch dal" refuses the lunch — the refusal sits in front of the MEAL
+ * WORD, which is the one place the dish-only rule could not see it.
+ *
+ * WHY ONLY WHITESPACE BETWEEN: "fish, no, lunch rice" puts a comma between
+ * the refusal and the meal word, so the refusal belongs to the meal before
+ * it and the lunch is a dish of its own.
+ */
+function refusesBefore(text: string): boolean {
+  const m = text.toLowerCase().match(/([a-z]+)\s*$/);
+  return !!m && REFUSAL_WORDS.includes(m[1]);
+}
 
 /** A time, not a dish: "at 8", "at 8 pm", "8 pm". */
 const TIME_RE =
@@ -238,9 +288,14 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     if (isMeaningful(nextLeftDish)) {
       dish = nextLeftDish;
     } else {
-      dish = afterPre ? tidy(afterHead) : tidy(segAfter);
+      // A refusal inside the stretch of speech SPLITS it: "rice, no dal" is
+      // "rice" — the dal was refused, not eaten. And when nothing is left
+      // in front of the refusal, the meal itself was refused, so the text
+      // before the meal word is NOT tried as a dish.
+      const beforeRefusal = afterPre ? null : dishBeforeRefusal(segAfter);
+      dish = afterPre ? tidy(afterHead) : tidy(beforeRefusal ?? segAfter);
       tookRight = true;
-      if (!isMeaningful(dish) && !hasPrev) {
+      if (!isMeaningful(dish) && !hasPrev && beforeRefusal === null) {
         // The first meal word, and nothing behind it either: the dish was
         // spoken before the meal word with no connector to say so.
         dish = tidy(segBefore);
@@ -253,9 +308,18 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // this meal took its dish from the other side entirely.
     nextLeftDish = tookRight ? tidy(afterTail) : tidy(afterFront);
 
-    // "no dal for dinner" is a refusal, not a dish. Leave the slot alone
-    // rather than writing a dish the user said they did not want.
-    if (NEGATION_RE.test(dish)) continue;
+    // A refusal is a refusal wherever it sits.
+    //
+    // "no dal for dinner" puts it in front of the dish, "lunch no dal" puts
+    // it inside the dish, and "no lunch dal" puts it in front of the MEAL
+    // WORD — the one shape the dish-only rule could not see.
+    //
+    // AND THAT SHAPE WAS NOT HARMLESS. The rule that keeps the LAST mention
+    // of a meal then wrote the dish the user had REFUSED over the one they
+    // had asked for: "lunch rice, no lunch dal" filed lunch as "dal" and
+    // threw the rice away. A dish the user said they did not want is worse
+    // than a missing one, because the shopping list buys it.
+    if (NEGATION_RE.test(dish) || refusesBefore(segBefore)) continue;
 
     // The LAST mention of a meal wins.
     //
