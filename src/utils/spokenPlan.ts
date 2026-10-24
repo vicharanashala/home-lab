@@ -201,8 +201,48 @@ const REFUSAL_PRONOUNS = new Set(['it', 'this', 'that']);
  */
 function dishOf(text: string): string {
   const withoutConnector = text.match(PRE_CONNECTOR_RE);
-  const base = tidy(withoutConnector ? withoutConnector[1] : text);
-  return base.split(' ').filter((w) => w && !REFUSAL_FILLERS.has(w)).join(' ');
+  return withoutFillers(tidy(withoutConnector ? withoutConnector[1] : text));
+}
+
+/**
+ * A dish with the words that carry no dish of their own taken off.
+ *
+ * WHY IT IS ITS OWN RULE AND NOT PART OF `dishOf`: the dish a refusal NAMES
+ * has these words taken off, and the dish the plan HOLDS does not — and the
+ * two are compared with each other. One rule for the two sides of that
+ * comparison is what lets a refusal match the dish it names at all. See
+ * `namesHeldDish`.
+ *
+ * @param text the dish to strip
+ */
+function withoutFillers(text: string): string {
+  return text.split(' ').filter((w) => w && !REFUSAL_FILLERS.has(w)).join(' ');
+}
+
+/**
+ * True when the refusal names the dish the plan is holding.
+ *
+ * WHY THE FILLERS COME OFF BOTH SIDES: the dish a refusal names is worked
+ * out with the fillers taken off — "no want rice" names the rice, not the
+ * want — and the dish the plan holds was worked out WITHOUT taking them off,
+ * so "lunch want rice" held "want rice" and the two could never be equal.
+ * The refusal named the dish with the very words the plan held, and the dish
+ * stayed: "lunch want rice, no rice" kept the rice, the sheet said the lunch
+ * had been heard, and the plan held a dish the user had refused.
+ *
+ * WHY ONLY THE FILLERS: a refusal that names a DIFFERENT dish has to leave
+ * the plan alone — "lunch rice, no lunch dal" is the lunch rice — and the
+ * fillers are the only words that carry no dish of their own. A dish that
+ * merely CONTAINS the named dish is a different question, and it is not
+ * answered here.
+ *
+ * @param named the dish the refusal names
+ * @param held  the dish the plan is holding
+ */
+function namesHeldDish(named: string, held: string | undefined): boolean {
+  if (!named || !held) return false;
+  if (named === held) return true;
+  return withoutFillers(named) === withoutFillers(held);
 }
 
 /**
@@ -733,7 +773,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // list buys.
     if (pointsBack) {
       const before = mentions.filter((m) => m.at < refusal.at).pop();
-      if (before && out[before.slot] === named) delete out[before.slot];
+      if (before && namesHeldDish(named, out[before.slot])) delete out[before.slot];
       continue;
     }
 
@@ -756,7 +796,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
       (m) => m.at >= refusal.end && m.at < clauseEnd,
     );
     if (attachedToAMeal) {
-      if (out[bound.slot] === named) delete out[bound.slot];
+      if (namesHeldDish(named, out[bound.slot])) delete out[bound.slot];
       continue;
     }
 
@@ -770,7 +810,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // had refused while the sheet said the meal had been heard. An empty slot
     // is honest; a dish the user refused is one the list buys.
     for (const m of mentions) {
-      if (out[m.slot] === named) delete out[m.slot];
+      if (namesHeldDish(named, out[m.slot])) delete out[m.slot];
     }
   }
   return out;
