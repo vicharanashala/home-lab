@@ -36,9 +36,20 @@ const SLOT_WORDS: { re: RegExp; slot: PlanSlot }[] = [
   { re: /\b(raat\s*ka\s*khana|raat kana)\b/i, slot: 'dinner' },
 ];
 
-/** Phrases that carry no dish information and should never end up as a dish. */
+/**
+ * Phrases that carry no dish information and should never end up as a dish.
+ *
+ * "as" belongs here because it is a CONNECTOR — "dal as dinner" — and every
+ * other connector already is: "for", "to be", "will be" and "will have" are
+ * all in this list. It was the one that was missing, and the dish kept it.
+ *
+ * "dal as dinner" filed the dinner as "dal as", and "dal as" matches NO
+ * recipe in the catalogue — not a weak match, none at all — so the plan held
+ * a dish nobody could shop for and the shopping list bought nothing for it.
+ * The connector has to be noise, exactly like its four brothers.
+ */
 const NOISE = new Set([
-  'and', 'then', 'also', 'with', 'plus', 'for', 'the', 'a', 'an', 'is', 'are',
+  'and', 'then', 'also', 'with', 'plus', 'for', 'as', 'the', 'a', 'an', 'is', 'are',
   'was', 'were', 'be', 'been', 'am', 'i', 'we', 'will', 'would', 'have', 'has',
   'had', 'having', 'to', 'eat', 'today', 'tomorrow', 'my', 'plan', 'meal',
   'meals', 'cook', 'cooking', 'please', 'ok', 'okay', 'so', 'just', 'some',
@@ -53,8 +64,16 @@ const NOISE = new Set([
  * under dinner and lost the lunch entirely — the text after a meal word was
  * always taken as that meal's dish, so the second meal's dish swallowed the
  * first meal's slot.
+ *
+ * The capture group holds whatever came BEFORE the connector, and that
+ * matters. A connector only moves the dish to the front when there is a
+ * dish in front of it: a "for" with nothing before it is not a connector at
+ * all, it is how people talk. "For breakfast masala dosa, for lunch butter
+ * chicken" is the most natural way to dictate a day, and reading the
+ * leading "for" as "the dish comes before the meal word" filed masala dosa
+ * under LUNCH, butter chicken under DINNER, and left breakfast empty.
  */
-const PRE_CONNECTOR_RE = /\b(?:for|as|to be|will be|will have)\s*$/i;
+const PRE_CONNECTOR_RE = /^(.*?)\b(?:for|as|to be|will be|will have)\s*$/i;
 
 /** A dish the user explicitly did NOT want. "no dal for dinner" is not dal. */
 const NEGATION_RE = /^\s*(?:no|not|without|skip|avoid)\b\s*/i;
@@ -131,6 +150,26 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   }
 
   const out: SpokenPlan = {};
+  /**
+   * The dish the PREVIOUS meal word was given, and WHICH SIDE of that meal
+   * word it came from.
+   *
+   * The side matters more than the dish itself. The text in front of a
+   * connector belongs to the previous meal when the previous meal took its
+   * dish from the text on its RIGHT — in "for breakfast masala dosa, for
+   * lunch butter chicken" the "masala dosa" has already been breakfast's.
+   * But when the previous meal took its dish from the LEFT — "rice for
+   * lunch" — the text in front of the next connector is that next meal's
+   * own dish, even when the two are the same words.
+   *
+   * Without the side, the two readings of "rice for lunch and rice for
+   * dinner" are indistinguishable: the second "rice" looks like a repeat of
+   * the first, so dinner was dropped; and in "rice for lunch and rice for
+   * dinner and dal for breakfast" the "dal" was handed to dinner, which is
+   * a dish nobody spoke for dinner.
+   */
+  let prevDish = '';
+  let prevTookRight = false;
   for (let i = 0; i < unique.length; i++) {
     const mark = unique[i];
     const after = mark.at + mark.len;
@@ -146,19 +185,46 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // behind; "dal for dinner" puts it in front. A connector right before the
     // meal word is the tell. The segment on the other side belongs to the
     // NEIGHBOURING meal, so it must not be stolen as a fallback.
+    //
+    // The connector only moves the dish to the front when there is a dish in
+    // front of it that has not already been given to the previous meal. A
+    // "for" with nothing in front of it is not a connector at all — it is
+    // how people talk. "For breakfast masala dosa, for lunch butter
+    // chicken" is the most natural way to dictate a day, and reading the
+    // leading "for" as "the dish comes before the meal word" filed masala
+    // dosa under LUNCH, butter chicken under DINNER, and left breakfast
+    // empty.
+    const pre = segBefore.match(PRE_CONNECTOR_RE);
+    const front = pre ? tidy(pre[1]) : '';
+    const frontTaken = !!front && prevTookRight && front === prevDish;
+
     let dish: string;
-    if (PRE_CONNECTOR_RE.test(segBefore)) {
+    // Which side of THIS meal word the dish was taken from, so the next
+    // meal word can tell a repeated dish from a dish that was never claimed.
+    let tookRight = false;
+    if (pre && isMeaningful(front) && !frontTaken) {
       dish = tidy(segBefore);
-      if (!isMeaningful(dish) && !hasNext) dish = tidy(segAfter);
+      if (!isMeaningful(dish) && !hasNext) {
+        dish = tidy(segAfter);
+        tookRight = true;
+      }
     } else {
       dish = tidy(segAfter);
-      if (!isMeaningful(dish) && !hasPrev) dish = tidy(segBefore);
+      tookRight = true;
+      if (!isMeaningful(dish) && !hasPrev) {
+        dish = tidy(segBefore);
+        tookRight = false;
+      }
     }
 
     // "no dal for dinner" is a refusal, not a dish. Leave the slot alone
     // rather than writing a dish the user said they did not want.
     if (NEGATION_RE.test(dish)) continue;
 
+    if (isMeaningful(dish)) {
+      prevDish = dish;
+      prevTookRight = tookRight;
+    }
     if (isMeaningful(dish) && !out[mark.slot]) {
       out[mark.slot] = dish;
     }
