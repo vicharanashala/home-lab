@@ -3,7 +3,7 @@ import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
 import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES } from '../hooks/useWhisperSTT';
 import { parseSpokenPlan } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
-import { resolveSpokenPlan, CONFIDENT_SCORE, retypeDish, pickDish } from '../utils/spokenRecipeMatch';
+import { resolveSpokenPlan, CONFIDENT_SCORE, retypeDish, pickDish, sameDish } from '../utils/spokenRecipeMatch';
 import type { DishResolution } from '../utils/spokenRecipeMatch';
 import type { Recipe } from '../types';
 
@@ -137,12 +137,22 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
           // matcher made of it. So the sheet keeps saying what it heard and
           // what the slot holds, and the other dishes stay on offer — the
           // user can change their mind without the sheet losing the list.
+          //
+          // WHY THE COMPARISON IS ON THE DISH AND NOT ON THE STRING: the
+          // writer that turns this sheet into plan entries asks the same
+          // question with `sameDish`, which compares the CORE of each name in
+          // lower case — so "paneer tikka" and "Paneer Tikka" are one dish.
+          // Comparing the raw strings here made the two disagree the moment
+          // the case differed: the plan was written correctly and linked to
+          // the right recipe, while the sheet showed nothing at all — no
+          // "matched" note, no alternatives, and no way for the user to say
+          // they had meant a different dish. One question, one answer.
           const settled = res && (
             res.picked === true
-              ? current === res.best?.name
+              ? sameDish(current, res.best?.name ?? '')
               : corrected
-                ? current === res.best!.name
-                : current === res.heard
+                ? sameDish(current, res.best!.name)
+                : sameDish(current, res.heard)
           );
           const options = res?.best
             ? [res.best, ...res.alternatives].filter((m) => m.name !== current)

@@ -196,6 +196,21 @@ function fieldWithLabel(tree, label) {
 }
 
 /**
+ * Whether any element in the tree shows text matching.
+ *
+ * Used for the notes the sheet puts under a slot — "heard … → matched …" and
+ * "heard … — did you mean" — which are plain text rather than fields or
+ * buttons, so the two helpers above cannot reach them.
+ */
+function hasText(tree, re) {
+  let found = false;
+  walk(tree, (el) => {
+    if (!found && re.test(textOf(el.props?.children))) found = true;
+  });
+  return found;
+}
+
+/**
  * Speak a day into the sheet and open the review.
  *
  * The sheet only shows its slots once it has something to show, and the way
@@ -321,6 +336,41 @@ console.log('\nthe user types a different dish over the slot');
   ok(out.ingredients.includes('Urad Dal'), 'the shopping list buys that dish\'s ingredients',
     out.ingredients.join(', '));
   ok(!out.ingredients.includes('Paneer Cubes'), 'the shopping list does NOT buy the dish that was heard',
+    out.ingredients.join(', '));
+}
+
+/* --------------------------------------------------------------------------
+ * A dish typed in lower case still gets an answer
+ * -------------------------------------------------------------------------- */
+
+console.log('\na dish typed in lower case still gets an answer from the sheet');
+{
+  const { applied, render } = openSheet('dinner paneer tikkaa');
+
+  let sheet = render();
+  const slot = fieldWithLabel(sheet, 'dinner from speech');
+  // The same dish the catalogue calls "Paneer Tikka", typed the way a person
+  // types on a phone: in lower case. The sheet used to compare what the slot
+  // held with what the matcher found by EXACT string equality, so the two
+  // disagreed the moment the case differed — and the sheet was the one that
+  // was wrong: it showed nothing at all, while the plan was written
+  // correctly and linked to the right recipe.
+  slot.props.onChange({ target: { value: 'paneer tikka' } });
+  sheet = render();
+
+  ok(
+    hasText(sheet, /matched/),
+    'the sheet still says what it matched the typed dish to',
+    hasText(sheet, /matched/) ? '' : 'the review panel went silent',
+  );
+
+  const yes = buttonWithText(sheet, /Yes, add these/);
+  yes.props.onClick();
+
+  const out = planAndList(applied);
+  ok(out.entry?.recipeId === 'r-tikka', 'the plan still points at that dish\'s own recipe',
+    String(out.entry?.recipeId));
+  ok(out.ingredients.includes('Paneer Cubes'), 'the shopping list still buys that dish\'s ingredients',
     out.ingredients.join(', '));
 }
 
