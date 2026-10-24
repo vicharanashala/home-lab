@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { blockedReason } from '../utils/micPermission';
-import { looksLikeArtifact, foldTranscript, SILENCE_RMS } from '../utils/whisperText';
+import { looksLikeArtifact, foldTranscript, trimLoop, SILENCE_RMS } from '../utils/whisperText';
 import { AUTO_MODEL, WHISPER_MODELS, modelForDevice } from '../utils/whisperModel';
 import type { WhisperModel } from '../utils/whisperModel';
 
@@ -364,12 +364,19 @@ export function useWhisperSTT(
             no_repeat_ngram_size: 3,
           });
           const text = (result?.text || '').trim();
-          if (isArtifact(text, level)) continue;
+          // A block can be the user's own speech with a loop welded onto the
+          // end of it, so the loop is cut off FIRST and what is left is
+          // judged on its own. Asking "is this rubbish?" about the joined
+          // text threw the speech away along with the loop, and the user was
+          // told nothing had been picked up when it had.
+          const kept = trimLoop(text);
+          if (kept === null) continue;             // nothing but a loop
+          if (isArtifact(kept, level)) continue;   // what is left is rubbish
 
           // A LOOP CAN SPAN BLOCKS, so the joined transcript is checked, not
-          // only the block. See foldTranscript for why it starts again from
-          // empty rather than keeping part of it.
-          const next = foldTranscript(transcriptRef.current, text);
+          // only the block. See foldTranscript for why the loop is cut off
+          // where it starts rather than the whole transcript being dropped.
+          const next = foldTranscript(transcriptRef.current, kept);
           if (next === null) {
             transcriptRef.current = '';
             setTranscript('');
@@ -378,7 +385,7 @@ export function useWhisperSTT(
 
           transcriptRef.current = next;
           setTranscript(next);
-          textRef.current?.(text);
+          textRef.current?.(kept);
         } catch (err) {
           console.warn('[whisper] transcription failed:', err);
           // Surfaced rather than swallowed: a transcription that fails quietly

@@ -7,7 +7,7 @@
  *
  * Run with:  node scripts/test-whisper-text.mjs
  */
-import { looksLikeArtifact, hasRepeatedPhrase, foldTranscript, SILENCE_RMS } from '../src/utils/whisperText.ts';
+import { looksLikeArtifact, hasRepeatedPhrase, foldTranscript, trimLoop, SILENCE_RMS } from '../src/utils/whisperText.ts';
 
 /** Loud enough to be someone actually talking. */
 const LOUD = 0.08;
@@ -131,6 +131,60 @@ console.log('\na loop that spans blocks');
 {
   ok(foldTranscript('', 'breakfast masala dosa') === 'breakfast masala dosa',
     'the first block is kept as it is');
+}
+
+console.log('\nthe speech in front of a loop is the user’s own, and it is kept');
+// The loop check used to throw the WHOLE transcript away, not just the
+// loop. So saying "breakfast masala dosa" and then having a hum set off
+// Whisper's "I'm sorry. I'm sorry." left the user with nothing at all —
+// the app said "nothing was picked up" when it had picked up exactly what
+// they said.
+{
+  let transcript = '';
+  const blocks = [
+    'breakfast masala dosa',
+    "I'm sorry. I'm sorry.",
+    "I'm sorry. I'm sorry.",
+  ];
+  for (const block of blocks) {
+    const next = foldTranscript(transcript, block);
+    if (next === null) { transcript = ''; break; }
+    transcript = next;
+  }
+  ok(
+    transcript === 'breakfast masala dosa',
+    'real speech in front of a loop that spans blocks is kept',
+    `transcript was "${transcript}"`,
+  );
+}
+{
+  // The same loop inside ONE block. The block is not rubbish from end to
+  // end — only from where the repetition starts.
+  const kept = trimLoop("breakfast masala dosa. I'm sorry. I'm sorry. I'm sorry. I'm sorry.");
+  ok(
+    !!kept && /^breakfast masala dosa\b/.test(kept) && !/sorry/i.test(kept),
+    'a loop at the end of a block is cut off and the speech before it is kept',
+    String(kept),
+  );
+}
+{
+  ok(
+    trimLoop("I'm sorry. I'm sorry. I'm sorry. I'm sorry.") === null,
+    'a block that is nothing but a loop is dropped',
+  );
+}
+{
+  ok(
+    trimLoop('breakfast masala dosa') === 'breakfast masala dosa',
+    'ordinary speech is untouched',
+  );
+}
+{
+  // The same dish twice in a day is not a loop, and must stay in the plan.
+  ok(
+    trimLoop('for lunch butter chicken') === 'for lunch butter chicken',
+    'a dish said once is untouched',
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

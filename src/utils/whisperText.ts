@@ -66,14 +66,20 @@ export const FILLERS = new Set([
 ]);
 
 /**
- * True when the same words repeat back to back.
+ * Where a repeated phrase starts in a list of words, or -1 when there is none.
  *
  * Whisper's signature loop is a repeated PHRASE: "I'm sorry. I'm sorry.
  * I'm sorry." That has plenty of distinct words, so a check for repeated
  * words alone never caught it — and a loop that slips through puts a whole
  * sentence of rubbish into the plan.
+ *
+ * WHY THE START AND NOT ONLY THE FACT: the model only starts repeating at
+ * some word, and everything BEFORE that word is the user's own speech. So
+ * the place the loop begins is what decides how much of the transcript has
+ * to go.
  */
-export function hasRepeatedPhrase(words: string[]): boolean {
+export function repeatedPhraseStart(words: string[]): number {
+  let earliest = -1;
   for (let n = 1; n * 2 <= words.length; n++) {
     // A single word needs more repeats before it counts: "dal dal" is
     // someone saying dal twice, but "dal dal dal dal" is a loop.
@@ -89,17 +95,48 @@ export function hasRepeatedPhrase(words: string[]): boolean {
         if (words.slice(i, i + n).join(' ') !== gram) break;
         repeats++;
       }
-      if (repeats >= needed) return true;
+      // The EARLIEST start wins. A longer phrase can begin before the
+      // shorter one that happened to be found first, and the shorter one
+      // would then be read as part of the user's speech.
+      if (repeats >= needed && (earliest < 0 || start < earliest)) earliest = start;
     }
   }
-  return false;
+  return earliest;
+}
+
+/** True when the same words repeat back to back. */
+export function hasRepeatedPhrase(words: string[]): boolean {
+  return repeatedPhraseStart(words) >= 0;
+}
+
+/**
+ * Cut a repeated phrase out of a piece of text.
+ *
+ * Returns the text with the loop removed, or null when the whole thing WAS
+ * the loop and nothing is left.
+ *
+ * WHY THE LOOP IS CUT AND NOT THE WHOLE TEXT DROPPED: the model only starts
+ * repeating at some word, and the words in front of that are the user's own
+ * speech. Dropping those too meant that saying "breakfast masala dosa" and
+ * then having a hum set off Whisper's "I'm sorry. I'm sorry." left the user
+ * with NOTHING — the app said "nothing was picked up" when it had picked up
+ * exactly what they said.
+ */
+export function trimLoop(text: string): string | null {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+  const rawWords = raw.split(/\s+/);
+  const start = repeatedPhraseStart(rawWords.map((w) => bareWord(w.toLowerCase())));
+  if (start < 0) return raw;
+  const kept = rawWords.slice(0, start).join(' ').trim();
+  return kept || null;
 }
 
 /**
  * Fold a newly transcribed block into the transcript.
  *
- * Returns the transcript to show, or null when the block has to be thrown
- * away — in which case the caller starts again from empty.
+ * Returns the transcript to show, or null when there is nothing left to
+ * show — in which case the caller starts again from empty.
  *
  * A LOOP CAN SPAN BLOCKS.
  *
@@ -108,16 +145,15 @@ export function hasRepeatedPhrase(words: string[]): boolean {
  * together they read "I'm sorry. I'm sorry. I'm sorry." six times over, and
  * that is what reached the plan. So the joined transcript is checked too.
  *
- * When it loops, the whole thing is the model repeating itself, so it is
- * dropped rather than kept in part. Leaving nothing is the honest answer:
- * the user is told nothing was picked up, instead of being handed six
- * sentences of rubbish.
+ * WHAT IS DROPPED IS THE LOOP, NOT EVERYTHING IN FRONT OF IT: the words
+ * before the model starts repeating are the user's own speech. Throwing
+ * those away as well meant that a hum arriving after the user had said
+ * their breakfast left them with an empty transcript — "nothing was picked
+ * up" — when their breakfast had been picked up perfectly well.
  */
 export function foldTranscript(current: string, text: string): string | null {
   const joined = current ? `${current} ${text}` : text;
-  const words = joined.toLowerCase().split(/\s+/).map(bareWord);
-  if (hasRepeatedPhrase(words)) return null;
-  return joined;
+  return trimLoop(joined);
 }
 
 /**
