@@ -440,8 +440,24 @@ const TIME_RE =
 function tidy(text: string): string {
   let out = text
     .toLowerCase()
-    .replace(/[.,!?;:"'`]/g, ' ')
+    // The time is taken out BEFORE the punctuation is.
+    //
+    // WHY: a time is written with dots — "8 p.m." — and the rule that looks
+    // for a time needs those dots to tell "p.m." from a bare "p". The
+    // punctuation was stripped first, so the rule never found the time, and
+    // what was left of it stayed in the dish:
+    //
+    //   "dinner at 8 p.m."  ->  the dinner was "p m"
+    //
+    // A dish called "p m" matches no recipe in the catalogue, so the plan
+    // held a dish nobody could shop for and the shopping list bought nothing
+    // for that dinner. The user said when, not what.
+    //
+    // WHY IT IS SAFE TO TAKE THE TIME OUT FIRST: the rule only matches a
+    // time, so nothing else is touched by the order — "8.30" is not a time
+    // and is left exactly as it was.
     .replace(TIME_RE, ' ')
+    .replace(/[.,!?;:"'`]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
