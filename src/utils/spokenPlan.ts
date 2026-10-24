@@ -257,7 +257,20 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // rather than writing a dish the user said they did not want.
     if (NEGATION_RE.test(dish)) continue;
 
-    if (isMeaningful(dish) && !out[mark.slot]) {
+    // The LAST mention of a meal wins.
+    //
+    // WHY, AND WHY IT MATTERS: people correct themselves while they speak.
+    // "Lunch rice, dinner dal, lunch salad" means SALAD — the second "lunch"
+    // is the one the user settled on. The guard that kept the FIRST one
+    // dropped the second dish on the floor: "salad" appeared nowhere on the
+    // sheet, nowhere in the plan and nowhere in the shopping list, and
+    // nothing anywhere said it had been heard. Words the user actually said
+    // vanished without a trace, which is the one thing this parser must never
+    // do — an empty slot is honest, and a silently discarded dish is not.
+    //
+    // The dish still has to be a real one: a meal word with nothing after it
+    // ("...and breakfast") must not WIPE a dish that was already given.
+    if (isMeaningful(dish)) {
       out[mark.slot] = dish;
     }
   }

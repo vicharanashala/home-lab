@@ -48,8 +48,36 @@ check('breakfast oats, lunch vegetable rice, dinner chicken curry', {
   dinner: 'chicken curry',
 });
 
-console.log('\nthe same meal mentioned twice');
-check('lunch rice, dinner dal, lunch salad', { lunch: 'rice', dinner: 'dal' });
+console.log('\nthe same meal mentioned twice — the last one wins');
+// People correct themselves while they speak. "Lunch rice, dinner dal, lunch
+// salad" settles on SALAD: the second "lunch" is the one the user came back
+// to. The parser kept the FIRST mention and dropped the second, so the dish
+// the user actually settled on appeared nowhere — not on the sheet, not in
+// the plan, not on the shopping list — while the plan held a dish the user
+// had already taken back. A silently discarded dish is the one thing this
+// parser must never do.
+//
+// The same rule fixes the dish the user had already finished with. "Lunch
+// biryani actually no" was filed as lunch "biryani actually no", which matches
+// no recipe in the catalogue and poisons the taste model forever.
+check('lunch rice, dinner dal, lunch salad', { lunch: 'salad', dinner: 'dal' });
+check('for lunch rice, for dinner dal, for lunch salad', { lunch: 'salad', dinner: 'dal' });
+check('breakfast oats, lunch rice, breakfast upma', { breakfast: 'upma', lunch: 'rice' });
+check('dinner dal, dinner fish', { dinner: 'fish' });
+check('lunch biryani actually no, lunch salad', { lunch: 'salad' });
+// The dish spoken IN FRONT of the meal word wins on the same terms:
+// "dal for lunch" is the last thing said about lunch, so it is what lunch holds.
+check('lunch rice, dal for lunch', { lunch: 'dal' });
+
+console.log('\na meal mentioned twice with nothing after it keeps the dish it had');
+// The second mention carries no dish of its own, so it must NOT wipe the one
+// the slot already had. An empty slot is honest; a wiped slot is a dish the
+// user said, thrown away.
+check('lunch rice and breakfast', { lunch: 'rice' });
+check('breakfast oats, lunch rice, breakfast', { breakfast: 'oats', lunch: 'rice' });
+// A refusal is not a dish either, so it does not replace the dish already
+// there: "no salad for lunch" refuses the salad, it does not clear the slot.
+check('lunch rice, no salad for lunch', { lunch: 'rice' });
 
 console.log('\n"for" in front of the meal word is how people talk, not a connector');
 // These are the sentences people actually dictate. The old parser read the
