@@ -502,7 +502,33 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   // The contraction is expanded first so that EVERY rule below — the one
   // that reads the text in front of a meal word and the one that reads the
   // dish itself — sees the refusal in the same words.
-  const src = (text || '').trim().replace(CONTRACTED_REFUSAL_RE, 'do not');
+  //
+  // The sentence end is turned into a clause end straight after, because
+  // EVERY rule below that reads a clause looks for a comma: the rule that
+  // decides whether a refusal belongs to the meal in front of it, the rule
+  // that finds the dish a refusal names, and the rule that says a refusal
+  // standing alone may reach for another meal.
+  //
+  // WHY: Whisper punctuates what it hears, and it ends a sentence with a
+  // FULL STOP as readily as with a comma. The rules read a comma as the end
+  // of a clause, so a full stop was not one — and the difference is silent,
+  // and costly in both directions:
+  //
+  //   "breakfast dal, no it, lunch dal"   -> lunch dal    (the comma ends it)
+  //   "breakfast dal. no it. lunch dal."  -> nothing       (the full stop does not)
+  //
+  // The lunch dal the user had just asked for was DROPPED — a dish the user
+  // said out loud, gone with nothing saying so — and in the other shape the
+  // dal the user REFUSED stayed in the plan, which is the one thing the
+  // shopping list buys.
+  //
+  // WHY A FULL STOP AND NOT EVERY DOT: "8 p.m." is a time and not a sentence
+  // end, and a dot between digits is a decimal. Only a run of sentence marks
+  // followed by a space or the end of the text is a sentence end.
+  const src = (text || '')
+    .trim()
+    .replace(CONTRACTED_REFUSAL_RE, 'do not')
+    .replace(/[.!?]+(?=\s|$)/g, ',');
   if (!src) return {};
 
   // Locate every slot marker, keeping the LENGTH OF THE MATCH. Earlier this
