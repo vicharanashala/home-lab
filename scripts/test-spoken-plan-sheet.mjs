@@ -145,6 +145,59 @@ console.log('\nthe user types over the slot');
   ok(both.linkedId === typed.best.recipe.id, 'and the plan links the typed dish', String(both.linkedId));
 }
 
+console.log('\n"did you mean" always offers the dish it means');
+{
+  // The regression: the chips are the OTHER dishes, so the dish the slot
+  // already holds is not offered back as an alternative to itself. But the
+  // slot's text and the best match are compared by DISH, and "masala dosa
+  // recipe" and "Masala dosa" are ONE dish by that very comparison — so
+  // the best match was dropped and the note said "did you mean" with
+  // nothing at all to tap.
+  //
+  // The matcher KNEW the dish — "Masala dosa", at 0.68 — but the extra
+  // word "recipe" is what took it under the confidence bar, and the sheet
+  // then asked a question it offered no answer to.
+  const heard = matchDish('masala dosa recipe', catalogue, preferredIds);
+  const both = bothWays(heard, 'masala dosa recipe');
+  ok(both.kind === 'suggest', 'the sheet asks which dish was meant', both.kind);
+  ok(both.chips.length > 0, 'and it offers something to tap', both.chips.join(', '));
+  ok(
+    both.chips.includes(heard.best.name),
+    'and the dish it means is on the list',
+    both.chips.join(', '),
+  );
+  ok(
+    both.linkedId === null,
+    'and the plan links no recipe until the user answers',
+    String(both.linkedId),
+  );
+}
+
+console.log('\nno "did you mean" is ever left without an answer');
+{
+  // The property behind the case above, checked across the catalogue: a
+  // sheet that asks which dish was meant must offer the dish it means.
+  //
+  // The trailing "recipe" is what a person writes when they name a dish
+  // they intend to cook, and it is exactly what pushes a good match under
+  // the confidence bar — so it is the shape this has to hold for.
+  let asked = 0;
+  let unanswered = 0;
+  for (const r of INDIAN_RECIPES) {
+    const heard = matchDish(`${r.name} recipe`, catalogue, preferredIds);
+    if (!heard.best) continue;
+    const note = sheetNoteFor(heard, `${r.name} recipe`);
+    if (note.kind !== 'suggest') continue;
+    asked += 1;
+    if (!note.chips.length) {
+      unanswered += 1;
+      console.log(`    no answer for ${JSON.stringify(r.name)}`);
+    }
+  }
+  ok(asked > 0, 'the check actually reaches the asking state', String(asked));
+  ok(unanswered === 0, 'every "did you mean" offers a dish', `${unanswered} of ${asked}`);
+}
+
 console.log('\nthe sheet and the plan never disagree');
 {
   // Every scenario above, checked the one way that matters: whatever the

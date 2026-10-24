@@ -69,11 +69,33 @@ export function sheetNoteFor(
     return { kind: 'none', matchedName: null, chips: [] };
   }
 
-  const chips = [best, ...resolution.alternatives].filter(
-    (m) =>
-      !sameDish(m.name, current) &&
-      (!decision.matched || !sameDish(m.name, best.name)),
-  );
+  // The chips are the dishes on offer beside the slot.
+  //
+  // WHY THE BEST MATCH IS NOT DROPPED WHEN THE SHEET IS ASKING: the chips
+  // are filtered by DISH, so the dish the slot already holds is not offered
+  // back as an alternative to itself. But the slot's text and the best
+  // match are compared by dish too, and "masala dosa recipe" and "Masala
+  // dosa" are ONE dish by that very comparison — so the best match was
+  // filtered out and the note said "did you mean" with nothing to tap.
+  //
+  // That is not a rare spelling. The matcher KNEW the dish — "Masala dosa",
+  // at 0.68 — but the extra word "recipe" is what took it under the
+  // confidence bar, and the sheet then asked a question it offered no
+  // answer to. Twenty of the twenty-eight curated dishes reached that
+  // state, and 6443 of the catalogue's own names did.
+  //
+  // So while the match is NOT confident, the dish the sheet is suggesting
+  // is always on the list: that chip IS the answer to "did you mean".
+  //
+  // Once the match IS confident the best is left out again — the note
+  // already names it, and a chip saying the same thing twice is the sheet
+  // asking its own question two ways.
+  const chips = [best, ...resolution.alternatives].filter((m) => {
+    if (!decision.matched) {
+      return sameDish(m.name, best.name) || !sameDish(m.name, current);
+    }
+    return !sameDish(m.name, current) && !sameDish(m.name, best.name);
+  });
 
   return {
     kind: decision.matched ? 'matched' : 'suggest',
