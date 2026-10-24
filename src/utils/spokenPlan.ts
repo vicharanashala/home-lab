@@ -236,6 +236,12 @@ function withoutFillers(text: string): string {
  * merely CONTAINS the named dish is a different question, and it is not
  * answered here.
  *
+ * WHY THE CASE IS NOT PART OF THE QUESTION: the dish a refusal names is
+ * lowercased by the parser and the dish the day holds is a recipe's own
+ * name, and every recipe in the catalogue begins with a capital. The rule
+ * folds the case on both sides so that "no palak paneer for dinner" empties
+ * a day holding "Palak paneer" — see the comment inside the function.
+ *
  * @param named the dish the refusal names
  * @param held  the dish the plan is holding
  *
@@ -247,7 +253,30 @@ function withoutFillers(text: string): string {
 export function namesHeldDish(named: string, held: string | undefined): boolean {
   if (!named || !held) return false;
   if (named === held) return true;
-  return withoutFillers(named) === withoutFillers(held);
+  //
+  // WHY THE CASE IS FOLDED ON BOTH SIDES: the dish a refusal NAMES is worked
+  // out by `tidy`, which lowercases everything — so the refusal says "palak
+  // paneer". The dish the DAY holds is the recipe's own name, and every
+  // recipe in the catalogue is written with a capital: "Palak paneer". The
+  // two sides of this question could therefore never be equal for a single
+  // real dish in the app, and the refusal did nothing:
+  //
+  //   day holds "Palak paneer"   user says "no palak paneer for dinner"
+  //                             -> the meal was NOT emptied
+  //
+  // The shopping list buys the plan, so the refused dish stayed on the list
+  // — and the sheet said nothing at all, because the utterance produced
+  // neither a plan nor a clear, which reads as "could not tell which meal it
+  // was for". 5887 of the 5894 scraped recipe names begin with a capital,
+  // and all 42 curated ones do, so this was every real dish in the app.
+  //
+  // WHY BOTH SIDES AND NOT ONLY THE REFUSAL: the dish the day holds is
+  // written by whoever put it there — a recipe name, a typed correction, a
+  // dish heard and matched — and the rule must not depend on which of them
+  // happened to capitalise it. Folding the case first also lets the fillers
+  // come off a name that is written "Want Rice", which `withoutFillers`
+  // alone cannot do: its filler set is lowercase.
+  return withoutFillers(named.toLowerCase()) === withoutFillers(held.toLowerCase());
 }
 
 /**

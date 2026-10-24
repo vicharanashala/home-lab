@@ -224,5 +224,51 @@ console.log('\nand a field the user empties again does NOT take the refusal away
   );
 }
 
+console.log('\nand a refusal names a dish the way the RECIPE spells it');
+{
+  // The dish the day holds is the recipe's own name, and every recipe in the
+  // catalogue begins with a capital — "Palak paneer". The dish the refusal
+  // names is lowercased by the parser, so the two sides of the question "is
+  // this the dish the user refused?" could never be equal for a single real
+  // dish in the app.
+  //
+  // The refusal did nothing: the meal was not emptied, the refused dish
+  // stayed on the plan, the shopping list bought it, and the sheet said
+  // nothing at all because the utterance produced neither a plan nor a clear.
+  const day = dayHolding({ dinner: 'Palak paneer' });
+  const spoken = parseSpokenPlanResult('no palak paneer for dinner');
+
+  check(
+    'the refusal empties the meal holding the recipe by its own name',
+    spokenPlanClears(spoken.refusals, spoken.plan, day),
+    ['dinner'],
+  );
+
+  check(
+    'and the dish the user refused is off the plan afterwards',
+    applySpoken('no palak paneer for dinner', day).holds,
+    { breakfast: null, lunch: null, dinner: null },
+  );
+
+  // WHY THE CASE IS FOLDED AND NOT THE MATCH LOOSENED: a dish that MERELY
+  // CONTAINS the named dish is a different question, and the rule has always
+  // declined to answer it. "no dal" must not take away a day holding
+  // "Dal tadka" — the user named one dish and the day holds another.
+  check(
+    'a dish that merely contains the named one is left alone',
+    applySpoken('no dal for dinner', dayHolding({ dinner: 'Dal tadka' })).holds,
+    { breakfast: null, lunch: null, dinner: 'Dal tadka' },
+  );
+
+  // The other way round: the day holds a name the user would type in any
+  // case, and the refusal is spoken.
+  check(
+    'a refusal still empties a meal the day holds in a different case',
+    applySpoken('no DAL MAKHANI for dinner', dayHolding({ dinner: 'Dal makhani' }))
+      .holds,
+    { breakfast: null, lunch: null, dinner: null },
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
