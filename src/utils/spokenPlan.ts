@@ -159,19 +159,62 @@ function dishBeforeRefusal(text: string): string | null {
 }
 
 /**
- * True when the text ENDS with a refusal word that is attached to whatever
- * comes next.
+ * The words that can sit between a refusal and the meal word it refuses.
+ *
+ * "don't want lunch dal" IS a refusal of the lunch, but "want" is in the
+ * way. The rule that looked for a refusal at the very end of the text in
+ * front of the meal word saw "want", decided there was no refusal, and
+ * wrote the lunch with the dish the user had REFUSED — and the shopping
+ * list, which buys what the plan holds, bought it.
+ *
+ * WHY THEY ARE NOT IN THE NOISE SET: there they would be stripped out of
+ * every dish ("lunch want rice" would become "rice"), which is a different
+ * rule and a wider change than this needs. Here they are only stepped over
+ * while looking for the refusal they hide.
+ */
+const REFUSAL_FILLERS = new Set([
+  'want', 'wants', 'wanna', 'need', 'needs', 'really',
+]);
+
+/**
+ * True when the text in front of the meal word refuses that meal.
  *
  * "no lunch dal" refuses the lunch — the refusal sits in front of the MEAL
  * WORD, which is the one place the dish-only rule could not see it.
  *
- * WHY ONLY WHITESPACE BETWEEN: "fish, no, lunch rice" puts a comma between
+ * WHY THE COMMA STOPS THE LOOK: "fish, no, lunch rice" puts a comma between
  * the refusal and the meal word, so the refusal belongs to the meal before
  * it and the lunch is a dish of its own.
+ *
+ * WHY THE FILLERS ARE STEPPED OVER: "don't want lunch dal" is the same
+ * refusal as "no lunch dal", but "want" sits between the refusal and the
+ * meal word. The old rule looked only at the word immediately before the
+ * meal word, so it saw "want" and found no refusal — and the refused dish
+ * went into the plan.
+ *
+ * WHY THE DISH IN FRONT STILL WINS: "no dal lunch rice" is "no dal" — the
+ * dal was refused — and "rice" is the lunch. The refusal attaches to the
+ * dish in front of it, so the walk stops at the first word that carries
+ * meaning and asks whether THAT word is a refusal.
  */
 function refusesBefore(text: string): boolean {
-  const m = text.toLowerCase().match(/([a-z]+)\s*$/);
-  return !!m && REFUSAL_WORDS.includes(m[1]);
+  const commaAt = text.lastIndexOf(',');
+  const afterComma = commaAt >= 0 ? text.slice(commaAt + 1) : text;
+
+  const words = afterComma
+    .toLowerCase()
+    .replace(/[.,!?;:"'`]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  // Walk back from the meal word, stepping over the words that carry no
+  // meaning of their own, and stop at the first one that does.
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = words[i];
+    if (NOISE.has(w) || REFUSAL_FILLERS.has(w)) continue;
+    return REFUSAL_WORDS.includes(w);
+  }
+  return false;
 }
 
 /** A time, not a dish: "at 8", "at 8 pm", "8 pm". */

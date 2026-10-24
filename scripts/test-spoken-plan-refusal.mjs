@@ -160,5 +160,46 @@ console.log('\n"nope" on its own does not swallow the meal that follows it');
 check('nope, lunch rice', { lunch: 'rice' });
 check('nope dal, lunch rice', { lunch: 'rice' });
 
+console.log('\na refusal with a word in front of the meal word');
+// "don't want lunch dal" is the same refusal as "no lunch dal", but "want"
+// sits between the refusal and the meal word.
+//
+// The rule that looked for a refusal at the very end of the text in front
+// of the meal word saw "want", found no refusal, and wrote the lunch with
+// the dish the user had REFUSED. The shopping list buys what the plan
+// holds, so the refused dal was bought.
+check("don't want lunch dal", {});
+check('do not want lunch dal', {});
+check('no need lunch dal', {});
+check('not really lunch dal', {});
+check('no want lunch dal', {});
+check("I don't want lunch dal", {});
+check("don't want dinner dal", {});
+check("don't want breakfast dal", {});
+
+// The same refusal, said the same way, has to refuse the same meal.
+for (const meal of ['lunch', 'dinner', 'breakfast']) {
+  const answers = ['no', 'not', 'skip', 'avoid', 'nope', 'nah', "don't"].map((w) =>
+    JSON.stringify(parseSpokenPlan(`${w} want ${meal} dal`)),
+  );
+  if (answers.every((a) => a === answers[0])) {
+    passed += 1;
+    console.log(`  ok   ${JSON.stringify(`${'no|not|skip|avoid|nope|nah|don\'t'} want ${meal} dal`)} -> ${answers[0]}`);
+  } else {
+    failed += 1;
+    console.log(`  FAIL ${JSON.stringify(`${meal}`)} -> ${answers.join(' | ')}`);
+  }
+}
+
+console.log('\na dish in front of the meal word still takes the refusal');
+// The refusal attaches to the dish in front of it, not to the meal. "no dal
+// lunch rice" is "no dal" — the dal was refused — and "rice" is the lunch.
+// A fix that refused the meal here would throw away a dish the user DID
+// ask for.
+check('no dal lunch rice', { lunch: 'rice' });
+check('no dal, lunch rice', { lunch: 'rice' });
+check('no dal for lunch', {});
+check('dal for lunch, rice for dinner', { lunch: 'dal', dinner: 'rice' });
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
