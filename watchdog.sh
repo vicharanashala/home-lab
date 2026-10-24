@@ -38,6 +38,17 @@ NODE_BIN="/Users/adhyathmika/local/node-v24.16.0-darwin-arm64/bin/node"
 TTS_PY="$HOME/tools/python/bin/python3.12"
 TTS_SERVER="$HOME/tools/tts/speak_server.py"
 
+# The rule that decides whether the bridge is running the code on disk. It
+# lives in its own file because this script is a loop that never returns, and
+# a rule that decides whether the app restarts has to be able to be tested.
+# See scripts/lib/bridge-stale.sh for why it is there at all.
+. "$ROOT/scripts/lib/bridge-stale.sh"
+
+# Only one supervisor may restart the bridge at a time. launchd has left more
+# than one copy of this script running over the years, and every copy runs
+# this loop.
+RESTART_LOCK="/tmp/hh_bridge_restart.lock"
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
@@ -75,6 +86,43 @@ while true; do
     start_bridge
     sleep 5
     if listening "$BRIDGE_PORT"; then log "bridge back up"; else log "bridge FAILED"; fi
+  else
+    # The bridge is ALIVE. Is it running the code that is on disk?
+    #
+    # WHY THIS IS HERE: the bridge was restarted only when the port died, so
+    # a committed change to the bridge never reached the app until the
+    # bridge happened to crash for some other reason. Every check was green
+    # and the fix was not running — the quietest kind of broken. The
+    # overwatch CLI resolution is the example: committed at 19:21, and the
+    # bridge serving the link had been running since 14:34, so every
+    # overwatch call still died with the very error the commit had fixed.
+    #
+    # WHY THE STATES ARE SEPARATE: "the code on disk does not parse" and
+    # "the bridge is up to date" both mean do not restart, but only one of
+    # them is a problem worth saying out loud. A file being written right now
+    # does not parse, and restarting the bridge onto it would take the app
+    # down — so the running bridge is left alone, and it is said so.
+    state="$(bridge_code_state "$BRIDGE_PORT" "$BRIDGE_DIR")"
+    case "$state" in
+      stale)
+        if bridge_take_restart_lock "$RESTART_LOCK"; then
+          log "bridge is running older code — restarting it onto the code on disk"
+          bridge_restart "$BRIDGE_PORT" "$BRIDGE_DIR" "$NODE_BIN" /tmp/hh_bridge.log
+          sleep 5
+          if listening "$BRIDGE_PORT"; then
+            log "bridge back up on the current code"
+          else
+            log "bridge FAILED to come back on the current code"
+          fi
+          bridge_release_restart_lock "$RESTART_LOCK"
+        else
+          log "another supervisor is restarting the bridge — leaving it to them"
+        fi
+        ;;
+      unparsable)
+        log "bridge code on disk does not parse — leaving the running bridge alone"
+        ;;
+    esac
   fi
 
   # ── Voice daemon ─────────────────────────────────────────────────────────
