@@ -123,6 +123,122 @@ export function spokenPlanClears(
 }
 
 /**
+ * What the utterance did, and what the sheet should therefore say about it.
+ *
+ * WHY IT IS THREE WORDS AND NOT A BOOLEAN: the sheet has three different
+ * things to say, and they are three different things that happened — the plan
+ * is ready, the refusal had nothing to remove, or nothing was understood at
+ * all. A boolean cannot tell them apart.
+ *
+ * WHY THE MIDDLE ONE EXISTS: a refusal that names a dish nothing on the plan
+ * holds is a refusal the app UNDERSTOOD perfectly — it is the meal that was
+ * named, and the dish. There was simply no dal to remove. Saying "could not
+ * tell which meal it was for" about that is the app claiming it did not
+ * understand when it did, and it sends the user off to repeat themselves,
+ * slowly, to be told the same thing again.
+ */
+export interface SpokenPlanOutcome {
+  /**
+   * 'plan'     the utterance filled a meal or emptied one — the sheet opens.
+   * 'refused'  the utterance refused a dish that nothing on the plan holds.
+   * 'nothing'  the utterance named neither a meal nor a dish.
+   */
+  kind: 'plan' | 'refused' | 'nothing';
+  /** The meals a refusal empties. */
+  cleared: MealSlot[];
+  /** The refusals the utterance made. */
+  refusals: SpokenRefusal[];
+}
+
+/**
+ * What the utterance did.
+ *
+ * @param plan     the dishes the utterance filed
+ * @param refusals the dishes the utterance refused
+ * @param day      the day as it stands, for the dishes it is holding
+ */
+export function spokenPlanOutcome(
+  plan: SpokenPlan,
+  refusals: SpokenRefusal[],
+  day: MealPlanDayPlan | undefined,
+): SpokenPlanOutcome {
+  const cleared = spokenPlanClears(refusals, plan, day);
+  // A meal the utterance FILLED is a plan, even when a refusal beside it
+  // emptied nothing: the user asked for a dish, and the sheet has to show it.
+  const filled = MEAL_SLOTS.some((slot) => (plan[slot] || '').trim());
+  if (filled || cleared.length) return { kind: 'plan', cleared, refusals };
+  return { kind: refusals.length ? 'refused' : 'nothing', cleared, refusals };
+}
+
+/**
+ * What to say about a refusal that had nothing to remove.
+ *
+ * WHY IT NAMES THE MEAL THE REFUSAL NAMED: "there is no dal to remove from
+ * the dinner" is true whatever the day holds — even when the day is holding
+ * dal in the LUNCH, because the refusal named the dinner and said nothing
+ * about the lunch. A message that only named the dish would be wrong in that
+ * case.
+ *
+ * WHY A REFUSAL WITH NO MEAL NAMES THE PLAN: the refusal is about every meal
+ * holding that dish, so the plan is the thing it is about.
+ *
+ * @param refusals the refusals that had nothing to remove
+ */
+export function spokenPlanRefusalMessage(refusals: SpokenRefusal[]): string {
+  const named = refusals.filter((refusal) => refusal.dish);
+  if (!named.length) return 'there was nothing to remove';
+  if (named.length === 1) {
+    const only = named[0];
+    return only.slot
+      ? `there is no ${only.dish} to remove from the ${only.slot}`
+      : `there is no ${only.dish} to remove from the plan`;
+  }
+  return `there is nothing to remove for ${named.map((refusal) => refusal.dish).join(' or ')}`;
+}
+
+/**
+ * Where the words came from.
+ *
+ * WHY THE SHEET SAYS IT DIFFERENTLY FOR EACH: the voice path quotes what it
+ * heard, and the typed path quotes what was typed — "Heard "no dal"" is a
+ * lie to a user who typed it.
+ */
+export type SpokenPlanInput = 'voice' | 'typed';
+
+/**
+ * What the sheet says when the utterance produced nothing to apply.
+ *
+ * WHY IT IS HERE AND NOT IN THE COMPONENT: the sheet is a React component and
+ * cannot be run from a script, so a message written inside it cannot be
+ * checked. This message is what the user reads when the app did not do what
+ * they asked, and it has to be true — see `spokenPlanOutcome` for why there
+ * are three of them.
+ *
+ * @param text    what was heard or typed
+ * @param outcome what the utterance did
+ * @param input   where the words came from
+ */
+export function spokenPlanError(
+  text: string,
+  outcome: SpokenPlanOutcome,
+  input: SpokenPlanInput = 'voice',
+): string {
+  const said = text.trim();
+  if (!said) {
+    return input === 'voice'
+      ? 'Nothing was picked up. Hold the phone closer and speak a little louder.'
+      : 'Type the day first, or dictate into this box.';
+  }
+  const quoted = input === 'voice' ? `Heard "${said}"` : `"${said}"`;
+  if (outcome.kind === 'refused') {
+    return `${quoted} — ${spokenPlanRefusalMessage(outcome.refusals)}.`;
+  }
+  return input === 'voice'
+    ? `Heard "${said}" but could not tell which meal it was for. Try saying "breakfast …, lunch …, dinner …".`
+    : 'Could not tell which meal that was for. Include "breakfast", "lunch" or "dinner".';
+}
+
+/**
  * The entries to write for a spoken plan.
  *
  * A meal the user did not mention is left out entirely — nothing is

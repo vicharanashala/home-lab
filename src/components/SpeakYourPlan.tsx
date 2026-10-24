@@ -4,8 +4,8 @@ import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES, AUTO_MODEL } from '../hoo
 import { parseSpokenPlanResult } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
 import { resolveSpokenPlan, retypeDish, pickDish } from '../utils/spokenRecipeMatch';
-import { spokenPlanClears, spokenPlanEditSlot } from '../utils/spokenPlanEntries';
-import type { SpokenDraft } from '../utils/spokenPlanEntries';
+import { spokenPlanClears, spokenPlanEditSlot, spokenPlanError, spokenPlanOutcome } from '../utils/spokenPlanEntries';
+import type { SpokenDraft, SpokenPlanOutcome } from '../utils/spokenPlanEntries';
 import { sheetNoteFor } from '../utils/spokenPlanSheet';
 import type { DishResolution } from '../utils/spokenRecipeMatch';
 import type { MealPlanDayPlan, MealSlot, Recipe } from '../types';
@@ -89,16 +89,24 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
    * refusal looks like — and a plan of nothing used to read as "the user did
    * not say anything about any meal", which is not what they said at all.
    */
-  const buildDraft = (text: string): SpokenDraft | null => {
+  const buildDraft = (
+    text: string,
+  ): { draft: SpokenDraft | null; outcome: SpokenPlanOutcome } => {
     const { plan: parsed, refusals } = parseSpokenPlanResult(text);
-    // The meals a refusal empties, worked out against the day as it stands.
-    // A meal the utterance filled is not one of them: "no dal for dinner,
-    // biryani for dinner" leaves the dinner holding the biryani.
-    const cleared = spokenPlanClears(refusals, parsed, dayPlan);
-    if (!parsed.breakfast && !parsed.lunch && !parsed.dinner && !cleared.length) return null;
+    // What the utterance did: a plan to fill, a refusal with nothing to
+    // remove, or nothing understood. The three are told apart here so that
+    // the message the user reads is the one that is true.
+    //
+    // WHY THE REFUSAL WITH NOTHING TO REMOVE IS ITS OWN OUTCOME: the app
+    // understood that utterance perfectly — the meal and the dish were both
+    // named — and there was simply no dal to remove. Telling the user the
+    // app "could not tell which meal it was for" was the app claiming not to
+    // understand when it did, and it sent the user off to repeat themselves.
+    const outcome = spokenPlanOutcome(parsed, refusals, dayPlan);
+    if (outcome.kind !== 'plan') return { draft: null, outcome };
     const { plan, resolutions: found } = resolveSpokenPlan(parsed, catalogue, preferredIds);
     setResolutions(found);
-    return { plan, refusals };
+    return { draft: { plan, refusals }, outcome };
   };
 
   /**
@@ -144,17 +152,16 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
     try {
       whisper.stop();
       const text = await whisper.flush();
-      const parsed = buildDraft(text);
-      if (!parsed) {
-        setError(
-          text.trim()
-            ? `Heard "${text.trim()}" but could not tell which meal it was for. Try saying "breakfast …, lunch …, dinner …".`
-            : 'Nothing was picked up. Hold the phone closer and speak a little louder.',
-        );
+      const { draft, outcome } = buildDraft(text);
+      if (!draft) {
+        // The message is the one that is true: an utterance the app
+        // understood but had nothing to do with says so, rather than
+        // claiming the app could not tell which meal it was for.
+        setError(spokenPlanError(text, outcome));
         return;
       }
       setError(null);
-      setDraft(parsed);
+      setDraft(draft);
     } finally {
       flushingRef.current = false;
       setFlushing(false);
@@ -470,17 +477,13 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
             <button
               type="button"
               onClick={() => {
-                const parsed = buildDraft(typed);
-                if (!parsed) {
-                  setError(
-                    typed.trim()
-                      ? 'Could not tell which meal that was for. Include "breakfast", "lunch" or "dinner".'
-                      : 'Type the day first, or dictate into this box.',
-                  );
+                const { draft, outcome } = buildDraft(typed);
+                if (!draft) {
+                  setError(spokenPlanError(typed, outcome, 'typed'));
                   return;
                 }
                 setError(null);
-                setDraft(parsed);
+                setDraft(draft);
               }}
               disabled={!typed.trim()}
               className="btn-primary flex-1 !py-1.5 text-xs disabled:opacity-50"

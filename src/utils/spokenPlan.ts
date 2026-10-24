@@ -236,7 +236,7 @@ function withoutFillers(text: string): string {
  * merely CONTAINS the named dish is a different question, and it is not
  * answered here.
  *
- * WHY THE CASE IS NOT PART OF THE QUESTION: the dish a refusal names is
+ * WHY THE CASE IS FOLDED ON BOTH SIDES: the dish a refusal names is
  * lowercased by the parser and the dish the day holds is a recipe's own
  * name, and every recipe in the catalogue begins with a capital. The rule
  * folds the case on both sides so that "no palak paneer for dinner" empties
