@@ -177,6 +177,120 @@ const REFUSAL_FILLERS = new Set([
 ]);
 
 /**
+ * The words that point back at the dish just named.
+ *
+ * "for breakfast dal, no it" refuses the dal — "it" IS the dal. A bare "no"
+ * names nothing, and a refusal that names nothing removes nothing:
+ * "lunch dal, no" is the lunch dal, and the test that says so is right.
+ *
+ * WHY "IT" IS NOT IN THE NOISE SET FOR THIS: it is there for the dishes —
+ * "cook it" is not a dish called "it" — but here it is the pointer.
+ */
+const REFUSAL_PRONOUNS = new Set(['it', 'this', 'that']);
+
+/**
+ * The dish a stretch of text names.
+ *
+ * WHY THE CONNECTOR COMES OFF: what follows a refusal is often the
+ * connector that joins it to the meal it refuses — "no dal for lunch" leaves
+ * "dal for" behind, and "for" is not part of the dish.
+ *
+ * WHY THE FILLERS COME OFF: what follows a refusal is often a word that
+ * carries no dish of its own — "not really lunch dal" leaves "really"
+ * behind. The word that follows the filler is the dish.
+ */
+function dishOf(text: string): string {
+  const withoutConnector = text.match(PRE_CONNECTOR_RE);
+  const base = tidy(withoutConnector ? withoutConnector[1] : text);
+  return base.split(' ').filter((w) => w && !REFUSAL_FILLERS.has(w)).join(' ');
+}
+
+/**
+ * A meal word found in the text, and where it is.
+ *
+ * WHY IT IS A TYPE OF ITS OWN: the refusal rules below have to find the meal
+ * words again, from outside the parsing loop, because the dish a refusal
+ * names can sit on either side of one.
+ */
+interface MealMark {
+  /** Where the meal word starts. */
+  at: number;
+  /** How long the meal word is. */
+  len: number;
+  /** The meal it names. */
+  slot: PlanSlot;
+}
+
+/** A refusal in the text, and where it is. */
+interface RefusalAt {
+  /** Where the refusal word starts. */
+  at: number;
+  /** Where the refusal word ends. */
+  end: number;
+}
+
+/**
+ * Every refusal in the text.
+ *
+ * WHY THE SEARCH IS OVER THE WHOLE TEXT AND NOT OVER ONE MEAL'S SEGMENT:
+ * the dish a refusal names can sit on EITHER side of the meal word — "no dal
+ * for dinner" puts it in front, "no lunch dal" puts it behind — and the meal
+ * that ends up holding it may have been filed by an EARLIER mention of the
+ * same meal. The parser's own loop only ever sees the text in front of the
+ * meal word it is reading, so it cannot see that; this can, because it has
+ * the whole sentence.
+ *
+ * @param src the whole sentence
+ */
+function refusalsIn(src: string): RefusalAt[] {
+  const found: RefusalAt[] = [];
+  const re = new RegExp(`\\b(?:${REFUSAL_WORDS.join('|')})\\b`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    found.push({ at: m.index, end: m.index + m[0].length });
+    if (m.index === re.lastIndex) re.lastIndex += 1;
+  }
+  return found;
+}
+
+/**
+ * The dish a stretch of text names, stopping at a comma.
+ *
+ * WHY THE COMMA STOPS IT: a comma ends the clause it is in. What follows a
+ * comma belongs to the NEXT clause — "dal for dinner, no, rice for lunch"
+ * has the rice after the comma, and the rice is the lunch the user wants.
+ *
+ * @param from where the stretch starts
+ * @param to   where it ends
+ */
+function dishBetween(src: string, from: number, to: number): string {
+  const commaAt = src.indexOf(',', from);
+  const stop = commaAt >= 0 && commaAt < to ? commaAt : to;
+  return dishOf(src.slice(from, stop));
+}
+
+/**
+ * True when the meal word follows the refusal so closely that the refusal
+ * names the dish BEHIND the meal word.
+ *
+ * "no lunch dal" — the refusal and the meal word are next to each other, and
+ * the dal is behind the lunch. "no need lunch dal" is the same thing with a
+ * filler in between, so the fillers do not break the link.
+ *
+ * WHY A COMMA BREAKS THE LINK: "lunch biryani actually no, lunch salad"
+ * puts a comma between the refusal and the meal word, and there the refusal
+ * takes back the biryani rather than naming the salad.
+ */
+function refusalLinksToMeal(src: string, from: number, to: number): boolean {
+  const between = src.slice(from, to);
+  if (between.includes(',')) return false;
+  return between
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .every((w) => REFUSAL_FILLERS.has(w.toLowerCase()));
+}
+
+/**
  * True when the text in front of the meal word refuses that meal.
  *
  * "no lunch dal" refuses the lunch — the refusal sits in front of the MEAL
@@ -293,8 +407,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   // re-ran a search over the remaining text to work out where the word ended,
   // which found the NEXT meal word instead — "dinner will be fish, breakfast
   // is upma" came out as "ll be fish", because the search matched "breakfast".
-  type Mark = { at: number; slot: PlanSlot; len: number };
-  const marks: Mark[] = [];
+  const marks: MealMark[] = [];
   for (const { re, slot } of SLOT_WORDS) {
     // Match EVERY occurrence of the word, not just the first. "lunch rice,
     // dinner dal, lunch salad" used to stop at the first "lunch", so the text
@@ -302,7 +415,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
     let m: RegExpExecArray | null;
     while ((m = global.exec(src)) !== null) {
-      marks.push({ at: m.index, slot, len: m[0].length });
+      marks.push({ at: m.index, len: m[0].length, slot });
       if (m.index === global.lastIndex) global.lastIndex += 1;
     }
   }
@@ -311,7 +424,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   // Overlapping rules can flag the same word twice; keep the earliest at each
   // spot.
   marks.sort((a, b) => a.at - b.at);
-  const unique: Mark[] = [];
+  const unique: MealMark[] = [];
   for (const m of marks) {
     if (unique.length && m.at - unique[unique.length - 1].at < 3) continue;
     unique.push(m);
@@ -342,6 +455,16 @@ export function parseSpokenPlan(text: string): SpokenPlan {
    * handed to the meal on the right.
    */
   let nextLeftDish = '';
+
+  /**
+   * Every meal the text mentioned, with the dish each one would file.
+   *
+   * WHY THIS IS COLLECTED: the dish a refusal names may have been filed by an
+   * EARLIER mention of the same meal — "lunch rice, no lunch rice" files the
+   * rice on the first mention and refuses it on the second — and by the time
+   * the loop is over, this is the only place that answer is.
+   */
+  const mentions: { slot: PlanSlot; at: number; len: number; dish: string }[] = [];
 
   // The text before the FIRST meal word can only be that meal's own: there
   // is no meal before it that could have claimed it.
@@ -419,6 +542,11 @@ export function parseSpokenPlan(text: string): SpokenPlan {
       ? tidy(dishWithoutRefusal(afterTail))
       : tidy(dishWithoutRefusal(afterFront));
 
+    // The dish this mention would file, kept even when the mention is
+    // refused below: the refusal names the dish, and this is where that
+    // dish is written down.
+    mentions.push({ slot: mark.slot, at: mark.at, len: mark.len, dish });
+
     // A refusal is a refusal wherever it sits.
     //
     // "no dal for dinner" puts it in front of the dish, "lunch no dal" puts
@@ -448,6 +576,67 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     if (isMeaningful(dish)) {
       out[mark.slot] = dish;
     }
+  }
+
+  // A refusal removes the dish it names.
+  //
+  // WHY A SEPARATE PASS AND NOT ANOTHER RULE IN THE LOOP: the dish a
+  // refusal names can sit on either side of the meal word — "no dal for
+  // dinner" puts it in front, "no lunch dal" puts it behind — and the meal
+  // that ends up holding it may have been filed by an EARLIER mention of the
+  // same meal. The loop above only ever sees the text in front of the meal
+  // word it is reading, so it cannot see that.
+  //
+  // WHY IT MATTERS: a dish the user said they did not want is not a MISSING
+  // dish, it is a dish the shopping list BUYS. "dal for dinner, no dal" filed
+  // the dinner as "dal" — the very dal the user had just refused — and
+  // nothing anywhere said so: the sheet said the dinner had been heard and
+  // the list bought it.
+  for (const refusal of refusalsIn(src)) {
+    // The meal this refusal belongs to: the one whose word FOLLOWS it, or
+    // the one it was said after.
+    const forward = mentions.findIndex((m) => m.at > refusal.at);
+    const bound = forward >= 0 ? mentions[forward] : mentions[mentions.length - 1];
+    if (!bound) continue;
+
+    let named = '';
+
+    if (forward >= 0) {
+      if (refusalLinksToMeal(src, refusal.end, bound.at)) {
+        // The meal word follows the refusal, so the dish the refusal names
+        // is the one BEHIND the meal word.
+        const after = bound.at + bound.len;
+        const nextMark = unique.find((mk) => mk.at > bound.at);
+        named = dishBetween(src, after, nextMark ? nextMark.at : src.length);
+      } else {
+        // The dish the refusal names, up to the meal word it belongs to.
+        //
+        // WHY A COMMA LEAVES NOTHING NAMED: "dal for dinner, no, rice for
+        // lunch" puts the rice behind the comma, and the rice is the lunch
+        // the user wants — the "no" takes back the dal, and the dal is not
+        // named by anything in this clause. So the clause names no dish, and
+        // no dish is removed on the strength of it.
+        named = dishBetween(src, refusal.end, bound.at);
+      }
+    } else {
+      // The refusal came after the last meal word, so it names the dish in
+      // front of it — "dal for dinner, no dal".
+      const behind = src
+        .slice(refusal.end)
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter(Boolean);
+      if (behind.some((w) => REFUSAL_PRONOUNS.has(w))) {
+        // It points back at the dish — "for breakfast dal, no it" — so the
+        // refusal names the dish the meal already holds. A bare "no" names
+        // nothing and removes nothing: "lunch dal, no" is the lunch dal.
+        named = bound.dish;
+      } else {
+        named = dishOf(src.slice(refusal.end));
+      }
+    }
+
+    if (named && out[bound.slot] === named) delete out[bound.slot];
   }
   return out;
 }
