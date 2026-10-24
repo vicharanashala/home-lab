@@ -386,6 +386,51 @@ console.log('\na dish typed in lower case still gets an answer from the sheet');
 }
 
 /* -------------------------------------------------------------------------- */
+/* A dish typed with a typo still says what it matched                           */
+/* -------------------------------------------------------------------------- */
+
+console.log('\na dish typed with one wrong character still says what it matched');
+{
+  const { applied, render } = openSheet('dinner paneer tikkaa');
+
+  let sheet = render();
+  const slot = fieldWithLabel(sheet, 'dinner from speech');
+  // The matcher's whole job is to survive ONE wrong character — that is what
+  // Whisper does to a dish name, and what a thumb does on a phone. So the
+  // sheet has to cope with a dish that IS Paneer Tikka but is not SPELLED
+  // "Paneer Tikka".
+  //
+  // It used not to. The sheet compared the slot with the CATALOGUE's spelling
+  // of the dish, while the writer compares it with the text the resolution
+  // was worked out FROM — so the two disagreed, and the sheet went silent
+  // while the plan quietly linked the recipe. The user was shown no decision
+  // and asked to accept one.
+  slot.props.onChange({ target: { value: 'painter tikka' } });
+  sheet = render();
+
+  ok(
+    hasText(sheet, /matched/),
+    'the sheet says what it matched the typed dish to',
+    hasText(sheet, /matched/) ? '' : 'the review panel went silent',
+  );
+
+  ok(
+    buttonWithText(sheet, /^Paneer Tikka$/) === null,
+    'the sheet does not offer the matched dish back as an alternative',
+    buttonWithText(sheet, /^Paneer Tikka$/) ? 'the chip "Paneer Tikka" was offered again' : '',
+  );
+
+  const yes = buttonWithText(sheet, /Yes, add these/);
+  yes.props.onClick();
+
+  const out = planAndList(applied);
+  ok(out.entry?.recipeId === 'r-tikka', 'the plan still points at that dish\'s own recipe',
+    String(out.entry?.recipeId));
+  ok(out.ingredients.includes('Paneer Cubes'), 'the shopping list still buys that dish\'s ingredients',
+    out.ingredients.join(', '));
+}
+
+/* -------------------------------------------------------------------------- */
 /* An untouched slot still links                                                 */
 /* -------------------------------------------------------------------------- */
 

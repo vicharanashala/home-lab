@@ -129,32 +129,46 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
         {(['breakfast', 'lunch', 'dinner'] as const).map((slot) => {
           const res = resolutions[slot];
           const current = draft[slot] ?? '';
+          const best = res?.best ?? null;
+          const alternatives = res?.alternatives ?? [];
           // The correction is only shown while the slot still holds what the
           // matcher put there. Once the user types over it, the note would be
           // describing something that is no longer on screen.
-          const corrected = res?.best && res.best.score >= CONFIDENT_SCORE;
-          // A dish the user TAPPED is the slot's dish now, whatever the
-          // matcher made of it. So the sheet keeps saying what it heard and
-          // what the slot holds, and the other dishes stay on offer — the
-          // user can change their mind without the sheet losing the list.
+          const corrected = best && best.score >= CONFIDENT_SCORE;
+          // Whether the resolution STILL describes the dish in this slot.
+          //
+          // It has to be the SAME question the writer asks, because the writer
+          // is what decides which recipe the shopping list buys — see
+          // `describesDish` in utils/spokenPlanEntries.ts. The two have to
+          // agree, or the sheet says one thing and the plan does another.
           //
           // WHY THE COMPARISON IS ON THE DISH AND NOT ON THE STRING: the
-          // writer that turns this sheet into plan entries asks the same
-          // question with `sameDish`, which compares the CORE of each name in
-          // lower case — so "paneer tikka" and "Paneer Tikka" are one dish.
-          // Comparing the raw strings here made the two disagree the moment
-          // the case differed: the plan was written correctly and linked to
-          // the right recipe, while the sheet showed nothing at all — no
-          // "matched" note, no alternatives, and no way for the user to say
-          // they had meant a different dish. One question, one answer.
+          // writer compares the CORE of each name in lower case — so "paneer
+          // tikka" and "Paneer Tikka" are one dish. Comparing the raw strings
+          // made the two disagree the moment the case differed: the plan was
+          // written correctly and linked to the right recipe, while the sheet
+          // showed nothing at all — no "matched" note, no alternatives, and no
+          // way for the user to say they had meant a different dish. One
+          // question, one answer.
+          //
+          // WHY THE FIRST TEST IS "THE TEXT THIS RESOLUTION WAS WORKED OUT
+          // FROM": the sheet used to compare the slot with the CATALOGUE's
+          // spelling of the dish, and the writer compares it with the text the
+          // resolution was worked out FROM. Those are the same text only when
+          // the two spellings are identical — so a dish the user TYPED with
+          // one wrong character ("painter tikka" for "Paneer Tikka", which is
+          // exactly the mis-hearing the matcher exists to survive) left the
+          // sheet saying nothing at all, while the plan quietly linked the
+          // recipe. The user was shown no decision and asked to accept one.
           const settled = res && (
-            res.picked === true
-              ? sameDish(current, res.best?.name ?? '')
-              : corrected
-                ? sameDish(current, res.best!.name)
-                : sameDish(current, res.heard)
+            // The resolution was worked out from exactly the text in the slot.
+            res.heard === current ||
+            // Or the slot holds the name the match was written under.
+            best?.name === current ||
+            // Or the same dish under a longer name.
+            sameDish(current, best?.name ?? '')
           );
-          const options = res?.best
+          const options = best
             // The chips are the OTHER dishes, so the slot's own dish is not
             // one of them. This has to ask the question in the same way the
             // note above does — by DISH and not by string — because the slot
@@ -163,7 +177,17 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
             // are one dish, and offering the chip "Paneer Tikka" back to a
             // slot that already says "paneer tikka" is the sheet saying the
             // same thing twice, in two spellings.
-            ? [res.best, ...res.alternatives].filter((m) => !sameDish(m.name, current))
+            //
+            // And the dish the note calls a MATCH is not an alternative to
+            // itself: once the note says "matched Paneer Tikka", the chip
+            // "Paneer Tikka" underneath it is the sheet asking the same
+            // question two ways. It is only a suggestion while the match is
+            // NOT confident — that is what the "did you mean" note is for.
+            ? [best, ...alternatives].filter(
+                (m) =>
+                  !sameDish(m.name, current) &&
+                  (!corrected || !sameDish(m.name, best.name)),
+              )
             : [];
           return (
             <label key={slot} className="block mb-2">
