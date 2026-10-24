@@ -125,5 +125,28 @@ check('for breakfast masala dosa, for lunch butter chicken, for dinner chole bha
   dinner: 'chole bhature',
 });
 
+console.log('\nand the dish goes from EVERY meal that was holding it');
+// WHY THESE ARE HERE: the refusal named a dish and no meal, so the dish was
+// refused wherever the plan was holding it. The rule took it from ONE meal and
+// left it in the other — and the shopping list buys the plan, so the list
+// bought the very dal the user had refused while the sheet said the meal had
+// been heard.
+//
+//   "breakfast dal, lunch dal, no dal"   -> { breakfast: 'dal' }
+//
+// An empty slot is honest. A dish the user refused is a dish the list buys.
+check('breakfast dal, lunch dal, no dal', {});
+check('breakfast dal, lunch dal, dinner dal, no dal', {});
+check('dal for breakfast, dal for lunch, no dal', {});
+
+console.log('\nand a refusal that points back takes the dish it points at');
+// WHY THIS IS HERE: the pronoun points BACK, at the dish in front of it. The
+// rule took the dish from the meal AFTER the refusal instead, which took the
+// dal the user had asked for and left the dal they had refused.
+//
+//   "breakfast dal, no it, lunch dal"   -> { breakfast: 'dal' }
+check('breakfast dal, no it, lunch dal', { lunch: 'dal' });
+check('breakfast dal, no it, lunch rice', { lunch: 'rice' });
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

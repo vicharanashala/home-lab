@@ -309,16 +309,16 @@ function refusalLinksToMeal(src: string, from: number, to: number): boolean {
  * "for lunch it is rice, not dal", and the dal that belongs to the dinner is
  * a dish the user asked for, not one the refusal touches.
  *
+ * WHY ONLY THE END OF THE CLAUSE: a clause always STARTS before the refusal,
+ * so a meal word that comes after the refusal is already inside it — the
+ * start would say nothing the end does not.
+ *
  * @param src     the whole sentence
  * @param refusal where the refusal is
  */
-function clauseOf(src: string, refusal: RefusalAt): { start: number; end: number } {
-  const before = src.lastIndexOf(',', refusal.at - 1);
+function clauseEndOf(src: string, refusal: RefusalAt): number {
   const after = src.indexOf(',', refusal.end);
-  return {
-    start: before >= 0 ? before + 1 : 0,
-    end: after >= 0 ? after : src.length,
-  };
+  return after >= 0 ? after : src.length;
 }
 
 /**
@@ -720,13 +720,20 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // WHY IT MATTERS: that is the same bug this whole pass exists to kill.
     // The shopping list buys the plan, so a refused dish that stays in the
     // plan is a dish the list buys — and the sheet says the meal was heard.
-    //
-    // WHY THE BOUND MEAL IS TRIED FIRST: so a refusal that names the dish of
-    // the meal it is bound to behaves exactly as it did before, and only the
-    // case that used to do NOTHING changes.
     if (!named) continue;
-    if (out[bound.slot] === named) {
-      delete out[bound.slot];
+
+    // A refusal that POINTS BACK names ONE dish: the one the pronoun points
+    // at, which is the dish in FRONT of the refusal.
+    //
+    // WHY IT IS NOT THE MEAL AFTER THE REFUSAL: the pronoun points BACK.
+    // "breakfast dal, no it, lunch dal" refuses the BREAKFAST's dal. Taking
+    // the dish from the meal after the refusal took the dal the user had
+    // asked for and left the dal they had refused — the exact opposite of
+    // what was said, and the dal the user refused is the one the shopping
+    // list buys.
+    if (pointsBack) {
+      const before = mentions.filter((m) => m.at < refusal.at).pop();
+      if (before && out[before.slot] === named) delete out[before.slot];
       continue;
     }
 
@@ -738,15 +745,33 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // is a dish they did ask for. So a refusal whose own clause names a meal
     // may only take a dish from THAT meal.
     //
-    // A refusal whose clause names no meal stands alone, and what it names is
-    // a dish on its own: the meal that was HOLDING that dish is the meal that
-    // loses it.
-    const clause = clauseOf(src, refusal);
-    const attachedToAMeal = mentions.some((m) => m.at >= clause.start && m.at < clause.end);
-    if (attachedToAMeal) continue;
+    // WHY THE MEAL HAS TO FOLLOW THE REFUSAL: the meal the refusal NAMES is
+    // the one whose word comes after it — "no dal FOR LUNCH" names the lunch.
+    // A meal spoken BEFORE the refusal is not named by it: in "dal for
+    // breakfast, dal for lunch, no dal" the breakfast was mentioned before
+    // the refusal and the refusal says nothing about it, so the refusal
+    // stands alone and the dal is refused wherever it is.
+    const clauseEnd = clauseEndOf(src, refusal);
+    const attachedToAMeal = mentions.some(
+      (m) => m.at >= refusal.end && m.at < clauseEnd,
+    );
+    if (attachedToAMeal) {
+      if (out[bound.slot] === named) delete out[bound.slot];
+      continue;
+    }
 
-    const holder = mentions.find((m) => out[m.slot] === named);
-    if (holder) delete out[holder.slot];
+    // A refusal that stands alone names a DISH and no meal, so the dish is
+    // refused wherever the plan is holding it.
+    //
+    // WHY EVERY MEAL THAT HOLDS IT AND NOT ONLY ONE: "breakfast dal, lunch
+    // dal, no dal" — the user refused the dal, and BOTH meals were holding
+    // it. Taking it from one of them left the dal in the other, and the
+    // shopping list buys the plan, so the list bought the very dal the user
+    // had refused while the sheet said the meal had been heard. An empty slot
+    // is honest; a dish the user refused is one the list buys.
+    for (const m of mentions) {
+      if (out[m.slot] === named) delete out[m.slot];
+    }
   }
   return out;
 }
