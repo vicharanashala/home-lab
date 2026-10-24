@@ -193,7 +193,11 @@ export function spokenPlanRefusalMessage(refusals: SpokenRefusal[]): string {
       ? `there is no ${only.dish} to remove from the ${only.slot}`
       : `there is no ${only.dish} to remove from the plan`;
   }
-  return `there is nothing to remove for ${named.map((refusal) => refusal.dish).join(' or ')}`;
+  // The same dish refused for two meals is ONE dish to remove, not two: the
+  // message read "there is nothing to remove for dal or dal", which is a
+  // broken sentence on the screen the owner reads it on.
+  const dishes = [...new Set(named.map((refusal) => refusal.dish))];
+  return `there is nothing to remove for ${dishes.join(' or ')}`;
 }
 
 /**

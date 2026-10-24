@@ -254,6 +254,41 @@ function withoutFillers(text: string): string {
 }
 
 /**
+ * A dish name, reduced to the words two names have to agree on.
+ *
+ * WHY THE PUNCTUATION GOES ON BOTH SIDES: the dish the DAY holds is a recipe's
+ * own name, and a recipe's name carries punctuation — "Eggless Devil's Food
+ * Cake", "PF Chang's Style Crispy Chicken Lettuce Wraps", "Roasted Potatoes
+ * With Za'atar". The dish the user SAYS comes from a speech recogniser, and a
+ * speech recogniser does not put the apostrophe in: "eggless devil s food cake"
+ * is what was heard, and "zaatar" is how "za'atar" is said.
+ *
+ * So the punctuation was taken off the spoken name and left on the recipe
+ * name, and the two could never be equal for a single one of those recipes:
+ *
+ *   day holds "Eggless Devil's Food Cake"   user says "no eggless devil's food cake"
+ *                                             -> the meal was NOT emptied
+ *
+ * The shopping list buys the plan, so the refused dish stayed on the list and
+ * the app said there was nothing to remove. The rule folds the case for
+ * exactly this reason — see `namesHeldDish` — and the punctuation is the same
+ * argument: the rule must not depend on which of the two names happened to
+ * carry an apostrophe.
+ *
+ * WHY THE CASE IS FOLDED HERE AS WELL: the rule is used on names that arrive
+ * from two places, and only one of them is a recipe's own spelling.
+ *
+ * @param text the name
+ */
+function comparableDish(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(PUNCTUATION_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * True when the refusal names the dish the plan is holding.
  *
  * WHY THE FILLERS COME OFF BOTH SIDES: the dish a refusal names is worked
@@ -310,7 +345,15 @@ export function namesHeldDish(named: string, held: string | undefined): boolean 
   // happened to capitalise it. Folding the case first also lets the fillers
   // come off a name that is written "Want Rice", which `withoutFillers`
   // alone cannot do: its filler set is lowercase.
-  return withoutFillers(named.toLowerCase()) === withoutFillers(held.toLowerCase());
+  //
+  // WHY THE PUNCTUATION GOES ON BOTH SIDES TOO: the same argument, one step
+  // further. The spoken name has had its punctuation taken off by `tidy`; the
+  // recipe's own name has not, and a recipe's name is full of apostrophes and
+  // commas. So the two could never be equal for a dish like "Eggless Devil's
+  // Food Cake", and a refusal of it did nothing at all — the dish stayed on
+  // the plan and the shopping list bought it. `comparableDish` is the one
+  // rule both sides go through.
+  return withoutFillers(comparableDish(named)) === withoutFillers(comparableDish(held));
 }
 
 /**
@@ -505,6 +548,18 @@ function refusesBefore(text: string): boolean {
 const TIME_RE =
   /\b(?:at|around|by|@)\s*\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?\b|\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/gi;
 
+/**
+ * The punctuation that is not part of a dish's name.
+ *
+ * WHY IT IS A NAMED RULE AND NOT A LITERAL IN TWO PLACES: a dish name is
+ * compared with another dish name, and the two come from different places —
+ * the spoken one from a speech recogniser, the one on the day from a recipe's
+ * own name. If the rule that takes the punctuation off is written twice, once
+ * for each side, the two sides can disagree about what a name is, and a dish
+ * the user named can fail to match itself. See `comparableDish`.
+ */
+const PUNCTUATION_RE = /[.,!?;:"'`]/g;
+
 function tidy(text: string): string {
   let out = text
     .toLowerCase()
@@ -525,7 +580,7 @@ function tidy(text: string): string {
     // time, so nothing else is touched by the order — "8.30" is not a time
     // and is left exactly as it was.
     .replace(TIME_RE, ' ')
-    .replace(/[.,!?;:"'`]/g, ' ')
+    .replace(PUNCTUATION_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 

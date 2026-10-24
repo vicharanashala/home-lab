@@ -159,6 +159,15 @@ check(
   'there is nothing to remove for dal or rice',
 );
 
+check(
+  'the same dish refused for two meals is named once, not twice',
+  spokenPlanRefusalMessage([
+    { slot: 'dinner', dish: 'dal' },
+    { slot: 'lunch', dish: 'dal' },
+  ]),
+  'there is nothing to remove for dal',
+);
+
 console.log('\nand the TYPED path says the same thing in its own words');
 check(
   'a typed refusal with nothing to remove says so',
