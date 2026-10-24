@@ -66,20 +66,32 @@ export const FILLERS = new Set([
 ]);
 
 /**
- * Where a repeated phrase starts in a list of words, or -1 when there is none.
+ * Where a loop starts and ends in a list of words.
+ *
+ * The END matters as much as the start. A loop is a span of words, and the
+ * span is what has to be removed — cutting from the start of the loop to the
+ * end of the text removes the user's speech along with it.
+ */
+interface LoopSpan {
+  start: number;
+  end: number;
+}
+
+/**
+ * The first loop in a list of words, or null when there is none.
  *
  * Whisper's signature loop is a repeated PHRASE: "I'm sorry. I'm sorry.
  * I'm sorry." That has plenty of distinct words, so a check for repeated
  * words alone never caught it — and a loop that slips through puts a whole
  * sentence of rubbish into the plan.
  *
- * WHY THE START AND NOT ONLY THE FACT: the model only starts repeating at
+ * WHY THE SPAN AND NOT ONLY THE FACT: the model only starts repeating at
  * some word, and everything BEFORE that word is the user's own speech. So
  * the place the loop begins is what decides how much of the transcript has
- * to go.
+ * to go — and where it ends is what decides how much has to be KEPT.
  */
-export function repeatedPhraseStart(words: string[]): number {
-  let earliest = -1;
+function findLoop(words: string[]): LoopSpan | null {
+  let best: LoopSpan | null = null;
   for (let n = 1; n * 2 <= words.length; n++) {
     // A single word needs more repeats before it counts: "dal dal" is
     // someone saying dal twice, but "dal dal dal dal" is a loop.
@@ -95,41 +107,86 @@ export function repeatedPhraseStart(words: string[]): number {
         if (words.slice(i, i + n).join(' ') !== gram) break;
         repeats++;
       }
+      if (repeats < needed) continue;
+      const end = start + n * repeats;
       // The EARLIEST start wins. A longer phrase can begin before the
       // shorter one that happened to be found first, and the shorter one
       // would then be read as part of the user's speech.
-      if (repeats >= needed && (earliest < 0 || start < earliest)) earliest = start;
+      //
+      // At the SAME start the LONGEST span wins. A two-word loop also
+      // contains a one-word loop, so the short one is found first and
+      // cutting it would leave the rest of the loop behind: "I'm sorry"
+      // four times over would become "sorry sorry sorry sorry", which is
+      // still rubbish and would still reach the plan.
+      if (
+        !best ||
+        start < best.start ||
+        (start === best.start && end > best.end)
+      ) {
+        best = { start, end };
+      }
     }
   }
-  return earliest;
+  return best;
+}
+
+/** Where a repeated phrase starts in a list of words, or -1 when there is none. */
+export function repeatedPhraseStart(words: string[]): number {
+  return findLoop(words)?.start ?? -1;
 }
 
 /** True when the same words repeat back to back. */
 export function hasRepeatedPhrase(words: string[]): boolean {
-  return repeatedPhraseStart(words) >= 0;
+  return findLoop(words) !== null;
 }
 
 /**
- * Cut a repeated phrase out of a piece of text.
+ * Cut the repeated phrases out of a piece of text.
  *
- * Returns the text with the loop removed, or null when the whole thing WAS
- * the loop and nothing is left.
+ * Returns the text with the loops removed, or null when the whole thing WAS
+ * a loop and nothing is left.
  *
- * WHY THE LOOP IS CUT AND NOT THE WHOLE TEXT DROPPED: the model only starts
- * repeating at some word, and the words in front of that are the user's own
- * speech. Dropping those too meant that saying "breakfast masala dosa" and
- * then having a hum set off Whisper's "I'm sorry. I'm sorry." left the user
- * with NOTHING — the app said "nothing was picked up" when it had picked up
- * exactly what they said.
+ * WHY THE LOOP IS CUT OUT AND NOT EVERYTHING FROM IT ONWARDS: the model only
+ * starts repeating at some word, and the words around that word are the
+ * user's own speech. Dropping those too meant that saying "breakfast masala
+ * dosa" and then having a hum set off Whisper's "I'm sorry. I'm sorry." left
+ * the user with NOTHING — the app said "nothing was picked up" when it had
+ * picked up exactly what they said.
+ *
+ * AND WHY THE END OF THE LOOP MATTERS AS MUCH AS ITS START: Whisper opens
+ * its hallucinations with the one it likes best — "Thank you.", "I'm sorry."
+ * — and only then transcribes the speech that follows, so the loop is
+ * usually at the FRONT of a block and the dish the user said is BEHIND it.
+ * Cutting from the start of the loop to the end of the block took the dish
+ * with it, and the app said "nothing was picked up" when the dish had been
+ * heard perfectly well.
  */
 export function trimLoop(text: string): string | null {
   const raw = (text || '').trim();
   if (!raw) return null;
   const rawWords = raw.split(/\s+/);
-  const start = repeatedPhraseStart(rawWords.map((w) => bareWord(w.toLowerCase())));
-  if (start < 0) return raw;
-  const kept = rawWords.slice(0, start).join(' ').trim();
-  return kept || null;
+  // The loop is found on the bare, lower-cased words, but the text that is
+  // handed back is the ORIGINAL — the user's own spelling and punctuation
+  // are not the model's to change.
+  const comparable = rawWords.map((w) => bareWord(w.toLowerCase()));
+
+  const kept: string[] = [];
+  let at = 0;
+  while (at < rawWords.length) {
+    const loop = findLoop(comparable.slice(at));
+    if (!loop) {
+      kept.push(...rawWords.slice(at));
+      break;
+    }
+    // The speech before the loop is the user's, so it is kept.
+    kept.push(...rawWords.slice(at, at + loop.start));
+    // The loop itself goes, and the scan carries on after it: two loops in
+    // one block ("Thank you" four times, then "I'm sorry" four times) have
+    // to leave nothing behind, and one loop's removal can expose another.
+    at += loop.end;
+  }
+  const out = kept.join(' ').trim();
+  return out || null;
 }
 
 /**

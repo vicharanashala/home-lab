@@ -187,5 +187,69 @@ console.log('\nthe speech in front of a loop is the user’s own, and it is kept
   );
 }
 
+console.log('\nthe speech BEHIND a loop is the user’s own, and it is kept');
+// Whisper opens its hallucinations with the one it likes best — "Thank you.",
+// "I'm sorry." — and only then transcribes the speech that follows, so the
+// loop is usually at the FRONT of the block and the dish the user said is
+// BEHIND it.
+//
+// The trim used to cut from the start of the loop to the END of the block,
+// so the dish went with it: the block came back empty, the app said
+// "nothing was picked up", and the dish the user had just said perfectly
+// clearly was gone.
+{
+  const kept = trimLoop("Thank you. Thank you. Thank you. Thank you. paneer tikka");
+  ok(
+    kept === 'paneer tikka',
+    'the dish behind a leading loop is kept',
+    String(kept),
+  );
+}
+{
+  const kept = trimLoop("I'm sorry. I'm sorry. I'm sorry. I'm sorry. masala dosa");
+  ok(
+    kept === 'masala dosa',
+    'the dish behind a leading "I’m sorry" loop is kept',
+    String(kept),
+  );
+}
+{
+  // The speech before AND after the loop is the user's; only the loop goes.
+  const kept = trimLoop("breakfast masala dosa. I'm sorry. I'm sorry. I'm sorry. I'm sorry. butter chicken");
+  ok(
+    !!kept && /breakfast masala dosa/.test(kept) && /butter chicken/.test(kept) && !/sorry/i.test(kept),
+    'the speech on both sides of a loop is kept',
+    String(kept),
+  );
+}
+{
+  // Two loops in one block: neither may leave a tail behind.
+  const kept = trimLoop("Thank you. Thank you. Thank you. Thank you. I'm sorry. I'm sorry. I'm sorry. I'm sorry.");
+  ok(
+    kept === null,
+    'two loops in one block leave nothing behind',
+    String(kept),
+  );
+}
+{
+  // The same thing across blocks: the first block opens with the loop and
+  // the dish comes in the block after it.
+  let transcript = '';
+  const blocks = [
+    "Thank you. Thank you. Thank you. Thank you. masala dosa",
+    'butter chicken',
+  ];
+  for (const block of blocks) {
+    const next = foldTranscript(transcript, block);
+    if (next === null) { transcript = ''; break; }
+    transcript = next;
+  }
+  ok(
+    /masala dosa/.test(transcript) && /butter chicken/.test(transcript),
+    'a dish spoken after a leading loop survives the fold',
+    `transcript was "${transcript}"`,
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
