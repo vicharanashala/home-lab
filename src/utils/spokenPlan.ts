@@ -173,6 +173,32 @@ function isMeaningful(s: string): boolean {
 }
 
 /**
+ * The dish a stretch of speech carries, with a refusal taken out of it.
+ *
+ * WHY THE SPLIT IS NOT ALWAYS MADE: when the refusal is the FIRST thing in
+ * the stretch then the whole stretch IS the refusal — "no dal" is not a dish
+ * with something cut off it. Cutting it to nothing would throw the refusal
+ * away, so the text is handed back as it is and the refusal rule below sees
+ * it whole and refuses the meal.
+ *
+ * WHY IT MATTERS THAT THE SPLIT IS MADE AT ALL: a refusal that sat in the
+ * MIDDLE of a dish left the refused dish in the plan. "rice, no dal for
+ * dinner" filed the dinner as "rice no dal" — the dal the user had refused
+ * was still in it, and "rice no dal" matches no recipe in the catalogue, so
+ * the shopping list bought nothing for it.
+ *
+ * The split was already made on one path — the text that follows a meal word
+ * — and not on the paths that go through a connector, which is why the same
+ * sentence was split correctly with a connector removed ("lunch rice, no
+ * dal") and not with one ("rice, no dal for dinner").
+ */
+function dishWithoutRefusal(text: string): string {
+  const before = dishBeforeRefusal(text);
+  if (before === null) return text;
+  return tidy(before) ? before : text;
+}
+
+/**
  * Parse spoken text into slots.
  *
  * Returns only the meals that were actually named — a partial dict is a
@@ -239,7 +265,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   // The text before the FIRST meal word can only be that meal's own: there
   // is no meal before it that could have claimed it.
   const leadPre = src.slice(0, unique[0].at).match(PRE_CONNECTOR_RE);
-  if (leadPre) nextLeftDish = tidy(leadPre[1]);
+  if (leadPre) nextLeftDish = tidy(dishWithoutRefusal(leadPre[1]));
 
   for (let i = 0; i < unique.length; i++) {
     const mark = unique[i];
@@ -293,7 +319,9 @@ export function parseSpokenPlan(text: string): SpokenPlan {
       // in front of the refusal, the meal itself was refused, so the text
       // before the meal word is NOT tried as a dish.
       const beforeRefusal = afterPre ? null : dishBeforeRefusal(segAfter);
-      dish = afterPre ? tidy(afterHead) : tidy(beforeRefusal ?? segAfter);
+      dish = afterPre
+        ? tidy(dishWithoutRefusal(afterHead))
+        : tidy(beforeRefusal ?? segAfter);
       tookRight = true;
       if (!isMeaningful(dish) && !hasPrev && beforeRefusal === null) {
         // The first meal word, and nothing behind it either: the dish was
@@ -306,7 +334,9 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     // Hand the next meal word the part of this stretch of text that is its
     // own: the tail when this meal took the head, and the whole of it when
     // this meal took its dish from the other side entirely.
-    nextLeftDish = tookRight ? tidy(afterTail) : tidy(afterFront);
+    nextLeftDish = tookRight
+      ? tidy(dishWithoutRefusal(afterTail))
+      : tidy(dishWithoutRefusal(afterFront));
 
     // A refusal is a refusal wherever it sits.
     //

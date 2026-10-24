@@ -68,6 +68,28 @@ check('lunch rice, no dal', { lunch: 'rice' });
 check('lunch dal, no', { lunch: 'dal' });
 check('breakfast oats, lunch rice, no dal', { breakfast: 'oats', lunch: 'rice' });
 
+console.log('\na refusal inside a dish that was captured whole');
+// The refusal was only split out of the text that FOLLOWS the meal word. A
+// dish captured through a connector — "rice, no dal FOR dinner" — was taken
+// whole, and the refusal stayed inside it.
+//
+// So the dinner was filed as "rice no dal": the dal the user had refused was
+// still in the plan, and "rice no dal" matches no recipe in the catalogue, so
+// the shopping list bought nothing for it. The same sentence without the
+// connector ("lunch rice, no dal") was split correctly, so the rule was
+// working on one path and not on the others.
+check('rice, no dal for dinner', { dinner: 'rice' });
+check('rice no dal for dinner', { dinner: 'rice' });
+check('dal for dinner, rice no dal for lunch', { dinner: 'dal', lunch: 'rice' });
+check('breakfast masala dosa, rice no dal for lunch', {
+  breakfast: 'masala dosa',
+  lunch: 'rice',
+});
+check('breakfast rice no dal, butter chicken for lunch', {
+  breakfast: 'rice',
+  lunch: 'butter chicken',
+});
+
 console.log('\na refusal belongs to the meal it is attached to');
 // The comma is what says the refusal is about the meal before it and not
 // the one after it, so the lunch keeps its dish.
