@@ -364,6 +364,17 @@ console.log('\na dish typed in lower case still gets an answer from the sheet');
     hasText(sheet, /matched/) ? '' : 'the review panel went silent',
   );
 
+  // The chips under a slot are the OTHER dishes. The slot holds
+  // "paneer tikka" and the match is "Paneer Tikka" — one dish, two
+  // spellings — so offering "Paneer Tikka" back as an alternative to itself
+  // is the sheet asking the same question two ways: the note above says the
+  // dish IS Paneer Tikka, and the chip below says "maybe Paneer Tikka?".
+  ok(
+    buttonWithText(sheet, /^Paneer Tikka$/) === null,
+    'the sheet does not offer the slot\'s own dish back as an alternative',
+    buttonWithText(sheet, /^Paneer Tikka$/) ? 'the chip "Paneer Tikka" was offered again' : '',
+  );
+
   const yes = buttonWithText(sheet, /Yes, add these/);
   yes.props.onClick();
 

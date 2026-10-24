@@ -155,7 +155,15 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
                 : sameDish(current, res.heard)
           );
           const options = res?.best
-            ? [res.best, ...res.alternatives].filter((m) => m.name !== current)
+            // The chips are the OTHER dishes, so the slot's own dish is not
+            // one of them. This has to ask the question in the same way the
+            // note above does — by DISH and not by string — because the slot
+            // holds what the user typed while the match holds the
+            // catalogue's spelling of it: "paneer tikka" and "Paneer Tikka"
+            // are one dish, and offering the chip "Paneer Tikka" back to a
+            // slot that already says "paneer tikka" is the sheet saying the
+            // same thing twice, in two spellings.
+            ? [res.best, ...res.alternatives].filter((m) => !sameDish(m.name, current))
             : [];
           return (
             <label key={slot} className="block mb-2">
