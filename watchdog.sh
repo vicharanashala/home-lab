@@ -105,7 +105,13 @@ SELF_LOADED_SUM="$(supervisor_script_sum "$SELF_PATH")"
 # supervising because it could not write a checksum is a worse app than one
 # that is merely out of date. So the write is best-effort, and the cost of it
 # failing is that the check says "unknown" — which it treats as not healthy.
-printf '%s\n' "$SELF_LOADED_SUM" > "$SUPERVISOR_STATE" 2>/dev/null || true
+#
+# WHY IT IS DONE AGAIN IN THE LOOP BELOW: this file is written once, at
+# start-up, and anything that tidies /tmp takes it away — after which the
+# check says "unpublished" for ever, even though this supervisor is running
+# the right code. The rule lives in the library so it can be tested, and the
+# loop below calls it once a round so the file comes back on its own.
+supervisor_publish_state "$SELF_PATH" "$SELF_LOADED_SUM" "$SUPERVISOR_STATE" || true
 
 # Each starter is written out in full, with no "$@" forwarding. An earlier
 # version passed the log path positionally and read the wrong argument, so the
@@ -149,6 +155,19 @@ while true; do
   # outright, so the new copy runs from its first line with none of the old
   # one left. The PID is unchanged, so launchd still owns the same process.
   supervisor_reload_if_changed "$SELF_PATH" "$SELF_LOADED_SUM" log
+
+  # ── Say which copy of this script is running ──────────────────────────────
+  # The check that reads the app from outside can only tell whether this
+  # supervisor is on the current code by reading the checksum this supervisor
+  # writes down.
+  #
+  # WHY IT IS REPEATED EVERY ROUND: the file is written once at start-up, and
+  # it lives in /tmp — so anything that tidies /tmp takes it away, and from
+  # then on the check says "unpublished" for ever and blames the app for a
+  # file the supervisor is perfectly able to write again. Writing it once a
+  # round puts it back within seconds, and keeps its mtime fresh so that
+  # nothing tidying /tmp has a reason to take it.
+  supervisor_publish_state "$SELF_PATH" "$SELF_LOADED_SUM" "$SUPERVISOR_STATE" || true
 
   # ── Tailscale ────────────────────────────────────────────────────────────
   # Without it the hostname does not resolve at all, so every request 502s

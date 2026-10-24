@@ -119,6 +119,55 @@ supervisor_self_state() {
   fi
 }
 
+# supervisor_publish_state <script> <loaded_sum> <state-file>
+#
+# Write down the checksum of the copy of the supervisor that is running, so
+# that anything watching the app from OUTSIDE can tell whether the supervisor
+# is on the code that is on disk.
+#
+# WHY IT RUNS AGAIN EVERY ROUND AND NOT ONLY AT START-UP: the file it writes
+# is the only evidence that a supervisor is running the current code, and it
+# lives in /tmp. Anything that tidies /tmp takes it away, and a supervisor
+# that writes it once and never again leaves the live check saying
+# "unpublished" for ever — the app blamed for a file it cannot see, by a
+# supervisor that is in fact running the right code. A supervisor that writes
+# it once a round puts it back within seconds, and keeps its mtime fresh so
+# that nothing tidying /tmp has a reason to take it.
+#
+# WHY A SUPERVISOR THAT IS ON THE COPY ON DISK ALWAYS WRITES, AND ONE THAT IS
+# NOT ONLY WRITES WHEN THE FILE IS MISSING: launchd has left more than one
+# copy of the supervisor running over the years, and they do not all run the
+# same copy of this script. Two supervisors writing different checksums would
+# leave the file alternating between them, and the check would alternate
+# between "current" and "stale" for no reason — and a health check that
+# sometimes says "all good" about an app that is not is worse than no check
+# at all. So the supervisor that IS running the copy on disk always writes,
+# because it is the truth, and one that is not only speaks when nothing else
+# has said anything at all.
+#
+# WHY THE WRITE CANNOT FAIL THE SUPERVISOR: a supervisor that stops
+# supervising because it could not write a checksum is a worse app than one
+# that is merely out of date. So the write is best-effort, and the cost of it
+# failing is that the check says "unknown" — which it treats as not healthy.
+#
+# @param script     the supervisor script on disk
+# @param loaded_sum the checksum of the copy that is running
+# @param state_file where the checksum is written
+supervisor_publish_state() {
+  local script="$1" loaded="$2" state_file="$3" current
+  case "$loaded" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  current="$(supervisor_script_sum "$script")"
+  if [ -n "$current" ] && [ "$current" != "$loaded" ] && [ -f "$state_file" ]; then
+    # This copy is not the one on disk, and something else has already said
+    # which copy it is running. Say nothing, rather than overrule it.
+    return 0
+  fi
+  printf '%s\n' "$loaded" > "$state_file" 2>/dev/null || return 1
+  return 0
+}
+
 # supervisor_log <message>
 #
 # The default logger, used when the caller does not pass one of its own.
