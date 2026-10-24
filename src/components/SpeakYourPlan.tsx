@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
-import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES } from '../hooks/useWhisperSTT';
+import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES, AUTO_MODEL } from '../hooks/useWhisperSTT';
 import { parseSpokenPlan } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
 import { resolveSpokenPlan, CONFIDENT_SCORE, retypeDish, pickDish, sameDish } from '../utils/spokenRecipeMatch';
@@ -39,7 +39,7 @@ interface Props {
  * are offered, because a wrong dish in the plan is worse than a rough one.
  */
 export function SpeakYourPlan({ onApply, catalogue, preferredIds }: Props) {
-  const [model, setModel] = useState('onnx-community/whisper-base');
+  const [model, setModel] = useState(AUTO_MODEL);
   const [language, setLanguage] = useState('en-IN');
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<SpokenPlan | null>(null);

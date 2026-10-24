@@ -54,6 +54,17 @@ const NOISE = new Set([
   'had', 'having', 'to', 'eat', 'today', 'tomorrow', 'my', 'plan', 'meal',
   'meals', 'cook', 'cooking', 'please', 'ok', 'okay', 'so', 'just', 'some',
   'of', 'it', 'in', 'on', 'at', 'get', 'got', 'like', 'about',
+  // The things people say before they start dictating. They sit in front of
+  // the connector — "yeah, for lunch rice" — and the parser read them as
+  // the dish the connector belonged to, so lunch became "yeah" and the rice
+  // the user actually said was thrown away. "okay" and "so" were already
+  // here, which is why this went unnoticed: the set had the words people
+  // SHOULD use but not the ones they DO use.
+  //
+  // "no" is NOT here: it is how a dish is refused ("no dal for dinner"),
+  // and dropping it would throw the refusal away and keep the dal.
+  'yeah', 'yep', 'nah', 'nope', 'huh', 'right', 'hmm', 'mm', 'hello', 'hi',
+  'hey', 'bye', 'yes', 'um', 'uh', 'ah', 'oh',
 ]);
 
 /**

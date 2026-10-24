@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { blockedReason } from '../utils/micPermission';
+import { looksLikeArtifact, SILENCE_RMS } from '../utils/whisperText';
+import { AUTO_MODEL, WHISPER_MODELS, modelForDevice } from '../utils/whisperModel';
+import type { WhisperModel } from '../utils/whisperModel';
+
+export { AUTO_MODEL, WHISPER_MODELS, modelForDevice };
+export type { WhisperModel };
 
 /**
  * On-device speech recognition for the meal plan.
@@ -29,16 +35,7 @@ import { blockedReason } from '../utils/micPermission';
  * use it.
  */
 
-export interface WhisperModel {
-  id: string;
-  label: string;
-}
 
-export const WHISPER_MODELS: WhisperModel[] = [
-  { id: 'onnx-community/whisper-tiny', label: 'Tiny — fastest, ~40 MB' },
-  { id: 'onnx-community/whisper-base', label: 'Base — balanced, ~80 MB' },
-  { id: 'onnx-community/whisper-small', label: 'Small — most accurate, ~250 MB' },
-];
 
 /** Languages worth having in a kitchen. Whisper supports many more. */
 export const STT_LANGUAGES: { code: string; label: string }[] = [
@@ -58,14 +55,6 @@ export const STT_LANGUAGES: { code: string; label: string }[] = [
 
 const TARGET_RATE = 16000;
 const CHUNK_SAMPLES = TARGET_RATE * 5;   // five seconds per transcript segment
-const SILENCE_RMS = 0.006;                // below this, nobody is talking
-
-/** Whisper's classic inventions on quiet audio. Dropping them is not optional. */
-const HALLUCINATIONS = new Set([
-  'you', 'thank you.', 'thank you', 'thanks for watching!', 'thanks for watching',
-  'bye.', 'bye', '.', '...', 'the', 'so', 'um', 'uh',
-  '字幕由amara.org社群提供', '字幕志愿者', '請不吝點贊訂閱轉發打賞支持明鏡與點點欄目',
-]);
 
 /* Public asset URLs, held in variables so these stay runtime imports of files
    under public/ rather than something the bundler tries to resolve. */
@@ -115,21 +104,12 @@ export function rms(audio: Float32Array): number {
 /**
  * Is this transcript the model making something up?
  *
- * The length floor matters most: without it, every pause in conversation
- * produces "you" or "thank you" and the meal plan fills itself with noise.
+ * The rules live in utils/whisperText, where they can be tested without a
+ * microphone. The silence threshold is passed in because it belongs to the
+ * capture side of the app.
  */
-export function looksLikeArtifact(text: string, level: number): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t) return true;
-  if (t.length < 2) return true;
-  if (HALLUCINATIONS.has(t)) return true;
-
-  const words = t.split(/\s+/);
-  // Whisper loops when handed thin audio.
-  if (words.length >= 6 && new Set(words).size <= 2) return true;
-  // Stray fillers on quiet-but-not-silent audio; keep them only if it was loud.
-  if (level < SILENCE_RMS * 2.5 && words.length <= 2) return true;
-  return false;
+export function isArtifact(text: string, level: number): boolean {
+  return looksLikeArtifact(text, level, SILENCE_RMS);
 }
 
 /** Linear resample, for contexts that refuse to run at 16 kHz. */
@@ -215,7 +195,7 @@ interface QueuedAudio {
 }
 
 export function useWhisperSTT(
-  modelId = 'onnx-community/whisper-base',
+  modelId = AUTO_MODEL,
   language = 'en-IN',
 ): UseWhisperSTT {
   const [listening, setListening] = useState(false);
@@ -270,23 +250,26 @@ export function useWhisperSTT(
   }, []);
 
   const ensureModel = useCallback(async () => {
-    if (pipeRef.current && loadedModelRef.current === modelId) return pipeRef.current;
+    // The device decides which model "auto" means, so it has to be known
+    // before the model is chosen — not after.
+    const device = await pickDevice();
+    const resolvedId = modelForDevice(modelId, device);
+    if (pipeRef.current && loadedModelRef.current === resolvedId) return pipeRef.current;
     // A load already in flight must be joined, not raced — the first audio
     // block usually arrives while warm-up is still running.
     if (modelPromiseRef.current) return modelPromiseRef.current;
 
     modelPromiseRef.current = (async () => {
       const lib = await loadLib();
-      const device = await pickDevice();
       const dtype =
         device === 'webgpu'
           ? { encoder_model: 'fp32', decoder_model_merged: 'q4' }
           : 'q8';
-      const short = modelId.split('/').pop();
+      const short = resolvedId.split('/').pop();
 
       setStatus((s) => ({ ...s, progress: 0, error: null, ready: false }));
 
-      const pipe = await lib.pipeline('automatic-speech-recognition', modelId, {
+      const pipe = await lib.pipeline('automatic-speech-recognition', resolvedId, {
         device,
         dtype,
         progress_callback: (p: any) => {
@@ -302,7 +285,7 @@ export function useWhisperSTT(
       });
 
       pipeRef.current = pipe;
-      loadedModelRef.current = modelId;
+      loadedModelRef.current = resolvedId;
       setStatus({
         text: `${short} ready · ${device === 'webgpu' ? 'GPU accelerated' : 'CPU'} · private & offline`,
         progress: null,
@@ -361,10 +344,27 @@ export function useWhisperSTT(
             language: whisperLanguage(language),
             task: 'transcribe',
             temperature: 0,
+            // BEAM SEARCH instead of greedy decoding.
+            //
+            // Greedy decoding takes the single most likely token at each
+            // step, which is fine for ordinary English and poor for names
+            // that are not English words at all. "Dosa", "paneer", "chole"
+            // and "biryani" have no strong language-model prior, so greedy
+            // decoding settles on the first plausible spelling — "dosaa",
+            // "painter" — while beam search keeps the likeliest one. It costs
+            // a few times the compute of greedy decoding, which on a
+            // five-second block is a small price for the dish names being
+            // right the first time.
+            num_beams: 5,
+            // Whisper falls into a loop on thin audio, and a loop used to be
+            // caught only AFTERWARDS, by throwing the whole sentence away.
+            // Penalising repetition stops the loop at the source, so the
+            // sentence survives instead of being discarded.
+            repetition_penalty: 1.1,
             no_repeat_ngram_size: 3,
           });
           const text = (result?.text || '').trim();
-          if (looksLikeArtifact(text, level)) continue;
+          if (isArtifact(text, level)) continue;
           const next = transcriptRef.current ? `${transcriptRef.current} ${text}` : text;
           transcriptRef.current = next;
           setTranscript(next);
