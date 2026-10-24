@@ -177,9 +177,14 @@ bridge_restart() {
       waited=$((waited + 1))
     done
   fi
-  # The subshell's own output is thrown away as well. Bash keeps a subshell
-  # alive until the job inside it finishes, and a subshell still holding the
-  # caller's stdout keeps that pipe open — so a caller that waits for the
+  # The subshell is EXECED rather than forked. `( cmd & )` forks a subshell and
+  # bash keeps that subshell alive until the command finishes, so a restart
+  # would leave a bash process behind holding the bridge — and that process's
+  # command line is the same as the supervisor's, because it is the same
+  # script. It is then indistinguishable from a second supervisor in `ps`.
+  #
+  # The subshell's own output is thrown away as well. A subshell still holding
+  # the caller's stdout keeps that pipe open — so a caller that waits for the
   # output to end waits for the bridge to exit too.
-  ( cd "$dir" && nohup "$node_bin" index.mjs > "$log" 2>&1 < /dev/null & ) >/dev/null 2>&1
+  ( cd "$dir" && exec nohup "$node_bin" index.mjs > "$log" 2>&1 < /dev/null ) >/dev/null 2>&1 &
 }

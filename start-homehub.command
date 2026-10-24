@@ -30,7 +30,10 @@ if listening "$BRIDGE_PORT"; then
   say "App server: already running"
 else
   say "Starting the app server…"
-  ( cd "$ROOT/bridge/shift " 2>/dev/null && nohup node index.mjs > /tmp/hh_bridge.log 2>&1 < /dev/null & )
+  # `exec` and not a plain background job: a forked subshell would stay alive
+  # holding the bridge, with the same command line as the supervisor, and the
+  # process list would then show a supervisor that is not one.
+  ( cd "$ROOT/bridge/shift " 2>/dev/null && exec nohup node index.mjs > /tmp/hh_bridge.log 2>&1 < /dev/null ) >/dev/null 2>&1 &
   sleep 5
 fi
 

@@ -34,6 +34,15 @@ URL="https://narayana.tailac25b4.ts.net"
 LOG="/tmp/hh_supervisor.log"
 INTERVAL=20
 
+# Where the services this supervisor starts write their logs.
+#
+# WHY THESE ARE VARIABLES AND NOT JUST PATHS IN THE STARTERS: the bridge's
+# log is the one an owner reads when the app misbehaves, so the path cannot be
+# scattered — and a test has to be able to point the starters somewhere that
+# is not the live log of the service that is running right now.
+BRIDGE_LOG="/tmp/hh_bridge.log"
+VOICE_LOG="/tmp/tts_daemon.log"
+
 # Where this supervisor writes down the checksum of the copy of watchdog.sh
 # that is running. See the write below for why anything outside needs to know.
 SUPERVISOR_STATE="/tmp/hh_supervisor.checksum"
@@ -118,14 +127,31 @@ supervisor_publish_state "$SELF_PATH" "$SELF_LOADED_SUM" "$SUPERVISOR_STATE" || 
 # redirect landed on index.mjs and truncated the bridge to zero bytes. Literal
 # calls remove the whole class of mistake, and every redirect below targets
 # /tmp — never a path inside the project.
+#
+# WHY THE STARTERS EXEC INSTEAD OF FORKING: `( cmd & )` forks a subshell to
+# run the command, and bash keeps that subshell alive until the command
+# finishes. The subshell's command line is the supervisor's own command line
+# — it is the same script, running the same file — so it is indistinguishable
+# from a second supervisor in `ps`.
+#
+# MEASURED ON THE LIVE MACHINE: there were three `bash watchdog.sh` processes
+# and exactly ONE supervisor. The other two were the bridge's and the voice
+# daemon's subshells, each holding its service as a child. A debugger that
+# reads the process list then draws its conclusions about the wrong process —
+# which is exactly what happened here: PID 41146 was sampled as if it were
+# the supervisor, and it is not; it is the bridge's subshell.
+#
+# `exec` replaces the subshell with the service itself, so nothing is left
+# behind: the service's parent is the supervisor, and the process list says
+# what it means.
 start_bridge() {
-  ( cd "$BRIDGE_DIR" && nohup "$NODE_BIN" index.mjs \
-      > /tmp/hh_bridge.log 2>&1 < /dev/null & )
+  ( cd "$BRIDGE_DIR" && exec nohup "$NODE_BIN" index.mjs \
+      > "$BRIDGE_LOG" 2>&1 < /dev/null ) >/dev/null 2>&1 &
 }
 
 start_voice() {
-  ( cd "$HOME" && nohup "$TTS_PY" "$TTS_SERVER" "$VOICE_PORT" \
-      > /tmp/tts_daemon.log 2>&1 < /dev/null & )
+  ( cd "$HOME" && exec nohup "$TTS_PY" "$TTS_SERVER" "$VOICE_PORT" \
+      > "$VOICE_LOG" 2>&1 < /dev/null ) >/dev/null 2>&1 &
 }
 
 log "supervisor started (root=$ROOT)"
@@ -205,7 +231,7 @@ while true; do
       stale)
         if bridge_take_restart_lock "$RESTART_LOCK"; then
           log "bridge is running older code — restarting it onto the code on disk"
-          bridge_restart "$BRIDGE_PORT" "$BRIDGE_DIR" "$NODE_BIN" /tmp/hh_bridge.log
+          bridge_restart "$BRIDGE_PORT" "$BRIDGE_DIR" "$NODE_BIN" "$BRIDGE_LOG"
           sleep 5
           if listening "$BRIDGE_PORT"; then
             log "bridge back up on the current code"
