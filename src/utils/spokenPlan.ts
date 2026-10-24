@@ -115,8 +115,26 @@ const PRE_CONNECTOR_RE = /^(.*?)\b(?:for|as|to be|will be|will have)\s*$/i;
  * that refuses a dish has to refuse it whichever word it is, or the same
  * intent is parsed two ways depending on what the user happened to say. One
  * list for all of them is what keeps the three rules below from drifting.
+ *
+ * WHY "REMOVE" AND "CANCEL" ARE HERE: they are how people ask for a dish to
+ * be taken off the plan, and they were not refusals, so the words for taking
+ * a dish away were written INTO the plan as the dish. "remove dal for
+ * dinner" filed the dinner as "remove dal" — a name that matches no recipe
+ * in the catalogue, so the shopping list bought nothing for it — and the
+ * sheet said "Added 1 meal by voice" about a meal the user had asked to have
+ * removed. The user asked for a dish to go away and the app planned it.
+ *
+ * WHY "DROP" IS NOT HERE, THOUGH IT SOUNDS JUST AS MUCH LIKE A REFUSAL: the
+ * catalogue has "Chinese Egg Drop Soup", "Goan Egg Drop Curry" and "Snow
+ * Drop Cookies" in it, and a refusal word that a recipe's own name contains
+ * takes the dish away from the plan the moment the dish is said. A word on
+ * this list can never be part of a dish, so it may only be added after the
+ * catalogue has been checked for it.
  */
-const REFUSAL_WORDS = ['no', 'not', 'without', 'skip', 'avoid', 'do not', 'nope', 'nah'];
+const REFUSAL_WORDS = [
+  'no', 'not', 'without', 'skip', 'avoid', 'do not', 'nope', 'nah',
+  'remove', 'cancel',
+];
 
 /**
  * "don't" is "do not" with the apostrophe left out.
@@ -174,6 +192,22 @@ function dishBeforeRefusal(text: string): string | null {
  */
 const REFUSAL_FILLERS = new Set([
   'want', 'wants', 'wanna', 'need', 'needs', 'really',
+  // WHY "MORE" IS HERE AND NOT IN THE NOISE SET: it is a quantifier, and a
+  // quantifier is the one word that can sit between a refusal and the dish
+  // it refuses without carrying a dish of its own — "no more dal for dinner"
+  // is the dal the user does not want, and nothing else.
+  //
+  // WHY IT MATTERS: "more" was not on this list, so the dish the refusal
+  // named was "more dal" and not "dal". A refusal names the dish it refuses,
+  // and this one named a dish nothing on the plan holds — so it removed
+  // nothing, and the dal the user had refused stayed in the plan, where the
+  // shopping list buys it. The refusal was understood perfectly and the dish
+  // was not: the app said "there is no more dal to remove from the dinner"
+  // about a dal the user had named twice.
+  //
+  // WHY NOT IN THE NOISE SET: there these words are stripped out of every
+  // dish, which is a different rule and a wider change than this needs.
+  'more',
 ]);
 
 /**
