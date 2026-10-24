@@ -45,11 +45,20 @@ export interface SpokenPlanEntry {
  * nothing about biryani, and a dish they did not refuse is a dish the list
  * buys.
  *
+ * WHY A MEAL THE UTTERANCE FILLED IS LEFT OUT: the user can refuse a dish
+ * and ask for another in the same breath — "no dal for dinner, biryani for
+ * dinner" — and the dinner is to hold the biryani. A refusal takes the dish
+ * that was there away; it does not take the meal away from what the user
+ * asked for in the same sentence. So a meal the plan fills is never emptied
+ * by a refusal, and the two sets can never be the same meal.
+ *
  * @param refusals what the utterance refused
+ * @param plan     the dishes the utterance filed
  * @param day      the day as it stands, for the dishes it is holding
  */
 export function spokenPlanClears(
   refusals: SpokenRefusal[],
+  plan: SpokenPlan,
   day: MealPlanDayPlan | undefined,
 ): MealSlot[] {
   if (!day) return [];
@@ -61,6 +70,9 @@ export function spokenPlanClears(
     // dish is about wherever that dish is being held.
     const slots = refusal.slot ? [refusal.slot] : MEAL_SLOTS;
     for (const slot of slots) {
+      // A meal the utterance filled is the user's own dish now, and a
+      // refusal is not allowed to empty it.
+      if ((plan[slot] || '').trim()) continue;
       const held = day[slot];
       if (!held) continue;
       if (!namesHeldDish(refusal.dish, held.name)) continue;

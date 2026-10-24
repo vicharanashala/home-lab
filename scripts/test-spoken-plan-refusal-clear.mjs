@@ -71,10 +71,12 @@ function dayHolding(dishes) {
 function applySpoken(said, current) {
   const { plan, refusals } = parseSpokenPlanResult(said);
   const entries = spokenPlanEntries(plan, {}, current, HOUSEHOLD);
-  const cleared = spokenPlanClears(refusals, current);
+  const cleared = spokenPlanClears(refusals, plan, current);
   const next = { ...current };
-  for (const { slot, entry } of entries) next[slot] = entry;
+  // The order the page writes in: what the user refused comes off first, and
+  // what the user said goes on after.
   for (const slot of cleared) next[slot] = null;
+  for (const { slot, entry } of entries) next[slot] = entry;
   const holds = {};
   for (const slot of ['breakfast', 'lunch', 'dinner']) {
     holds[slot] = next[slot] ? next[slot].name : null;
@@ -152,6 +154,40 @@ check(
   'a refusal that stands alone names no meal',
   parseSpokenPlanResult('no dal').refusals,
   [{ slot: null, dish: 'dal' }],
+);
+
+console.log('\nand a meal the utterance FILLED is not emptied by the refusal');
+check(
+  '"no dal for dinner, biryani for dinner" keeps the biryani',
+  applySpoken(
+    'no dal for dinner, biryani for dinner',
+    dayHolding({ dinner: 'dal' }),
+  ).holds,
+  { breakfast: null, lunch: null, dinner: 'biryani' },
+);
+check(
+  '"no dal for dinner, biryani for dinner" empties no meal',
+  applySpoken(
+    'no dal for dinner, biryani for dinner',
+    dayHolding({ dinner: 'dal' }),
+  ).cleared,
+  [],
+);
+check(
+  '"dinner biryani, no dal for dinner" keeps the biryani',
+  applySpoken(
+    'dinner biryani, no dal for dinner',
+    dayHolding({ dinner: 'dal' }),
+  ).holds,
+  { breakfast: null, lunch: null, dinner: 'biryani' },
+);
+check(
+  '"for dinner biryani, no dal" keeps the biryani and takes the other dal',
+  applySpoken(
+    'for dinner biryani, no dal',
+    dayHolding({ breakfast: 'dal', dinner: 'dal' }),
+  ).holds,
+  { breakfast: null, lunch: null, dinner: 'biryani' },
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -98,7 +98,9 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
   const buildDraft = (text: string): SpokenDraft | null => {
     const { plan: parsed, refusals } = parseSpokenPlanResult(text);
     // The meals a refusal empties, worked out against the day as it stands.
-    const cleared = spokenPlanClears(refusals, dayPlan);
+    // A meal the utterance filled is not one of them: "no dal for dinner,
+    // biryani for dinner" leaves the dinner holding the biryani.
+    const cleared = spokenPlanClears(refusals, parsed, dayPlan);
     if (!parsed.breakfast && !parsed.lunch && !parsed.dinner && !cleared.length) return null;
     const { plan, resolutions: found } = resolveSpokenPlan(parsed, catalogue, preferredIds);
     setResolutions(found);

@@ -898,12 +898,18 @@ export default function MealPlanPage() {
                     // with them, are decided in one place so that every way
                     // of putting a dish on a day agrees.
                     const entries = spokenPlanEntries(plan, resolutions, dayPlan, household);
-                    entries.forEach(({ slot, entry }) => setMealPlanSlot(day, slot, entry));
                     // A meal the user REFUSED is removed, not written. The
                     // shopping list buys the plan, so a dish left in the plan
                     // is a dish the list buys — and this is the one the user
                     // said they did not want.
+                    //
+                    // WHY THE REMOVAL COMES FIRST: what the user said for a
+                    // meal wins over what was there. A refusal takes the old
+                    // dish away and the spoken dish takes its place, and the
+                    // two are never the same meal — a meal the utterance
+                    // filled is not one of the removals.
                     cleared.forEach((slot) => setMealPlanSlot(day, slot, null));
+                    entries.forEach(({ slot, entry }) => setMealPlanSlot(day, slot, entry));
                     const added = entries.length;
                     const removed = cleared.length;
                     toast(
