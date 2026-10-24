@@ -34,6 +34,10 @@ URL="https://narayana.tailac25b4.ts.net"
 LOG="/tmp/hh_supervisor.log"
 INTERVAL=20
 
+# Where this supervisor writes down the checksum of the copy of watchdog.sh
+# that is running. See the write below for why anything outside needs to know.
+SUPERVISOR_STATE="/tmp/hh_supervisor.checksum"
+
 NODE_BIN="/Users/adhyathmika/local/node-v24.16.0-darwin-arm64/bin/node"
 TTS_PY="$HOME/tools/python/bin/python3.12"
 TTS_SERVER="$HOME/tools/tts/speak_server.py"
@@ -78,6 +82,30 @@ case "$SELF_PATH" in
   *) SELF_PATH="$PWD/$SELF_PATH" ;;
 esac
 SELF_LOADED_SUM="$(supervisor_script_sum "$SELF_PATH")"
+
+# Write down the checksum of the copy that is running, so that anything
+# watching the app from OUTSIDE can tell whether the supervisor is on the
+# current code.
+#
+# WHY THIS IS WRITTEN OUT AT ALL: a process's start time cannot answer that
+# question. `exec` — which is how the supervisor reloads itself — replaces
+# the process image but keeps the start time, so a supervisor that has
+# already reloaded looks exactly like one that never did. The checksum of the
+# copy that is running is the only thing that tells the two apart, and
+# nothing outside this process can work it out.
+#
+# WHY IT IS THE WHOLE STORY WHEN IT IS MISSING: the file is written by the
+# copy of watchdog.sh that knows to write it. A supervisor older than this
+# line never writes it, and that is not a cosmetic difference: an older
+# supervisor is running a loop that cannot re-read itself, so the app it
+# looks after goes on serving old code for ever, silently. The check that
+# reads this file says exactly that, instead of guessing.
+#
+# WHY THE WRITE CANNOT FAIL THE SUPERVISOR: a supervisor that stops
+# supervising because it could not write a checksum is a worse app than one
+# that is merely out of date. So the write is best-effort, and the cost of it
+# failing is that the check says "unknown" — which it treats as not healthy.
+printf '%s\n' "$SELF_LOADED_SUM" > "$SUPERVISOR_STATE" 2>/dev/null || true
 
 # Each starter is written out in full, with no "$@" forwarding. An earlier
 # version passed the log path positionally and read the wrong argument, so the

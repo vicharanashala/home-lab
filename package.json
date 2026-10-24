@@ -12,6 +12,7 @@
     "test": "node scripts/test-spoken-plan.mjs",
     "check": "bash scripts/quality-gate.sh",
     "check:baseline": "bash scripts/quality-gate.sh --update-baseline",
+    "check:live": "bash scripts/check-live.sh",
     "server": "npm --prefix server install && npm --prefix server run dev",
     "server:start": "npm --prefix server start"
   },
