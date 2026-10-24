@@ -150,26 +150,36 @@ export function parseSpokenPlan(text: string): SpokenPlan {
   }
 
   const out: SpokenPlan = {};
+
   /**
-   * The dish the PREVIOUS meal word was given, and WHICH SIDE of that meal
-   * word it came from.
+   * The dish the meal word about to be read may take from the text IN FRONT
+   * of it.
    *
-   * The side matters more than the dish itself. The text in front of a
-   * connector belongs to the previous meal when the previous meal took its
-   * dish from the text on its RIGHT — in "for breakfast masala dosa, for
-   * lunch butter chicken" the "masala dosa" has already been breakfast's.
-   * But when the previous meal took its dish from the LEFT — "rice for
-   * lunch" — the text in front of the next connector is that next meal's
-   * own dish, even when the two are the same words.
+   * The text between two meal words is shared. The meal on the left may take
+   * its dish from the text on its right ("breakfast masala dosa") and the
+   * meal on the right may take its dish from the text on its left ("butter
+   * chicken for lunch") — and when both do, the two dishes sit in the SAME
+   * stretch of text and the parser has to know where one ends and the other
+   * begins.
    *
-   * Without the side, the two readings of "rice for lunch and rice for
-   * dinner" are indistinguishable: the second "rice" looks like a repeat of
-   * the first, so dinner was dropped; and in "rice for lunch and rice for
-   * dinner and dal for breakfast" the "dal" was handed to dinner, which is
-   * a dish nobody spoke for dinner.
+   * That is the whole difficulty. Hand the whole stretch to the left meal
+   * and it swallows the right meal's dish — "breakfast masala dosa, butter
+   * chicken for lunch" became a breakfast of "masala dosa butter chicken"
+   * and a lunch with nothing in it. And because the left meal had taken the
+   * right meal's dish, the right meal was then given the NEXT meal's dish
+   * instead: "for breakfast masala dosa, butter chicken for lunch, chole for
+   * dinner" put "chole" in the LUNCH slot and dropped dinner entirely.
+   *
+   * So the split is worked out by the meal on the left, one step early, and
+   * handed to the meal on the right.
    */
-  let prevDish = '';
-  let prevTookRight = false;
+  let nextLeftDish = '';
+
+  // The text before the FIRST meal word can only be that meal's own: there
+  // is no meal before it that could have claimed it.
+  const leadPre = src.slice(0, unique[0].at).match(PRE_CONNECTOR_RE);
+  if (leadPre) nextLeftDish = tidy(leadPre[1]);
+
   for (let i = 0; i < unique.length; i++) {
     const mark = unique[i];
     const after = mark.at + mark.len;
@@ -179,52 +189,63 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     const segAfter = src.slice(after, nextAt);
     const segBefore = src.slice(prevEnd, mark.at);
     const hasPrev = i > 0;
-    const hasNext = i + 1 < unique.length;
+
+    // The text AFTER this meal word, up to the next one. When it ends with a
+    // connector, the next meal word may take its dish from in front of it,
+    // and this stretch of text holds TWO dishes rather than one.
+    const afterPre = segAfter.match(PRE_CONNECTOR_RE);
+    const afterFront = afterPre ? afterPre[1] : '';
+
+    // The comma is where the two dishes part company.
+    //
+    // "and" is NOT, and that is deliberate: the catalogue is full of dishes
+    // named with it — "Makki and Methi Roti", "Cabbage and Carrot
+    // Sambharo", and the everyday "rice and dal". Splitting on "and" would
+    // cut those in half and hand the second half to a meal that was never
+    // spoken for. A comma is the only sign that two dishes were said where
+    // one meal word stands.
+    const commaAt = afterFront.lastIndexOf(',');
+    const afterHead = commaAt >= 0 ? afterFront.slice(0, commaAt) : afterFront;
+    const afterTail = commaAt >= 0 ? afterFront.slice(commaAt + 1) : '';
 
     // Which side of the meal word holds the dish? "dinner dal" puts it
     // behind; "dal for dinner" puts it in front. A connector right before the
     // meal word is the tell. The segment on the other side belongs to the
     // NEIGHBOURING meal, so it must not be stolen as a fallback.
     //
-    // The connector only moves the dish to the front when there is a dish in
-    // front of it that has not already been given to the previous meal. A
-    // "for" with nothing in front of it is not a connector at all — it is
-    // how people talk. "For breakfast masala dosa, for lunch butter
-    // chicken" is the most natural way to dictate a day, and reading the
-    // leading "for" as "the dish comes before the meal word" filed masala
+    // A connector only moves the dish to the front when there is a dish in
+    // front of it. A "for" with nothing in front of it is not a connector at
+    // all — it is how people talk. "For breakfast masala dosa, for lunch
+    // butter chicken" is the most natural way to dictate a day, and reading
+    // the leading "for" as "the dish comes before the meal word" filed masala
     // dosa under LUNCH, butter chicken under DINNER, and left breakfast
     // empty.
-    const pre = segBefore.match(PRE_CONNECTOR_RE);
-    const front = pre ? tidy(pre[1]) : '';
-    const frontTaken = !!front && prevTookRight && front === prevDish;
-
     let dish: string;
     // Which side of THIS meal word the dish was taken from, so the next
     // meal word can tell a repeated dish from a dish that was never claimed.
     let tookRight = false;
-    if (pre && isMeaningful(front) && !frontTaken) {
-      dish = tidy(segBefore);
-      if (!isMeaningful(dish) && !hasNext) {
-        dish = tidy(segAfter);
-        tookRight = true;
-      }
+    if (isMeaningful(nextLeftDish)) {
+      dish = nextLeftDish;
     } else {
-      dish = tidy(segAfter);
+      dish = afterPre ? tidy(afterHead) : tidy(segAfter);
       tookRight = true;
       if (!isMeaningful(dish) && !hasPrev) {
+        // The first meal word, and nothing behind it either: the dish was
+        // spoken before the meal word with no connector to say so.
         dish = tidy(segBefore);
         tookRight = false;
       }
     }
 
+    // Hand the next meal word the part of this stretch of text that is its
+    // own: the tail when this meal took the head, and the whole of it when
+    // this meal took its dish from the other side entirely.
+    nextLeftDish = tookRight ? tidy(afterTail) : tidy(afterFront);
+
     // "no dal for dinner" is a refusal, not a dish. Leave the slot alone
     // rather than writing a dish the user said they did not want.
     if (NEGATION_RE.test(dish)) continue;
 
-    if (isMeaningful(dish)) {
-      prevDish = dish;
-      prevTookRight = tookRight;
-    }
     if (isMeaningful(dish) && !out[mark.slot]) {
       out[mark.slot] = dish;
     }
