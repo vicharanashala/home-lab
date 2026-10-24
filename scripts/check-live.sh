@@ -34,10 +34,30 @@
 #   HH_PUBLIC_URL           the public address
 set -uo pipefail
 
-ROOT="/Users/adhyathmika/homehub"
+# launchd and cron both start with a minimal PATH; node lives in a user-local
+# directory, so without this every check below fails with "command not found".
 export PATH="/Users/adhyathmika/local/node-v24.16.0-darwin-arm64/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-. "$ROOT/scripts/lib/live-state.sh"
+# This script, and the library it uses, are found relative to THIS file rather
+# than by an absolute path into the repository.
+#
+# WHY: the quality gate exports the staged index to a temporary directory and
+# runs the tests there, so that a commit is checked on its own and not on
+# whatever another agent happens to have in flight. A hard-coded path quietly
+# undoes that — the exported check-live.sh would source the WORKING TREE's
+# library, so the gate would test a mix of two different commits and fail for
+# a change that was never made. That is not a theory: this exact mix failed
+# the gate during a debugging pass, on a commit that did not touch the library
+# at all.
+#
+# WHY THE ROOT IS DERIVED RATHER THAN HARDCODED: the defaults below — the
+# bridge's directory and the supervisor's script — describe the app being
+# checked, so an exported copy has to describe ITS OWN app, not the one in
+# the working tree.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
+
+. "$SCRIPT_DIR/lib/live-state.sh"
 
 BRIDGE_PORT="${HH_BRIDGE_PORT:-8789}"
 BRIDGE_DIR="${HH_BRIDGE_DIR:-$ROOT/bridge/shift }"
