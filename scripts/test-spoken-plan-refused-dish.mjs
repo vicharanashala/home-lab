@@ -61,6 +61,25 @@ check('for breakfast dal, no it', {});
 check('breakfast dal, no it', {});
 check('for lunch rice, no it', {});
 
+console.log('\nand it points back even when the user keeps dictating');
+// WHY THIS IS HERE: the pronoun was only read when the refusal came after the
+// LAST meal word in the sentence. "for breakfast dal, no it" refused the dal,
+// and "for breakfast dal, no it, for lunch rice" did not — the same words and
+// the same intent, with only the next thing the user said different.
+//
+// The dal stayed in the plan, the sheet said the breakfast had been heard,
+// and the shopping list bought the very dish the user had refused.
+//
+// The pronoun points at the dish in FRONT of it, so what follows it is a
+// different meal and must not swallow the refusal.
+check('for breakfast dal, no it, for lunch rice', { lunch: 'rice' });
+check('breakfast dal, no it, lunch rice', { lunch: 'rice' });
+check('for breakfast dal, do not want it, for lunch rice', { lunch: 'rice' });
+check('breakfast oats, lunch rice, no it, dinner dal', {
+  breakfast: 'oats',
+  dinner: 'dal',
+});
+
 console.log('\na refusal that names a DIFFERENT dish leaves the meal alone');
 check('lunch rice, no lunch dal', { lunch: 'rice' });
 check('rice, no dal for breakfast', { breakfast: 'rice' });

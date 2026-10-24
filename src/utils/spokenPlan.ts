@@ -322,6 +322,37 @@ function clauseOf(src: string, refusal: RefusalAt): { start: number; end: number
 }
 
 /**
+ * True when the refusal POINTS BACK at the dish it was said after.
+ *
+ * "no it" names the dish in front of it: "for breakfast dal, no it" is "the
+ * breakfast is NOT dal".
+ *
+ * WHY THIS IS A RULE OF ITS OWN: the pronoun used to be read only when the
+ * refusal came after the LAST meal word in the sentence, so "for breakfast
+ * dal, no it" refused the dal and "for breakfast dal, no it, for lunch rice"
+ * did not. The same words and the same intent, with only the next thing the
+ * user said different — and the dal stayed in the plan, where the shopping
+ * list buys it.
+ *
+ * WHY THE SCAN STOPS AT THE NEXT MEAL WORD: a meal word opens a meal, so a
+ * pronoun after it belongs to THAT meal's dish and not to the one the refusal
+ * was said after. "breakfast dal, no dal, lunch rice and it" is a refusal of
+ * the dal and a lunch of rice; the "it" at the end is the rice's.
+ *
+ * @param src        the whole sentence
+ * @param refusal    where the refusal is
+ * @param nextMealAt where the next meal word starts, or the end of the sentence
+ */
+function pointsBackAt(src: string, refusal: RefusalAt, nextMealAt: number): boolean {
+  const words = src
+    .slice(refusal.end, nextMealAt)
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  return words.some((w) => REFUSAL_PRONOUNS.has(w));
+}
+
+/**
  * True when the text in front of the meal word refuses that meal.
  *
  * "no lunch dal" refuses the lunch — the refusal sits in front of the MEAL
@@ -632,7 +663,28 @@ export function parseSpokenPlan(text: string): SpokenPlan {
 
     let named = '';
 
-    if (forward >= 0) {
+    // A refusal that POINTS BACK names the dish in front of it, and it is
+    // checked BEFORE the two branches below because they both read the text
+    // that FOLLOWS the refusal.
+    //
+    // WHY IT MATTERS: "for breakfast dal, no it, for lunch rice" refused the
+    // dal only when the refusal was the last thing said. With a lunch after
+    // it, the refusal was read as a refusal of the lunch, so it named no
+    // dish at all, and the dal the user had refused stayed in the plan.
+    const pointsBack = pointsBackAt(
+      src,
+      refusal,
+      forward >= 0 ? mentions[forward].at : src.length,
+    );
+
+    if (pointsBack) {
+      // The dish the pronoun points at: the most recent meal BEFORE the
+      // refusal. When the refusal is the last thing said, that is the last
+      // meal of all — the same dish the old rule named, so a refusal that
+      // worked before still works.
+      const before = mentions.filter((m) => m.at < refusal.at).pop();
+      named = before ? before.dish : '';
+    } else if (forward >= 0) {
       if (refusalLinksToMeal(src, refusal.end, bound.at)) {
         // The meal word follows the refusal, so the dish the refusal names
         // is the one BEHIND the meal word.
@@ -652,19 +704,7 @@ export function parseSpokenPlan(text: string): SpokenPlan {
     } else {
       // The refusal came after the last meal word, so it names the dish in
       // front of it — "dal for dinner, no dal".
-      const behind = src
-        .slice(refusal.end)
-        .toLowerCase()
-        .split(/[^\p{L}\p{N}]+/u)
-        .filter(Boolean);
-      if (behind.some((w) => REFUSAL_PRONOUNS.has(w))) {
-        // It points back at the dish — "for breakfast dal, no it" — so the
-        // refusal names the dish the meal already holds. A bare "no" names
-        // nothing and removes nothing: "lunch dal, no" is the lunch dal.
-        named = bound.dish;
-      } else {
-        named = dishOf(src.slice(refusal.end));
-      }
+      named = dishOf(src.slice(refusal.end));
     }
 
     // The meal that loses the dish.
