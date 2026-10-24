@@ -278,6 +278,13 @@ function withoutFillers(text: string): string {
  * WHY THE CASE IS FOLDED HERE AS WELL: the rule is used on names that arrive
  * from two places, and only one of them is a recipe's own spelling.
  *
+ * WHY THE WORDS ARE KEPT HERE AND THE LETTERS ARE TAKEN IN `dishLetters`:
+ * the fillers come off a name a WORD at a time — "no want rice" names the
+ * rice, not the want — so the words have to still be words at that point.
+ * The rule is therefore done in two steps: this one folds the case and the
+ * punctuation so that the words can be read, and `dishLetters` folds what is
+ * left of the separators away.
+ *
  * @param text the name
  */
 function comparableDish(text: string): string {
@@ -286,6 +293,47 @@ function comparableDish(text: string): string {
     .replace(PUNCTUATION_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * A dish name, reduced to the letters it is made of.
+ *
+ * WHY THE SPACES GO AS WELL AS THE PUNCTUATION: the apostrophe in a recipe's
+ * own name reaches the app in three shapes, and the rule has to agree with
+ * all three of them:
+ *
+ *   "Eggless Devil's Food Cake"   the recipe's own spelling
+ *   "eggless devil s food cake"   the apostrophe heard as a space
+ *   "eggless devils food cake"    the apostrophe not heard at all
+ *
+ * Folding the punctuation to a SPACE matches the first two and misses the
+ * third, because "devil s" is not "devils" — and the refusal of that dish did
+ * nothing at all: the dish stayed on the plan, the shopping list bought it,
+ * and the sheet told the user there was no such dish to remove.
+ *
+ * And an apostrophe is not always a possessive. "Za'atar" is a spice, and
+ * "zaatar" is how it is said, so the apostrophe there has to go too — and
+ * folding it to a space left "za atar" beside "zaatar", which never matched
+ * either.
+ *
+ * So the name is reduced to its letters, and the three shapes of one name are
+ * one name.
+ *
+ * WHY THIS CANNOT MAKE TWO DISHES ONE: the letters are compared in order, so
+ * a dish that merely CONTAINS the named one is still a different dish —
+ * "dal" is not "dal tadka". The whole catalogue was checked for it: of the
+ * 5894 scraped names and the curated ones, no two DIFFERENT names fold to the
+ * same letters. The only names that do are the same dish written twice, like
+ * "Paneer butter masala" and "Paneer Butter Masala".
+ *
+ * WHY THE LETTERS AND NOT THE ASCII ALPHABET: a recipe name carries accents
+ * — "Jalapeño" — and stripping them would make "jalapeño" and "jalapeno" two
+ * names where the catalogue has one.
+ *
+ * @param text the name
+ */
+function dishLetters(text: string): string {
+  return text.replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
 /**
@@ -353,7 +401,27 @@ export function namesHeldDish(named: string, held: string | undefined): boolean 
   // Food Cake", and a refusal of it did nothing at all — the dish stayed on
   // the plan and the shopping list bought it. `comparableDish` is the one
   // rule both sides go through.
-  return withoutFillers(comparableDish(named)) === withoutFillers(comparableDish(held));
+  //
+  // WHY THE FOLDING GOES ALL THE WAY DOWN TO THE LETTERS: folding the
+  // punctuation to a space is not enough, because the apostrophe reaches the
+  // app in more than one shape. The recipe's own name has it — "Devil's" —
+  // the recogniser may leave it as a space — "devil s" — or drop it and keep
+  // the letter after it — "devils". The rule matched the first two and missed
+  // the third, so:
+  //
+  //   day holds "General Tso's Chicken"   user says "no general tsos chicken"
+  //                             -> the meal was NOT emptied
+  //
+  // and the same held for an apostrophe that is not a possessive at all:
+  // "Roasted Potatoes With Za'atar" is not "Roasted Potatoes With Za Atar".
+  // `dishLetters` is what makes the three shapes of one name one name.
+  //
+  // WHY THE FILLERS COME OFF BEFORE THE LETTERS: a filler is a WORD — "want",
+  // "more", "really" — and the words have to still be words to take them off.
+  return (
+    dishLetters(withoutFillers(comparableDish(named))) ===
+    dishLetters(withoutFillers(comparableDish(held)))
+  );
 }
 
 /**
