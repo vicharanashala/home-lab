@@ -4,7 +4,8 @@ import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES, AUTO_MODEL } from '../hoo
 import { parseSpokenPlanResult } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
 import { resolveSpokenPlan, retypeDish, pickDish } from '../utils/spokenRecipeMatch';
-import { spokenPlanClears } from '../utils/spokenPlanEntries';
+import { spokenPlanClears, spokenPlanEditSlot } from '../utils/spokenPlanEntries';
+import type { SpokenDraft } from '../utils/spokenPlanEntries';
 import { sheetNoteFor } from '../utils/spokenPlanSheet';
 import type { DishResolution } from '../utils/spokenRecipeMatch';
 import type { MealPlanDayPlan, MealSlot, Recipe } from '../types';
@@ -43,13 +44,6 @@ interface Props {
  * dinner": the dinner is not left alone, and it is not filled with something
  * else. It is emptied.
  */
-interface SpokenDraft {
-  /** The dishes the utterance filed. */
-  plan: SpokenPlan;
-  /** The meals a refusal empties. */
-  cleared: MealSlot[];
-}
-
 /**
  * Say the day's meals out loud instead of typing them.
  *
@@ -104,8 +98,21 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
     if (!parsed.breakfast && !parsed.lunch && !parsed.dinner && !cleared.length) return null;
     const { plan, resolutions: found } = resolveSpokenPlan(parsed, catalogue, preferredIds);
     setResolutions(found);
-    return { plan, cleared };
+    return { plan, refusals };
   };
+
+  /**
+   * The meals a refusal empties, as they stand RIGHT NOW.
+   *
+   * WHY THIS IS WORKED OUT AGAIN INSTEAD OF BEING KEPT IN THE DRAFT: the
+   * refusals are what the user said, and they do not change because a field
+   * was edited — but the meals they empty do, because a meal the plan fills
+   * is not emptied by a refusal beside it. Working it out from the refusals
+   * and the plan as it is now means the sheet says exactly what the page
+   * will do, and it says it again when the field is emptied and the refusal
+   * is standing once more.
+   */
+  const cleared = draft ? spokenPlanClears(draft.refusals, draft.plan, dayPlan) : [];
 
   const toggle = async () => {
     setError(null);
@@ -170,7 +177,7 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
           const current = draft.plan[slot] ?? '';
           // A meal the user refused: it is going to be REMOVED, which is not
           // what an empty slot means everywhere else in this sheet.
-          const isCleared = draft.cleared.includes(slot);
+          const isCleared = cleared.includes(slot);
           // What the slot says about itself, and which dishes are offered
           // beside it.
           //
@@ -201,16 +208,13 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
                 aria-label={`${slot} from speech`}
                 onChange={(e) => {
                   const text = e.target.value;
-                  // An edited slot is the user's own: the refusal that
-                  // emptied it is dropped, because the user has just said
-                  // what this meal should be.
+                  // Only the DISH changes here. A refusal the user made by
+                  // voice is not undone by editing a field: an empty field is
+                  // the absence of a dish, not the user's dish, and dropping
+                  // the refusal on the first keystroke put the refused dish
+                  // back on the shopping list.
                   setDraft((d) =>
-                    d
-                      ? {
-                          plan: { ...d.plan, [slot]: text || undefined },
-                          cleared: d.cleared.filter((s) => s !== slot),
-                        }
-                      : d,
+                    d ? spokenPlanEditSlot(d, slot, text) : d,
                   );
                   // The slot and the resolution have to move together.
                   //
@@ -263,14 +267,11 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
-                        setDraft((d) =>
-                          d
-                            ? {
-                                plan: { ...d.plan, [slot]: m.name },
-                                cleared: d.cleared.filter((s) => s !== slot),
-                              }
-                            : d,
-                        );
+                        // The dish the user tapped is now the meal's dish, so the
+                        // meal is filled and a refusal beside it no longer
+                        // empties it. The refusal itself is left standing —
+                        // emptying the field again brings it back.
+                        setDraft((d) => (d ? spokenPlanEditSlot(d, slot, m.name) : d));
                         // The resolution follows the slot. The dish the user
                         // tapped IS the dish the plan now holds, so it is the
                         // dish whose recipe has to be linked — otherwise the
@@ -301,7 +302,7 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
           <button
             type="button"
             onClick={() => {
-              onApply(draft.plan, resolutions, draft.cleared);
+              onApply(draft.plan, resolutions, cleared);
               setDraft(null);
               setResolutions({});
               whisper.reset();

@@ -19,6 +19,45 @@ import { MEAL_SLOTS, suggestedServingsForDay } from './portions';
  * itself cannot be run from a script.
  */
 
+/**
+ * What the sheet is holding: the dishes that were heard, and the dishes the
+ * user refused.
+ *
+ * WHY THE REFUSALS ARE IN THE DRAFT AND NOT WORKED OUT ONCE: the refusals are
+ * what the user SAID, and they do not change because a field was edited. The
+ * meals they empty do change — a meal the plan fills is not emptied by a
+ * refusal beside it — so the meals are worked out from the refusals and the
+ * plan as they stand now.
+ */
+export interface SpokenDraft {
+  /** The dishes the utterance filed. */
+  plan: SpokenPlan;
+  /** The dishes the utterance refused. */
+  refusals: SpokenRefusal[];
+}
+
+/**
+ * The draft after the user typed a dish into a slot.
+ *
+ * WHY THE REFUSALS ARE LEFT ALONE: a refusal is not the absence of a dish,
+ * it is a dish the user does NOT want, and an empty field says nothing about
+ * what the meal should be. The user refused the dal by voice, typed a
+ * biryani over it and then deleted the biryani; the refusal was standing the
+ * whole time, and dropping it on the first keystroke put the dal back on the
+ * plan and on the shopping list while the sheet said the meal was removed.
+ *
+ * @param draft the draft as it stands
+ * @param slot  the meal the user typed in
+ * @param dish  what they typed; empty means they cleared the field
+ */
+export function spokenPlanEditSlot(
+  draft: SpokenDraft,
+  slot: MealSlot,
+  dish: string | undefined,
+): SpokenDraft {
+  return { ...draft, plan: { ...draft.plan, [slot]: dish || undefined } };
+}
+
 export interface SpokenPlanEntry {
   slot: MealSlot;
   entry: MealPlanEntry;

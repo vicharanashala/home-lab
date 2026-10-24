@@ -29,7 +29,7 @@ import { register } from 'node:module';
 register('./lib/ts-resolve.mjs', import.meta.url);
 
 const { parseSpokenPlanResult } = await import('../src/utils/spokenPlan.ts');
-const { spokenPlanEntries, spokenPlanClears } = await import(
+const { spokenPlanEntries, spokenPlanClears, spokenPlanEditSlot } = await import(
   '../src/utils/spokenPlanEntries.ts'
 );
 
@@ -189,6 +189,40 @@ check(
   ).holds,
   { breakfast: null, lunch: null, dinner: 'biryani' },
 );
+
+console.log('\nand a field the user empties again does NOT take the refusal away');
+{
+  // The sheet as it stands after "no dal for dinner", with the day holding
+  // the dal at the dinner.
+  const day = dayHolding({ dinner: 'dal' });
+  const { plan, refusals } = parseSpokenPlanResult('no dal for dinner');
+  const draft = { plan, refusals };
+
+  check(
+    'the dinner is emptied before anything is typed',
+    spokenPlanClears(draft.refusals, draft.plan, day),
+    ['dinner'],
+  );
+
+  const typed = spokenPlanEditSlot(draft, 'dinner', 'biryani');
+  check(
+    'a dish typed over it wins, and the meal is not emptied',
+    spokenPlanClears(typed.refusals, typed.plan, day),
+    [],
+  );
+
+  const emptied = spokenPlanEditSlot(typed, 'dinner', '');
+  check(
+    'the refusal is still standing when the field is emptied again',
+    spokenPlanClears(emptied.refusals, emptied.plan, day),
+    ['dinner'],
+  );
+  check(
+    'and the dal the user refused is not back on the plan',
+    applySpoken('no dal for dinner', day).holds,
+    { breakfast: null, lunch: null, dinner: null },
+  );
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
