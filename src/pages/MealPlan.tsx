@@ -12,6 +12,8 @@ import type { Suggestion } from '../components/AutocompleteInput';
 import { findCandidatesForIngredient } from '../utils/recipeMatch';
 import { dishCore, normalizeDish } from '../utils/spokenRecipeMatch';
 import { spokenPlanEntries } from '../utils/spokenPlanEntries';
+import { catalogueGate } from '../utils/spokenPlanCatalogue';
+import type { CatalogueState } from '../utils/spokenPlanCatalogue';
 import { suggestCategory } from '../utils/categorySuggest';
 import { DishIcon } from '../components/icons/DishIcons';
 import { MealTypeIcon } from '../components/icons/AppIcons';
@@ -60,8 +62,20 @@ function todayKey(): MealPlanDay {
   return MEAL_PLAN_DAYS[(new Date().getDay() + 6) % 7];
 }
 
-function useCsvRecipes() {
+/**
+ * The CSV catalogue, and whether it failed to arrive.
+ *
+ * WHY THE FAILURE IS KEPT AND NOT SWALLOWED: the catalogue is 5,894 recipes in
+ * a 5.4 MB download, and a download can fail — a phone that loses the network
+ * halfway through. The app still works without it, so the failure is not
+ * fatal, but it is not nothing either: the catalogue is what tells the spoken
+ * plan a dish from a refusal, so a catalogue that never arrives changes what
+ * the user's sentence means. A failure nobody can see is a failure that
+ * changes the shopping list without saying so.
+ */
+function useCsvRecipes(): { recipes: Recipe[] | null; failed: boolean } {
   const [recipes, setRecipes] = useState<Recipe[] | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void import('../data/csvRecipes.json')
@@ -69,11 +83,11 @@ function useCsvRecipes() {
         if (!cancelled) setRecipes((mod.default || mod) as unknown as Recipe[]);
       })
       .catch(() => {
-        /* catalogue optional — built-ins still work */
+        if (!cancelled) setFailed(true);
       });
     return () => { cancelled = true; };
   }, []);
-  return recipes;
+  return { recipes, failed };
 }
 
 /** Recipe id -> 384-dim MiniLM vector. Same source Discover ranks with. */
@@ -101,7 +115,8 @@ export default function MealPlanPage() {
     setMealPlanSlot, clearMealPlanDay, copyMealPlanDay, clearMealPlan, addGrocery, toast,
     setDayMode, setDayGuests, setDayNote,
   } = useStore();
-  const csvRecipes = useCsvRecipes();
+  const csvCatalogue = useCsvRecipes();
+  const csvRecipes = csvCatalogue.recipes;
   const embeddings = useRecipeEmbeddings();
   const today = todayKey();
   const household = settings.household;
@@ -148,6 +163,21 @@ export default function MealPlanPage() {
   // rubbish entry, and a curated "Medu vada" should beat a scraped
   // "Spinach Wada Recipe (Spinach & Women's Gram Printers)".
   const preferredIds = useMemo(() => new Set(builtIn.map((r) => r.id)), [builtIn]);
+
+  // Whether the spoken plan may be parsed yet.
+  //
+  // WHY THE CATALOGUE'S STATE IS ASKED ABOUT HERE: the spoken parser asks the
+  // catalogue whether a phrase is a dish's own name, because "no" and
+  // "without" are refusal words AND parts of 40 recipe names. The catalogue
+  // that answers is a 5.4 MB download, and until it arrives it cannot say
+  // "that is a dish" — and "I do not know" was being read as a refusal, which
+  // threw away the dish the user asked for. See `spokenPlanCatalogue`.
+  const catalogueState: CatalogueState = csvCatalogue.failed
+    ? 'failed'
+    : csvRecipes
+      ? 'ready'
+      : 'loading';
+  const gate = catalogueGate(catalogueState);
 
   /** The same catalogue as a lookup — checking a day's dishes is per-entry. */
   const catalogueById = useMemo(() => {
@@ -889,35 +919,44 @@ export default function MealPlanPage() {
 
               {/* Say the whole day out loud instead of picking each slot. */}
               {dayOpen && (
-                <SpeakYourPlan
-                  catalogue={catalogue}
-                  preferredIds={preferredIds}
-                  dayPlan={dayPlan}
-                  onApply={(plan, resolutions, cleared) => {
-                    // The entries to write, and the portion size that goes
-                    // with them, are decided in one place so that every way
-                    // of putting a dish on a day agrees.
-                    const entries = spokenPlanEntries(plan, resolutions, dayPlan, household);
-                    // A meal the user REFUSED is removed, not written. The
-                    // shopping list buys the plan, so a dish left in the plan
-                    // is a dish the list buys — and this is the one the user
-                    // said they did not want.
-                    //
-                    // WHY THE REMOVAL COMES FIRST: what the user said for a
-                    // meal wins over what was there. A refusal takes the old
-                    // dish away and the spoken dish takes its place, and the
-                    // two are never the same meal — a meal the utterance
-                    // filled is not one of the removals.
-                    cleared.forEach((slot) => setMealPlanSlot(day, slot, null));
-                    entries.forEach(({ slot, entry }) => setMealPlanSlot(day, slot, entry));
-                    const added = entries.length;
-                    const removed = cleared.length;
-                    toast(
-                      spokenPlanToast(added, removed),
-                      added || removed ? 'success' : 'warning',
-                    );
-                  }}
-                />
+                <>
+                  {gate.note && (
+                    <p className="mt-2 text-[11px] leading-snug text-sage-500 dark:text-ink-400">
+                      {gate.note}
+                    </p>
+                  )}
+                  {gate.mayParse && (
+                    <SpeakYourPlan
+                      catalogue={catalogue}
+                      preferredIds={preferredIds}
+                      dayPlan={dayPlan}
+                      onApply={(plan, resolutions, cleared) => {
+                        // The entries to write, and the portion size that goes
+                        // with them, are decided in one place so that every way
+                        // of putting a dish on a day agrees.
+                        const entries = spokenPlanEntries(plan, resolutions, dayPlan, household);
+                        // A meal the user REFUSED is removed, not written. The
+                        // shopping list buys the plan, so a dish left in the plan
+                        // is a dish the list buys — and this is the one the user
+                        // said they did not want.
+                        //
+                        // WHY THE REMOVAL COMES FIRST: what the user said for a
+                        // meal wins over what was there. A refusal takes the old
+                        // dish away and the spoken dish takes its place, and the
+                        // two are never the same meal — a meal the utterance
+                        // filled is not one of the removals.
+                        cleared.forEach((slot) => setMealPlanSlot(day, slot, null));
+                        entries.forEach(({ slot, entry }) => setMealPlanSlot(day, slot, entry));
+                        const added = entries.length;
+                        const removed = cleared.length;
+                        toast(
+                          spokenPlanToast(added, removed),
+                          added || removed ? 'success' : 'warning',
+                        );
+                      }}
+                    />
+                  )}
+                </>
               )}
             </li>
           );
