@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Database, RotateCcw, Trash2, Save } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
-import { listBackups, runBackup, restoreBackup, deleteBackup, type BackupInfo } from '../utils/backup';
+import { listBackups, runBackup, restoreBackup, deleteBackup, SNAPSHOT_NOT_SAVED_MESSAGE, type BackupInfo } from '../utils/backup';
 
 /**
  * Backup list, restore and manual snapshot.
@@ -25,13 +25,21 @@ export function BackupPanel() {
   const snapshotNow = () => {
     setBusy(true);
     // A manual snapshot should always write, so pass force.
-    const stamp = runBackup(true);
+    const outcome = runBackup(true);
     setBusy(false);
     refresh();
-    toast(
-      stamp ? 'Snapshot saved' : 'Nothing to save yet — add some stock first',
-      stamp ? 'success' : 'info',
-    );
+    // WHY THE REFUSAL IS ITS OWN MESSAGE: "Nothing to save yet" is a
+    // statement about the household's data, and it is FALSE when the browser
+    // refused the write — the household has plenty to save and the copy was
+    // refused. One message cannot be both, so the refusal is said in the
+    // words the user can act on: the browser would not store it.
+    if (outcome.saved) {
+      toast('Snapshot saved', 'success');
+    } else if (outcome.reason === 'storage-refused') {
+      toast(SNAPSHOT_NOT_SAVED_MESSAGE, 'warning');
+    } else {
+      toast('Nothing to save yet — add some stock first', 'info');
+    }
   };
 
   const restore = (stamp: string) => {
