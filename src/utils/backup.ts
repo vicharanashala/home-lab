@@ -200,12 +200,63 @@ export function deleteBackup(stamp: string): void {
   safeLocalStorage()?.removeItem(SNAPSHOT_PREFIX + stamp);
 }
 
-/** Install the periodic + on-hide backup. Safe to call more than once. */
-export function installAutoBackup(): () => void {
-  runBackup();
-  const timer = setInterval(() => runBackup(), 30 * 60 * 1000);
+/**
+ * What the app says when a snapshot is refused.
+ *
+ * WHY IT LIVES HERE AND NOT IN THE APP: the words the user reads about a
+ * refused snapshot have to be the SAME words the backup panel uses, or the app
+ * would say two different things about one event. The panel's message was
+ * already written for this, so this is that message and no other.
+ *
+ * @param say how the app says something to the user
+ * @returns a reporter that raises the message when a snapshot is refused
+ */
+export function snapshotRefusalReporter(
+  say: (message: string, kind: 'warning') => void,
+): (outcome: BackupOutcome) => void {
+  return (outcome) => {
+    if (!outcome.saved && outcome.reason === 'storage-refused') {
+      say(SNAPSHOT_NOT_SAVED_MESSAGE, 'warning');
+    }
+  };
+}
+
+/**
+ * Whether the last automatic backup was refused.
+ *
+ * WHY IT IS A MODULE FLAG AND NOT A LOCAL ONE: the app installs the automatic
+ * backup from an effect, and React's StrictMode mounts that effect twice in
+ * development — so a flag that started fresh on each install would report the
+ * same refusal twice, and the user would read one problem as two.
+ */
+let lastAttemptRefused = false;
+
+/**
+ * Install the periodic + on-hide backup. Safe to call more than once.
+ *
+ * WHY IT TAKES A REPORTER: the manual snapshot in the backup panel says what
+ * came of the attempt, and the automatic one used to say NOTHING — the outcome
+ * was dropped on the floor, so a browser that refused the write left the
+ * household with no safety copy and no word about it. The automatic path is
+ * the one that actually RUNS, so it is the one that must not be silent.
+ *
+ * WHY A REFUSAL IS REPORTED ONLY WHEN IT IS NEW: the backup runs on a timer
+ * and every time the app is hidden, so a refusal reported every time would be
+ * the same toast over and over for as long as the browser kept refusing. It
+ * is reported once, and again only after a backup that worked — the same rule
+ * the storage banner follows.
+ */
+export function installAutoBackup(report?: (outcome: BackupOutcome) => void): () => void {
+  const attempt = () => {
+    const outcome = runBackup();
+    const nowRefused = !outcome.saved && outcome.reason === 'storage-refused';
+    if (nowRefused && !lastAttemptRefused) report?.(outcome);
+    lastAttemptRefused = nowRefused;
+  };
+  attempt();
+  const timer = setInterval(attempt, 30 * 60 * 1000);
   const onHide = () => {
-    if (document.visibilityState === 'hidden') runBackup();
+    if (document.visibilityState === 'hidden') attempt();
   };
   document.addEventListener('visibilitychange', onHide);
   return () => {

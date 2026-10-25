@@ -6,7 +6,7 @@ import { StorageWarning } from './components/StorageWarning';
 import { WelcomeModal } from './components/WelcomeModal';
 import { HouseholdSurveyModal } from './components/HouseholdSurveyModal';
 import { useStore } from './store/useStore';
-import { installAutoBackup } from './utils/backup';
+import { installAutoBackup, snapshotRefusalReporter } from './utils/backup';
 import { ConsentModal } from './components/ConsentModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Dashboard } from './pages/Dashboard';
@@ -65,13 +65,19 @@ function HouseholdSurveyGate() {
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { toast } = useStore();
   // Subscribe to theme + apply it on mount.
   useTheme();
   // Sync module-scoped permission flags with settings.
   useConsentSync();
 
   // Keep a rolling local backup so a cleared browser never costs the lot.
-  useEffect(() => installAutoBackup(), []);
+  //
+  // WHY THE REPORTER: the automatic snapshot is the path that actually runs —
+  // the button in the backup panel is the rare one — so it is the one that
+  // must say so when the browser refuses the write. The words are the panel's,
+  // so the app says one thing about one event.
+  useEffect(() => installAutoBackup(snapshotRefusalReporter(toast)), [toast]);
 
   // Register the service worker so notifications can use tap-to-open + future push.
   useEffect(() => {
