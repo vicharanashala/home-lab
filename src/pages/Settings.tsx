@@ -34,6 +34,7 @@ import { DietIcon } from '../components/icons/AppIcons';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { BackupPanel } from '../components/BackupPanel';
 import { CONSENT_LABELS, DEFAULT_CONSENTS, requestGeolocation, requestNotificationPermission, sendTestNotification } from '../utils/consent';
+import { CLEAR_NOT_SAVED_MESSAGE } from '../utils/appStorage';
 import {
   getReminderEnabled,
   getReminderHour,
@@ -206,7 +207,15 @@ export function SettingsPage() {
   };
 
   const resetEverything = () => {
-    clearAllData();
+    // WHY THE RELOAD IS INSIDE THE SUCCESS BRANCH: the reload is what brings
+    // the cleared state back from storage. If the browser refused the write,
+    // the reload would undo the clearing the screen had just announced — and
+    // it would do so after the toast had gone, so the user would find their
+    // data back with nothing to explain it.
+    if (!clearAllData()) {
+      toast(CLEAR_NOT_SAVED_MESSAGE, 'warning');
+      return;
+    }
     toast('App data cleared — see you on the welcome screen', 'info');
     // Reload so the welcome modal re-renders cleanly with the empty state.
     window.setTimeout(() => window.location.reload(), 500);

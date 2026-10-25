@@ -37,6 +37,33 @@ export const STORAGE_FAILURE_MESSAGE =
   'Not saved — your browser refused to store your changes. They are here until you close the app, and gone after that.';
 
 /**
+ * What the user is told when an imported backup could not be stored.
+ *
+ * WHY IT IS NOT THE BANNER'S MESSAGE: the banner says a change is not being
+ * saved. This says the IMPORT did not happen, which is a different fact — the
+ * screen would otherwise have said "Restored 12 grocery items" and the user
+ * would believe the household's data was replaced when nothing was stored.
+ */
+export const IMPORT_NOT_SAVED_MESSAGE =
+  'Your browser refused to store the imported data, so nothing was replaced — the import is only here until you close the app.';
+
+/**
+ * What the user is told when the app could not store the clearing of the data.
+ *
+ * WHY IT SAYS THE DATA WAS NOT CLEARED AND NOT "NOT SAVED": the clearing is
+ * followed by a reload, and the reload brings back the data the screen just
+ * said was gone. "Not saved" would leave the user believing the data was
+ * cleared, and a moment later finding it there.
+ *
+ * WHY IT SAYS THE DATA WILL COME BACK: the screen is empty right now — the
+ * clearing is in the app but not in storage — so a user who is told only
+ * that it "was not saved" has no way to know that closing the app brings
+ * their household's data back.
+ */
+export const CLEAR_NOT_SAVED_MESSAGE =
+  'Your browser refused to store this, so your data was not cleared — it will come back the next time the app opens.';
+
+/**
  * The bit of the Storage interface a write needs.
  *
  * WHY IT IS NOT THE WHOLE Storage INTERFACE: a test has to be able to hand

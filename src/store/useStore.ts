@@ -29,7 +29,7 @@ import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimens
 import { formatBaseValue, subtractBase, toBaseUnit, unitDimension } from '../utils/units';
 import { MEAL_SLOTS, rescaledServings, suggestedServingsForDay } from '../utils/portions';
 import { DEFAULT_CONSENTS } from '../utils/consent';
-import { saveAppState, STORAGE_KEY } from '../utils/appStorage';
+import { saveAppState, STORAGE_KEY, IMPORT_NOT_SAVED_MESSAGE } from '../utils/appStorage';
 
 const loadFromStorage = (): AppState | null => {
   if (typeof window === 'undefined') return null;
@@ -133,8 +133,17 @@ export interface UseStore extends AppState {
   removeStock: (id: string) => void;
   // Settings
   updateSettings: (patch: Partial<AppSettings>) => void;
-  /** Wipes grocery + stock and resets onboarding. Atomic — survives StrictMode. */
-  clearAllData: () => void;
+  /**
+   * Wipes grocery + stock and resets onboarding. Atomic — survives StrictMode.
+   *
+   * WHY IT REPORTS WHETHER THE CLEARING WAS STORED: the screen follows this
+   * with a reload, and a reload brings back whatever was in storage. A
+   * clearing the browser refused would be announced as "App data cleared" and
+   * then undone by the reload itself, with nothing said in between.
+   *
+   * @returns whether the clearing was written to storage
+   */
+  clearAllData: () => boolean;
   /**
    * Replaces the user's data from an exported backup file.
    *
@@ -1073,7 +1082,7 @@ const logMealFromRecipes: UseStore['logMealFromRecipes'] = (input) => {
   return { log: mealLog, usedCount: used, skippedCount: skipped };
 };
 
-const clearAllData = () => {
+const clearAllData = (): boolean => {
   setState((s) => ({
     ...s,
     app: {
@@ -1095,6 +1104,11 @@ const clearAllData = () => {
       },
     },
   }));
+  // WHY THE ANSWER IS READ AND NOT ASSUMED: `setState` has just asked the
+  // storage and recorded what it said, so reading it here is the same
+  // measurement rather than a second guess. The clearing is in the app
+  // either way — it is the STORED clearing that the next reload would undo.
+  return !currentStorageFailed();
 };
 
 const toast: UseStore['toast'] = (message, kind, undo) => pushToast(message, kind, undo);
@@ -1214,6 +1228,23 @@ const importAppData: UseStore['importAppData'] = (raw) => {
       settings: { ...s.app.settings, ...portableSettings },
     },
   }));
+
+  // WHY THE WRITE IS CHECKED HERE AND NOT LEFT TO THE CALLER: the answer this
+  // function returns IS what the screen turns into "Restored 12 grocery, 5 in
+  // the fridge" — a success message with the counts in it. A write the
+  // browser refused would have made that message a lie: the imported data
+  // would be in the app until the tab closed and gone after that, while the
+  // screen said the household's data had been restored.
+  //
+  // WHY IT READS THE FLAG `setState` ALREADY SET: the write has just been
+  // made and the answer recorded, so this is the same measurement read once
+  // more, not a second attempt that could disagree with the first.
+  if (currentStorageFailed()) {
+    return {
+      ok: false,
+      error: IMPORT_NOT_SAVED_MESSAGE,
+    };
+  }
 
   return {
     ok: true,

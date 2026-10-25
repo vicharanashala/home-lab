@@ -28,7 +28,10 @@
  *
  * WHAT IS TESTED HERE
  * The rule that decides whether a write happened, the store carrying that
- * answer, and the message the user reads.
+ * answer, the message the user reads, and the two actions whose OWN return
+ * value is the success message — the import and the clearing. Those two were
+ * left out of the first fix: they reported success whatever the storage said,
+ * and their success message was the one the user read.
  *
  * Run with:  node scripts/test-storage-failure.mjs
  */
@@ -54,7 +57,7 @@ const { build } = require('esbuild');
 const { createElement } = await import('react');
 const { renderToString } = await import('react-dom/server');
 const { useStore } = await import('../src/store/useStore.ts');
-const { saveAppState, STORAGE_KEY, STORAGE_FAILURE_MESSAGE } = await import('../src/utils/appStorage.ts');
+const { saveAppState, STORAGE_KEY, STORAGE_FAILURE_MESSAGE, IMPORT_NOT_SAVED_MESSAGE, CLEAR_NOT_SAVED_MESSAGE } = await import('../src/utils/appStorage.ts');
 
 /**
  * The banner, built from the real component.
@@ -249,6 +252,75 @@ console.log('\nand the banner the user actually sees');
   const banner = renderToString(createElement(StorageWarning));
   check('and it comes up when the app cannot save', banner.includes('role="alert"'), true);
   check('and it tells the user the change was not saved', banner.includes('Not saved'), true);
+}
+
+console.log('\nand the two actions that replace the household with a file');
+{
+  // The import is the one call in the app that replaces everything the user
+  // has, and its return value IS the success message the screen shows:
+  // "Restored 12 grocery, 5 in the fridge". So a write the browser refused
+  // made that message a lie — the data was in the app until the tab closed
+  // and gone after that, while the screen said the household had been
+  // restored.
+  const backup = JSON.stringify({
+    app: 'homehub',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      grocery: [{ id: 'g1', name: 'Onions', quantity: '2 kg', category: 'vegetables', purchased: false, createdAt: 1 }],
+      stock: [{ id: 's1', name: 'Milk', quantity: '1 l', category: 'dairy', createdAt: 1, updatedAt: 1, location: 'fridge' }],
+      mealLogs: [],
+      recipes: [],
+      settings: { theme: 'system' },
+    },
+  });
+
+  refuseWrites = false;
+  const good = refresh().importAppData(backup);
+  check('a stored import reports success', good.ok, true);
+  check('and it counts what it stored', good.ok ? good.counts.grocery : -1, 1);
+
+  refuseWrites = true;
+  const bad = refresh().importAppData(backup);
+  check('an import the browser refuses does not report success', bad.ok, false);
+  check('and it says the data was not stored', bad.ok ? '' : /refused|not saved/i.test(bad.error), true);
+
+  // The clearing is followed by a reload, and the reload brings back
+  // whatever was in storage — so a clearing the browser refused was
+  // announced as "App data cleared" and then undone by the reload itself.
+  refuseWrites = false;
+  check('a stored clearing reports success', refresh().clearAllData(), true);
+  refuseWrites = true;
+  check('a clearing the browser refuses does not report success', refresh().clearAllData(), false);
+  refuseWrites = false;
+}
+
+console.log('\nand the messages those two leave behind');
+{
+  // The clearing message has to say the data is STILL THERE. The clearing is
+  // followed by a reload, and the reload brings back whatever was in storage
+  // — so "not saved" alone would leave the user believing the data was gone
+  // and then finding it there.
+  check(
+    'the clearing message says the data was not cleared',
+    /not cleared/i.test(CLEAR_NOT_SAVED_MESSAGE),
+    true,
+  );
+  check(
+    'and it says the data comes back — the screen is empty now but the storage is not',
+    /come back/i.test(CLEAR_NOT_SAVED_MESSAGE),
+    true,
+  );
+  check(
+    'the import message says the data was not stored',
+    /refused|not stored/i.test(IMPORT_NOT_SAVED_MESSAGE),
+    true,
+  );
+  check(
+    'the import message does not claim the data was restored',
+    /restored \d/i.test(IMPORT_NOT_SAVED_MESSAGE),
+    false,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
