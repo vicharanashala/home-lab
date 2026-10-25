@@ -24,7 +24,9 @@
  * WHAT IS TESTED HERE
  * The rule that reads the voice, the rule that stores it, and the card itself:
  * the chip it ticks when nothing is stored must be the chip of the voice the
- * app will actually speak with.
+ * app will actually speak with — and the chip it leaves ticked when the
+ * browser refuses to store the voice must not move, and the refusal must be
+ * said out loud.
  *
  * Run with:  node scripts/test-voice-default.mjs
  */
@@ -86,6 +88,7 @@ const {
   DEFAULT_VOICE_ID,
   VOICE_LABELS,
   VOICE_STORAGE_KEY,
+  VOICE_NOT_SAVED_MESSAGE,
   storedVoiceId,
   saveVoiceId,
 } = await import('../src/utils/voice.ts');
@@ -221,6 +224,168 @@ console.log('\nand the card ticks the voice the app will actually speak with');
     storedVoiceId(),
     'hf_alpha',
   );
+
+  delete held[VOICE_STORAGE_KEY];
+}
+
+/* -------------------------------------------------------------------------- */
+/* The card, when the browser refuses the write                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * WHY THIS BLOCK IS HERE AND NOT IN THE ONE ABOVE
+ * The card used to move its chip to the chosen voice and swallow the error
+ * when the browser refused the write:
+ *
+ *     const choose = (v: string) => {
+ *       setVoice(v);
+ *       try { localStorage.setItem(VOICE_KEY, v); } catch { /* ignore *\/ }
+ *     };
+ *
+ * so the card ticked a voice the browser had never taken — the chip and
+ * House Bot disagreed, and the chip jumped back on the next reload. The card
+ * now moves the chip only when the browser kept the voice, and says so when
+ * it did not.
+ *
+ * WHY NOTHING MEASURED IT: the block above renders the card and reads the
+ * chip it ticks, which is the chip it ticks on the way IN. The chip on the
+ * way OUT — the one that moves when the write is refused — is a different
+ * thing, and it was in no committed test. So the rule could stop working with
+ * every check in this repository still green.
+ */
+console.log('\nand a voice the browser refused to store');
+{
+  // WHY A SECOND BUNDLE: the first one leaves the store outside, so the card
+  // and the test share one store. That is right for reading the chip, and
+  // wrong for this: the store's server snapshot is frozen and empty, so the
+  // toast the card raises cannot be read from it. This bundle has the store
+  // INSIDE, with the snapshot pointed at the live state, so the toast the
+  // card raises is the one the test reads.
+  const refusingDir = await mkdtemp(path.join(tmpdir(), 'hh-voice-refused-'));
+  await symlink(path.join(REPO, 'node_modules'), path.join(refusingDir, 'node_modules'));
+
+  // WHY THE ENTRY IS A FILE OF ITS OWN: the test needs the store as well as
+  // the card, and it has to be the SAME store the card uses — the card
+  // reaches it by a relative path and the entry by an absolute one, and
+  // esbuild would otherwise keep two of them and the toast would go to a
+  // store nobody is reading.
+  const entry = path.join(refusingDir, 'entry.ts');
+  await writeFile(
+    entry,
+    [
+      `export { VoicePickerCard } from ${JSON.stringify(path.join(REPO, 'src/components/VoicePickerCard.tsx'))};`,
+      `export { useStore } from ${JSON.stringify(path.join(REPO, 'src/store/useStore.ts'))};`,
+      '',
+    ].join('\n'),
+  );
+
+  const refusingBundle = await build({
+    entryPoints: [entry],
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    write: false,
+    jsx: 'automatic',
+    external: ['react', 'react/jsx-runtime', 'react-dom/server', 'lucide-react', 'clsx'],
+    plugins: [
+      {
+        name: 'one-store-one-voice-module',
+        setup(b) {
+          // The store goes inside this bundle, and the card and the entry
+          // must get the same one.
+          b.onResolve({ filter: /^\.\.\/store\/useStore$/ }, () => ({
+            path: path.join(REPO, 'src/store/useStore.ts'),
+          }));
+          // The voice module stays outside, so the card and the test share
+          // the one instance the test drives — the browser that refuses.
+          b.onResolve({ filter: /^\.\.\/utils\/voice$/ }, () => ({
+            path: pathToFileURL(path.join(REPO, 'src/utils/voice.ts')).href,
+            external: true,
+          }));
+        },
+      },
+    ],
+  });
+
+  // The server renderer always reads the frozen SSR snapshot, which is built
+  // from seedState() once and never changes — so the card would raise its
+  // toast into a store the test cannot see. Point it at the live state.
+  const source = refusingBundle.outputFiles[0].text;
+  const patched = source.replace('return SERVER_SNAPSHOT;', 'return getState();');
+  if (patched === source) {
+    console.error(
+      "harness: the store's server snapshot hook moved — this test needs updating",
+    );
+    process.exit(1);
+  }
+  const refusingFile = path.join(refusingDir, 'refusing.mjs');
+  await writeFile(refusingFile, patched);
+  const { VoicePickerCard, useStore } = await import(pathToFileURL(refusingFile).href);
+
+  /** Every element in the tree that has a click handler. */
+  function clickables(node, out = []) {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) {
+      for (const child of node) clickables(child, out);
+      return out;
+    }
+    if (node.props?.onClick) out.push(node);
+    clickables(node.props?.children, out);
+    return out;
+  }
+
+  /** The visible text of a tree of elements. */
+  function textOf(node) {
+    if (node === null || node === undefined) return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(textOf).join(' ');
+    if (node.props) return textOf(node.props.children);
+    return '';
+  }
+
+  // The household is on Mixed, and the browser is about to refuse.
+  held[VOICE_STORAGE_KEY] = DEFAULT_VOICE_ID;
+
+  let tree = null;
+  function Capture() {
+    tree = VoicePickerCard();
+    return null;
+  }
+  renderToString(createElement(Capture));
+
+  const aditi = clickables(tree).find((el) => textOf(el.props.children).trim() === 'Aditi');
+  if (!aditi) {
+    check('the card offers a voice to tap', false, true);
+  } else {
+    check('the card offers a voice to tap', true, true);
+
+    // The tap. The browser refuses the write, the way a blocked or a full
+    // storage refuses it.
+    refuseWrites = true;
+    aditi.props.onClick();
+    refuseWrites = false;
+
+    // The card also previews the voice it was tapped, and that preview fails
+    // here — there is no engine to play it. Let it settle, so the toast the
+    // test reads is the whole story and not half of it.
+    await new Promise((r) => setTimeout(r, 20));
+
+    let toasts = [];
+    function CaptureToasts() {
+      toasts = useStore().toasts;
+      return null;
+    }
+    renderToString(createElement(CaptureToasts));
+
+    const refusal = toasts.find((t) => t.message === VOICE_NOT_SAVED_MESSAGE);
+    check('a refused write says the voice was not saved', Boolean(refusal), true);
+    check('and it is a warning, not a success', refusal ? refusal.kind : null, 'warning');
+    check(
+      'and the browser still holds the voice the app was speaking with',
+      storedVoiceId(),
+      DEFAULT_VOICE_ID,
+    );
+  }
 
   delete held[VOICE_STORAGE_KEY];
 }
