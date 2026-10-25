@@ -386,7 +386,31 @@ function nearWords(
     if (diff < 1 || diff > 3) continue;
     if (shorter.length < 3) continue;
     if (!longer.startsWith(shorter)) continue;
-    if (!sameSounds(word, cand)) continue;
+    // WHY THIS RULE HAS ITS OWN CONSONANT TEST: the heard word is the
+    // BEGINNING of the catalogue word, so every consonant it has is in
+    // there — and the catalogue word may carry consonants the heard word
+    // does not, because those are the ones the recogniser dropped. That is
+    // what a truncation IS. So the test is that the heard consonants are all
+    // still there, not that the two words carry the same few.
+    //
+    // WHY IT MATTERS: `sameSounds` is the rule for two words that are the
+    // SAME word spelled differently, and it allows the catalogue word to hold
+    // exactly one consonant the heard word does not. A cut-short word has no
+    // such limit — "chutney" heard as "chutni" and "chandal" heard as "chand"
+    // both lose several letters, and several of them are consonants. Using
+    // the stricter rule here took the cut-short matching with it, and nothing
+    // in the repository measured it: every dish in the catalogue, its last
+    // word cut short by one to three letters, the dish that was meant comes
+    // back
+    //
+    //     before the stricter rule   82.0%   182 wrong dishes
+    //     with it                    57.0%   192 wrong dishes
+    //     with the rule of its own   75.1%   174 wrong dishes
+    //
+    // so the shared rule cost a quarter of the cut-short dishes AND made
+    // the wrong dishes worse. scripts/test-spoken-recipes-cut-short.mjs is
+    // the test that measures it.
+    if (!isSubsequence(skeleton(word), skeleton(cand))) continue;
     out.push({ word: cand, cost: diff });
   }
 
