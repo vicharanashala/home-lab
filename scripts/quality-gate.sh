@@ -42,7 +42,44 @@
 #
 set -uo pipefail
 
-ROOT="/Users/adhyathmika/homehub"
+# The repository this copy of the gate belongs to, found from the script's
+# own place rather than written down as an absolute path.
+#
+# WHY: the gate answers one question — "does the commit I am about to make
+# type-check, pass its tests and contain no secrets?" — and it answers it
+# about a REPOSITORY. With the path written down, a gate run from a COPY of
+# the checkout checked the wrong one: it changed into the real repository,
+# exported the real repository's index and checked THAT, so the copy was
+# never checked at all.
+#
+# It is not a theory. A gate run from a copy of this checkout that carried a
+# deliberate type error passed — the copy's error was invisible, because the
+# gate had never looked at the copy.
+#
+# WHY THE OTHER SCRIPTS DO IT THIS WAY: scripts/check-live.sh and
+# scripts/build-app.sh found their own root the same way, for the same
+# reason. scripts/build-app.sh carried a hard-coded path until a debugging
+# pass built inside a temporary copy and replaced the owner's live app with
+# a build of the copy — the swap is atomic, so every check stayed green and
+# nothing said the app had been replaced under the owner.
+#
+# WHY IT IS SAFE FOR THE ORDINARY GATE: the pre-commit hook resolves the
+# repository with `git rev-parse --show-toplevel` and runs
+# "$ROOT/scripts/quality-gate.sh", so the script sits in the repository it
+# is about and the two roots are the same directory — exactly as before.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
+
+# WHY THIS CHECKS INSTEAD OF TRUSTING THE RESOLUTION: `cd ""` SUCCEEDS in
+# bash and changes nothing, so an empty ROOT would leave the gate in whatever
+# directory it happened to be started in — which is the very bug this change
+# exists to remove, wearing a different hat. A gate that cannot say which
+# repository it is about has to stop, not guess.
+if [ -z "$ROOT" ] || [ ! -d "$ROOT/scripts" ]; then
+  echo "quality gate: cannot find the repository root from $0 — refusing to check the wrong one" >&2
+  exit 1
+fi
+
 BASELINE="$ROOT/scripts/quality-baseline.txt"
 
 # launchd and cron both start with a minimal PATH; node lives in a user-local
