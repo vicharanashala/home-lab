@@ -425,6 +425,52 @@ function withoutFillers(text: string): string {
 }
 
 /**
+ * A dish with the gloss it carries taken off, wherever the gloss sits.
+ *
+ * WHY IT IS NEEDED AT ALL: a recipe's own name carries a gloss, and the gloss
+ * is a SECOND NAME for the dish rather than part of it — "Palak (Spinach)
+ * Puri" is palak puri, and the person saying it says "palak puri". The
+ * recipe picker and the suggestion sheet both write the recipe's own name
+ * onto the day, so a day holding a gloss is the NORMAL case.
+ *
+ * WHY THE GLOSS HAS TO COME OFF WHEREVER IT IS: the rule that took a gloss
+ * off took one off the END of a name only, so the two sides of the refusal
+ * comparison were two different names whenever the gloss sat in the middle:
+ *
+ *   day holds "Palak (Spinach) Puri"   user says "no palak puri for dinner"
+ *                             -> the meal was NOT emptied
+ *
+ * The end-of-name rule fired on the SPOKEN name — which has no bracket at all
+ * — and did not fire on the catalogue name, whose bracket is not at the end.
+ * So the spoken side became "palak puri" and the held side stayed "palak
+ * spinach puri", and the two could never be equal.
+ *
+ * The shopping list buys the plan, so the refused dish stayed on the list,
+ * and the sheet told the user "there is no palak puri to remove from the
+ * dinner" — a sentence about nothing, about a dish that was ON the dinner.
+ *
+ * WHY IT IS ITS OWN RULE AND NOT PART OF `dishCore`: `dishCore` answers
+ * "which recipe is this?", and that is a question about MATCHING. This is a
+ * question about the REFUSAL, and the refusal has to be able to compare a
+ * name with the name on the day in the shapes BOTH of them have. The
+ * refusal rule already carries layers of its own for that reason: the
+ * fillers, the case, the punctuation.
+ *
+ * WHY THE CLOSING BRACKET IS OPTIONAL: the catalogue carries names that were
+ * cut off mid-gloss — "Pudina Khara Pongal Recipe (Rice and Lentils Cooked
+ * With Mint Leaves & Mild S…" — and a rule that only matched a closed bracket
+ * would leave those names holding a gloss nobody can say.
+ *
+ * @param text the name to strip
+ */
+function withoutGloss(text: string): string {
+  const stripped = text.replace(/\s*\([^)]*\)?/g, ' ').replace(/\s+/g, ' ').trim();
+  // A name that IS a gloss has nothing left once the gloss is off, and an
+  // empty name would match every other empty name.
+  return stripped || text;
+}
+
+/**
  * A dish name, reduced to the words two names have to agree on.
  *
  * WHY THE PUNCTUATION GOES ON BOTH SIDES: the dish the DAY holds is a recipe's
@@ -645,10 +691,27 @@ export function namesHeldDish(named: string, held: string | undefined): boolean 
   // gloss, a tail and a leading noise word, so a dish that merely CONTAINS
   // the named one is still a different dish — "dal" is still not "dal tadka",
   // and the refusal of a dal leaves a dal tadka alone.
-  return (
-    dishLetters(withoutFillers(comparableDish(dishCore(named)))) ===
-    dishLetters(withoutFillers(comparableDish(dishCore(held))))
-  );
+  //
+  // WHY THE HELD NAME HAS TWO SHAPES AND THE NAMED ONE HAS ONE: a recipe's
+  // own name may carry a gloss in the MIDDLE — "Palak (Spinach) Puri" — and
+  // the dish that name is has two of its own:
+  //
+  //   "Palak Puri"          what the person says
+  //   "Palak Spinach Puri"  what the person says when they say all of it
+  //
+  // The gloss is a SECOND NAME for the dish and not part of it, so the held
+  // name is compared in both of its shapes and the refusal matches either.
+  // Taking the gloss off and comparing only the plain shape would lose the
+  // second one, and taking nothing off would lose the first.
+  //
+  // WHY THE NAMED SIDE HAS ONE SHAPE: a person does not say the brackets,
+  // so the named side is compared as it was said. It is not stripped of a
+  // gloss, because the words inside a bracket are words a person DOES say —
+  // "palak spinach puri" — and they have to be able to name the dish too.
+  const formOf = (name: string): string =>
+    dishLetters(withoutFillers(comparableDish(dishCore(name))));
+  const namedForm = formOf(named);
+  return namedForm === formOf(held) || namedForm === formOf(withoutGloss(held));
 }
 
 /**
