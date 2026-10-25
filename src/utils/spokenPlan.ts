@@ -335,6 +335,30 @@ function withoutFillers(text: string): string {
 function comparableDish(text: string): string {
   return text
     .toLowerCase()
+    // WHY THE AMPERSAND BECOMES "AND": the ampersand is a way of WRITING
+    // "and", and the two sides of this question spell it differently — a
+    // recipe's own name carries the symbol ("Asian Style Sweet & Spicy Green
+    // Beans") while a speech recogniser writes the word ("asian style sweet
+    // and spicy green beans"). The rule that takes the punctuation off a
+    // name did not take the ampersand off, and the rule that takes the
+    // letters of a name does not count a symbol, so the symbol simply
+    // vanished from one side of the comparison and not the other:
+    //
+    //   day holds "Asian Style Sweet & Spicy Green Beans"
+    //   user says "no asian style sweet and spicy green beans for dinner"
+    //                                             -> the meal was NOT emptied
+    //
+    // The shopping list buys the plan, so the refused dish stayed on the
+    // list and the sheet said there was nothing to remove. 469 of the 5,894
+    // scraped names carry an ampersand, and 239 of them could not be refused
+    // by the name a person would say them by.
+    //
+    // WHY IT IS "AND" AND NOT NOTHING: the rest of the app already has ONE
+    // rule for "is this the same dish?" — `sameDish`, which folds the
+    // ampersand to "and" before it compares. This rule and that one have to
+    // give the same answer about the same pair of names, or the sheet and
+    // the plan disagree about which dish the user refused. See `sameDish`.
+    .replace(/&/g, ' and ')
     .replace(PUNCTUATION_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim();
