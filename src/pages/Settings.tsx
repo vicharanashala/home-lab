@@ -207,11 +207,10 @@ export function SettingsPage() {
   };
 
   const resetEverything = () => {
-    // WHY THE RELOAD IS INSIDE THE SUCCESS BRANCH: the reload is what brings
-    // the cleared state back from storage. If the browser refused the write,
-    // the reload would undo the clearing the screen had just announced — and
-    // it would do so after the toast had gone, so the user would find their
-    // data back with nothing to explain it.
+    // WHY THE RELOAD IS INSIDE THE SUCCESS BRANCH: when the browser refuses
+    // the clearing, the store puts the household back on screen, so there is
+    // nothing to reload to — and reloading would throw away the toast that
+    // explains why nothing was cleared.
     if (!clearAllData()) {
       toast(CLEAR_NOT_SAVED_MESSAGE, 'warning');
       return;

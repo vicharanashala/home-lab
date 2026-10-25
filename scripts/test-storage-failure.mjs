@@ -33,6 +33,11 @@
  * left out of the first fix: they reported success whatever the storage said,
  * and their success message was the one the user read.
  *
+ * It also checks the thing the refused clearing has to get right: the
+ * household is put back on screen, because a browser that still holds the
+ * data under an empty screen loses the data for good the moment the next
+ * write gets through.
+ *
  * Run with:  node scripts/test-storage-failure.mjs
  */
 import { register } from 'node:module';
@@ -56,7 +61,7 @@ const require = createRequire(path.join(REPO, 'package.json'));
 const { build } = require('esbuild');
 const { createElement } = await import('react');
 const { renderToString } = await import('react-dom/server');
-const { useStore } = await import('../src/store/useStore.ts');
+const { useStore, exportAppData } = await import('../src/store/useStore.ts');
 const { saveAppState, STORAGE_KEY, STORAGE_FAILURE_MESSAGE, IMPORT_NOT_SAVED_MESSAGE, CLEAR_NOT_SAVED_MESSAGE } = await import('../src/utils/appStorage.ts');
 
 /**
@@ -288,27 +293,57 @@ console.log('\nand the two actions that replace the household with a file');
   // The clearing is followed by a reload, and the reload brings back
   // whatever was in storage — so a clearing the browser refused was
   // announced as "App data cleared" and then undone by the reload itself.
+  // The reload now only runs when the clearing was stored; a refused
+  // clearing is undone by the store, so the screen still shows the data.
   refuseWrites = false;
   check('a stored clearing reports success', refresh().clearAllData(), true);
   refuseWrites = true;
   check('a clearing the browser refuses does not report success', refresh().clearAllData(), false);
   refuseWrites = false;
+
+  // WHY THE HOUSEHOLD IS PUT BACK AND NOT LEFT EMPTY: the browser still
+  // holds the data, so an empty screen over it is the worst of the two — the
+  // user is told the reset failed while the screen says it worked. Worse,
+  // the next write that gets through stores that empty screen, and the
+  // household is gone for good. The store undoes the clearing instead, so
+  // the screen, the message and the browser all say the same thing.
+  refuseWrites = false;
+  refresh().addGrocery({ name: 'Onions', quantity: '2 kg', category: 'vegetables' });
+  refresh().addStock({ name: 'Milk', quantity: '1 l', category: 'dairy', location: 'fridge' });
+  check(
+    'the household is there before the clearing',
+    JSON.parse(exportAppData()).data.grocery.length,
+    1,
+  );
+
+  refuseWrites = true;
+  refresh().clearAllData();
+  const afterRefusedClear = JSON.parse(exportAppData()).data;
+  check('and it is still on screen after a refused clearing', afterRefusedClear.grocery.length, 1);
+  check('and so is the fridge', afterRefusedClear.stock.length, 1);
+
+  // The write that gets through next must carry the household with it.
+  refuseWrites = false;
+  refresh().addGrocery({ name: 'Potatoes', quantity: '1 kg', category: 'vegetables' });
+  const storedAfter = JSON.parse(held[STORAGE_KEY]);
+  check('and the grocery list survives the next write', storedAfter.grocery.some((g) => g.name === 'Onions'), true);
+  check('and so does the fridge', storedAfter.stock.some((s) => s.name === 'Milk'), true);
+  check('and the change that came after it is there too', storedAfter.grocery.some((g) => g.name === 'Potatoes'), true);
 }
 
 console.log('\nand the messages those two leave behind');
 {
-  // The clearing message has to say the data is STILL THERE. The clearing is
-  // followed by a reload, and the reload brings back whatever was in storage
-  // — so "not saved" alone would leave the user believing the data was gone
-  // and then finding it there.
+  // The clearing message has to say the data is STILL THERE. The store puts
+  // the household back when the browser refuses the clearing, so the screen
+  // the user is looking at still has it — and the message has to agree.
   check(
-    'the clearing message says the data was not cleared',
-    /not cleared/i.test(CLEAR_NOT_SAVED_MESSAGE),
+    'the clearing message says nothing was cleared',
+    /nothing was cleared/i.test(CLEAR_NOT_SAVED_MESSAGE),
     true,
   );
   check(
-    'and it says the data comes back — the screen is empty now but the storage is not',
-    /come back/i.test(CLEAR_NOT_SAVED_MESSAGE),
+    'and it says the data is still here — the store puts the household back',
+    /still here/i.test(CLEAR_NOT_SAVED_MESSAGE),
     true,
   );
   check(

@@ -50,18 +50,19 @@ export const IMPORT_NOT_SAVED_MESSAGE =
 /**
  * What the user is told when the app could not store the clearing of the data.
  *
- * WHY IT SAYS THE DATA WAS NOT CLEARED AND NOT "NOT SAVED": the clearing is
- * followed by a reload, and the reload brings back the data the screen just
- * said was gone. "Not saved" would leave the user believing the data was
- * cleared, and a moment later finding it there.
+ * WHY IT IS NOT THE BANNER'S MESSAGE: the banner says a change is not being
+ * saved. This says the CLEARING did not happen, which is a different fact —
+ * the screen would otherwise have said "App data cleared" and the user would
+ * believe their household was emptied when the browser still holds it.
  *
- * WHY IT SAYS THE DATA WILL COME BACK: the screen is empty right now — the
- * clearing is in the app but not in storage — so a user who is told only
- * that it "was not saved" has no way to know that closing the app brings
- * their household's data back.
+ * WHY IT SAYS THE DATA IS STILL THERE: the store undoes a clearing the browser
+ * refused, so the household is on the screen the user is looking at. "Not
+ * saved" on its own would leave them guessing whether the reset half-worked,
+ * and a message about the data coming back would describe a loss that did not
+ * happen — the data never left.
  */
 export const CLEAR_NOT_SAVED_MESSAGE =
-  'Your browser refused to store this, so your data was not cleared — it will come back the next time the app opens.';
+  'Your browser refused to store this, so nothing was cleared — your data is still here.';
 
 /**
  * The bit of the Storage interface a write needs.

@@ -141,6 +141,11 @@ export interface UseStore extends AppState {
    * clearing the browser refused would be announced as "App data cleared" and
    * then undone by the reload itself, with nothing said in between.
    *
+   * WHY A REFUSED CLEARING IS UNDONE RATHER THAN LEFT ON SCREEN: the
+   * household is still in the browser, so an empty app over it is a lie the
+   * next write turns permanent. When the browser refuses, the household is
+   * put back and the caller is told the clearing did not happen.
+   *
    * @returns whether the clearing was written to storage
    */
   clearAllData: () => boolean;
@@ -1083,6 +1088,13 @@ const logMealFromRecipes: UseStore['logMealFromRecipes'] = (input) => {
 };
 
 const clearAllData = (): boolean => {
+  // WHY THE HOUSEHOLD IS HELD BACK UNTIL THE BROWSER TAKES IT: clearing is a
+  // request to the browser, and until the browser has taken it the household
+  // is still there. An empty screen over a browser that still holds the data
+  // is the worst of the two — the user is told the reset failed while the
+  // screen says it worked, and the next write that DOES get through stores
+  // that empty screen and takes the household with it.
+  const before = getState().app;
   setState((s) => ({
     ...s,
     app: {
@@ -1106,9 +1118,18 @@ const clearAllData = (): boolean => {
   }));
   // WHY THE ANSWER IS READ AND NOT ASSUMED: `setState` has just asked the
   // storage and recorded what it said, so reading it here is the same
-  // measurement rather than a second guess. The clearing is in the app
-  // either way — it is the STORED clearing that the next reload would undo.
-  return !currentStorageFailed();
+  // measurement rather than a second guess.
+  if (currentStorageFailed()) {
+    // The browser refused the clearing, so the clearing did not happen. Put
+    // the household back: the screen then agrees with the message the user
+    // reads, and the next write that gets through stores the household and
+    // not the wipe. Rolling back here is also what keeps the refusal
+    // harmless — an empty app left on screen would be written out in full by
+    // the very next change the user made.
+    setState((s) => ({ ...s, app: before }));
+    return false;
+  }
+  return true;
 };
 
 const toast: UseStore['toast'] = (message, kind, undo) => pushToast(message, kind, undo);
