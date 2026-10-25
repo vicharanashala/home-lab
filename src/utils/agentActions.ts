@@ -33,10 +33,21 @@ const MAX_ACTIONS_PER_BATCH = 12;
 function findByName<T extends { name: string }>(items: T[], name: string): T | undefined {
   const needle = name.trim().toLowerCase();
   if (!needle) return undefined;
+  // A row with no usable name is not a thing anybody can name, so it must not
+  // be in the search at all. The third rule below asks whether the name that
+  // was said CONTAINS the row's name — and an empty name is contained in
+  // every name there is. Left alone, a nameless row answers to every spoken
+  // word: the House Bot sets the quantity on THAT row and reports that it
+  // changed the thing the user actually named.
+  //
+  // A row whose name is not a string at all is left out for the same reason.
+  // It used to throw on `.trim()`, which the action's own catch turned into a
+  // skipped action — so one malformed row stopped a perfectly good match.
+  const named = items.filter((i) => typeof i.name === 'string' && i.name.trim().length > 0);
   return (
-    items.find((i) => i.name.trim().toLowerCase() === needle) ||
-    items.find((i) => i.name.trim().toLowerCase().includes(needle)) ||
-    items.find((i) => needle.includes(i.name.trim().toLowerCase()))
+    named.find((i) => i.name.trim().toLowerCase() === needle) ||
+    named.find((i) => i.name.trim().toLowerCase().includes(needle)) ||
+    named.find((i) => needle.includes(i.name.trim().toLowerCase()))
   );
 }
 
