@@ -348,6 +348,37 @@ const REFUSAL_FILLERS = new Set([
   // WHY NOT IN THE NOISE SET: there these words are stripped out of every
   // dish, which is a different rule and a wider change than this needs.
   'more',
+  // WHY THE INSTRUCTION VERBS ARE HERE: they are words about WHAT TO DO with
+  // the dish and not words that name one, and they are how people say "not
+  // that one" without saying "not".
+  //
+  //   "do not add dal for dinner"     the dal the user does not want
+  //   "do not include dal for dinner"  the dal the user does not want
+  //   "do not serve dal for dinner"    the dal the user does not want
+  //   "do not put dal for dinner"      the dal the user does not want
+  //
+  // WHY IT MATTERS: "add" was not on this list, so the dish the refusal named
+  // was "add dal" and not "dal". A refusal names the dish it refuses, and
+  // "add dal" is not a dish the plan holds — so the refusal matched nothing,
+  // the dal stayed in the plan, and the shopping list bought the very dish
+  // the user had said they did not want. The refusal was understood perfectly
+  // and the dish was not: the app said "there is no add dal to remove from
+  // the dinner", a sentence about nothing, about a dal the user had named.
+  //
+  // WHY ONLY THESE FOUR: this set is used on BOTH sides of the comparison —
+  // the dish the refusal names AND the dish the plan holds — so a word here
+  // must not be part of any dish the catalogue holds. The whole catalogue was
+  // checked, and these four occur in nothing:
+  //
+  //   add      0 names
+  //   include  0 names
+  //   serve    0 names
+  //   put      0 names
+  //
+  // Words that DO occur are deliberately left out for that reason: "make" is
+  // in six names ("How to Make Tutty Fruity") and "using" is in sixteen, and
+  // stripping those would change a dish the user genuinely named.
+  'add', 'include', 'serve', 'put',
 ]);
 
 /**
