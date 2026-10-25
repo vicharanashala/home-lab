@@ -235,8 +235,20 @@ export function editDistance(a: string, b: string): number {
   return prev[lb];
 }
 
-/** How many characters a word may be off and still count as the same word. */
-function maxWordDistance(word: string): number {
+/**
+ * How many characters a word may be off and still count as the same word.
+ *
+ * A SHORT word on its own is held to a strict rule, because there is
+ * nothing to disambiguate it: a bare "dal" could be any of hundreds of
+ * dishes, and loosening it made "pea" match "Peda".
+ *
+ * In a PHRASE the other words pin the dish down, so a short word may be
+ * looser. "alu gobi" has to become "Aloo gobi", and "alu" is two edits
+ * from "aloo" — a letter changed AND a letter added — because that is how
+ * the dish is pronounced and how people say it.
+ */
+function maxWordDistance(word: string, loose: boolean): number {
+  if (loose) return 2;
   if (word.length <= 3) return 0;
   if (word.length <= 6) return 1;
   return 2;
@@ -295,11 +307,21 @@ function indexFor(catalogue: Recipe[]): Index {
  * all and "idly" found a tea rather than an idli. Both the exact word and
  * its near-misses are offered, and the scoring decides between them.
  */
-function nearWords(word: string, index: Index): { word: string; cost: number }[] {
+function nearWords(
+  word: string,
+  index: Index,
+  loose: boolean,
+): { word: string; cost: number }[] {
   const out: { word: string; cost: number }[] = [];
   if (index.wordToCores.has(word)) out.push({ word, cost: 0 });
-  const limit = maxWordDistance(word);
-  if (!limit) return out;
+  const strict = maxWordDistance(word, false);
+  const limit = maxWordDistance(word, loose);
+
+  if (!limit) {
+    out.sort((a, b) => a.cost - b.cost);
+    return out;
+  }
+
   // Only compare words of a length that could possibly be that close.
   for (let len = word.length - limit; len <= word.length + limit; len++) {
     const bucket = index.wordsByLength.get(len);
@@ -307,10 +329,63 @@ function nearWords(word: string, index: Index): { word: string; cost: number }[]
     for (const cand of bucket) {
       if (cand === word) continue;
       const d = editDistance(word, cand);
-      if (d > 0 && d <= limit) out.push({ word: cand, cost: d });
+      if (d > 0 && d <= strict) {
+        out.push({ word: cand, cost: d });
+        continue;
+      }
+      // Beyond the strict distance, and only in a phrase, a word may still
+      // match — but only if it keeps its CONSONANTS. "alu" and "aloo" share
+      // the consonant "l" and differ only in how the vowel is spelled,
+      // which is a spelling difference and not a different word.
+      //
+      // Without this the looseness reached for "no" too: "no" is two edits
+      // from "tok", so "no dal" matched "Tok Dal", the refusal word was read
+      // as the start of a dish name, and the refusal was never recognised.
+      // A refusal that is not recognised is a refusal that gets bought.
+      if (!loose || d > limit) continue;
+      if (skeleton(word) !== skeleton(cand)) continue;
+      out.push({ word: cand, cost: d });
+      continue;
+    }
+  }
+
+  // The doubled-vowel spelling, compared with the doubling taken out of
+  // both sides. "aalu" for "aloo".
+  if (loose) {
+    for (const cand of index.words) {
+      if (cand === word) continue;
+      const du = editDistance(undouble(word), undouble(cand));
+      if (du <= 0 || du > limit) continue;
+      if (skeleton(undouble(word)) !== skeleton(undouble(cand))) continue;
+      out.push({ word: cand, cost: du });
     }
   }
   out.sort((a, b) => a.cost - b.cost);
+  return out;
+}
+
+/**
+ * The consonants of a word — the part that carries its identity.
+ *
+ * A loose match has to keep them. "alu" and "aloo" share the consonant "l"
+ * and differ only in how the vowel is spelled, which is a spelling
+ * difference and not a different word.
+ */
+function skeleton(word: string): string {
+  return word.toLowerCase().replace(/[^a-z]/g, '').replace(/[aeiou]/g, '');
+}
+
+/**
+ * A word with any repeated letter collapsed.
+ *
+ * Indian English doubles and undoubles vowels freely: "aalu" and "aloo"
+ * are the same word, and so are "gobhi" and "gobi". On their own "aalu" is
+ * three edits from "aloo" — too far to be a near-miss — but once the
+ * doubling is taken out of both it is one.
+ */
+function undouble(word: string): string {
+  let out = '';
+  for (const ch of word) if (out[out.length - 1] !== ch) out += ch;
   return out;
 }
 
@@ -384,7 +459,9 @@ export function matchDish(
   let anyNearMiss = false;
 
   for (const w of heardWords) {
-    for (const opt of nearWords(w, index)) {
+    // A phrase has other words to pin the dish down, so a short word can be
+    // matched more loosely than a word on its own.
+    for (const opt of nearWords(w, index, heardWords.length > 1)) {
       if (opt.cost > 0) anyNearMiss = true;
       const postings = index.wordToCores.get(opt.word);
       if (!postings) continue;

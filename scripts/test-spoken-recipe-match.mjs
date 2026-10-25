@@ -102,6 +102,15 @@ matches('masala dose', 'masala dosa');
 matches('idly', 'idli');
 matches('samusa', 'samosa');
 
+console.log('\nsaid the way people say it');
+// "Aloo" is the catalogue's spelling; "alu" and "aalu" are how it is said,
+// and the two are two edits apart once the doubled vowel is taken out.
+matches('alu gobi', 'aloo gobi');
+matches('aalu gobi', 'aloo gobi');
+matches('allu gobi', 'aloo gobi');
+matches('aloo gobhi', 'aloo gobi');
+matches('alu gobhi', 'aloo gobi');
+
 matches('rotti', 'roti');
 matches('painter tikka', 'paneer tikka');
 matches('chole bhatore', 'chole bhature');
