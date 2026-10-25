@@ -105,6 +105,21 @@ const COINCIDENCE_SCORE = 0.3;
  * curated "Medu vada" for a bare "wada". The app's own 127 recipes are the
  * ones it supports properly, so they are preferred when the alternatives
  * are otherwise close.
+ *
+ * WHY IT IS A TIE-BREAK AND NOT A BONUS ADDED TO THE SCORE: the two kinds of
+ * recipe are not the same shape. The curated ones have SHORT names and the
+ * scraped ones have long ones — "Paneer butter masala" against "Paneer
+ * Butter Masala Biryani" — so a bonus worth more than the difference between
+ * a candidate that explains all of what was said and one that explains less
+ * of it lets the curated recipe win by being SHORTER.
+ *
+ *   "paneer butter masala biryaani" -> "Paneer butter masala"
+ *     (the catalogue holds "Paneer Butter Masala Biryani"; the curated
+ *      recipe won and the "biryaani" was dropped)
+ *
+ * A dropped word is a wrong dish, and a wrong dish poisons the taste model
+ * forever. So the preference decides between candidates that explain the
+ * SAME thing and nothing else — see the sort in `matchDish`.
  */
 const PREFERRED_BONUS = 0.15;
 
@@ -510,7 +525,9 @@ export function matchDish(
     return { heard: raw, best: null, alternatives: [] };
   }
 
-  const scored: DishMatch[] = [];
+  // `base` is the score WITHOUT the curated bonus, and it is what the order
+  // is decided by — see the sort below.
+  const scored: (DishMatch & { base: number; preferred: boolean })[] = [];
   candidateSet.forEach((ci) => {
     const c = index.cores[ci];
 
@@ -556,7 +573,19 @@ export function matchDish(
     // A phrase made only of words too generic to identify a dish.
     if (heardWords.every((w) => GENERIC_WORDS.has(w))) score *= 0.7;
 
-    if (preferredIds?.has(c.recipe.id)) score += PREFERRED_BONUS;
+    // The curated preference is kept OUT of the score that decides the order.
+    //
+    // WHY: the score says how much of what the user said the candidate
+    // explains, and the bonus does not say that — it says where the recipe
+    // came from. Added to the score it could outrank a candidate that
+    // explains MORE of what was said, and a word the user said would be
+    // dropped in favour of a shorter dish. See `PREFERRED_BONUS`.
+    //
+    // The bonus still goes into the score that is REPORTED, so the confidence
+    // bar and the sheet see the same number they saw before.
+    const preferred = preferredIds?.has(c.recipe.id) === true;
+    const base = score;
+    if (preferred) score += PREFERRED_BONUS;
 
     score = Math.min(1, score);
 
@@ -575,13 +604,26 @@ export function matchDish(
 
     if (score <= 0) return;
     const tier: MatchTier = anyNearMiss ? 'near-word' : 'word';
-    scored.push({ recipe: c.recipe, name: c.core, score, tier });
+    scored.push({ recipe: c.recipe, name: c.core, score, tier, base, preferred });
   });
 
   if (!scored.length) {
     return { heard: raw, best: null, alternatives: [] };
   }
-  scored.sort((a, b) => b.score - a.score || a.name.length - b.name.length);
+  // The order is decided by how much of what the user said each candidate
+  // explains, and only then by where the recipe came from.
+  //
+  // WHY THE CURATED PREFERENCE IS A TIE-BREAK: two candidates that explain
+  // the SAME thing are a tie, and the curated recipe is the one to keep — the
+  // scrape holds near-duplicates and rubbish. Two candidates that explain
+  // DIFFERENT amounts are not a tie, and the one that explains more is the
+  // one the user meant.
+  scored.sort(
+    (a, b) =>
+      b.base - a.base ||
+      Number(b.preferred) - Number(a.preferred) ||
+      a.name.length - b.name.length,
+  );
 
   // The catalogue holds near-duplicates — "Vada pav" and "Vada Pav" and
   // "Vada Pav" again from a second source. Showing the same dish three
