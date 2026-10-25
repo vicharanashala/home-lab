@@ -43,7 +43,30 @@
 # scripts/test-build-lock.mjs has the proof.
 set -euo pipefail
 
-ROOT="/Users/adhyathmika/homehub"
+# The repository this copy of the script belongs to, found from the script's
+# own place rather than written down as an absolute path.
+#
+# WHY: the root decides which dist/ the build is written into and which one is
+# swapped into place, and a build must only ever replace the app of the
+# checkout it was made from. With the path written down, a build run from a
+# COPY of the checkout — a debugging pass verifying a commit in a temporary
+# directory, for instance — wrote its output into the real app's live dist/ and
+# replaced the app the owner is using with a build of the copy. The swap is
+# atomic, so the bridge kept serving and every check stayed green, and nothing
+# said the app had been replaced under the owner.
+#
+# WHY THE OTHER SCRIPTS DO IT THIS WAY: scripts/check-live.sh found its own
+# root the same way, for the same reason — the quality gate exports the
+# staged index to a temporary directory and runs the tests there, so a script
+# with a hard-coded path tests a mix of two different commits. That is not a
+# theory: that exact mix failed the gate during a debugging pass, on a commit
+# that did not touch the library at all.
+#
+# WHY IT IS SAFE FOR THE ORDINARY BUILD: npm runs this from the repository
+# root, and the repository root is where this script lives, so the two are the
+# same directory and the build lands where it always did.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
 cd "$ROOT"
 
 STAGING="$ROOT/dist.staging"
