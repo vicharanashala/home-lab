@@ -470,8 +470,11 @@ function firstConsonant(word: string): string {
 }
 
 /**
- * True when two words share the same consonants, give or take one that was
- * added or dropped.
+ * True when two words share the same consonants, give or take the one the
+ * recogniser dropped.
+ *
+ * `a` is the word that was HEARD and `b` the word in the CATALOGUE. The
+ * order matters: the rule below is about which of the two lost a consonant.
  *
  * THE WORD MUST START WITH THE SAME CONSONANT. That is what separates the
  * spellings from the different words:
@@ -485,6 +488,32 @@ function firstConsonant(word: string): string {
  *
  * What it must NOT allow is a different consonant altogether: "no" and "tok"
  * share nothing, and that is a refusal word, not a spelling.
+ *
+ * WHY THE DROPPED CONSONANT IS NARROWED DOWN
+ * "The same consonants" used to mean "one is a subsequence of the other",
+ * which is too generous in both directions:
+ *
+ *   "palak" and "pulao"   p-l-k / p-l   the HEARD word has a consonant the
+ *                                     catalogue word does not, so the
+ *                                     recogniser did not drop a letter — it
+ *                                     heard a different word. "Palak Chana"
+ *                                     matched "Chana Pulao" at 0.76, over
+ *                                     the confidence bar, so the wrong dish
+ *                                     was written into the meal plan.
+ *   "matar" and "mathri"  m-tr / m-th-r  the extra consonant sits in the
+ *                                     MIDDLE of the catalogue word, which is
+ *                                     not how a word gets mis-heard.
+ *
+ * So the heard word's consonants must all be there in the catalogue word —
+ * the recogniser dropped one, it did not invent one — exactly one may be
+ * missing, and it must be the last one: "jos" for "josh" is the end of the
+ * word going missing, which is how it goes missing in real speech.
+ *
+ * WHY THE HEARD WORD MUST KEEP TWO CONSONANTS
+ * A word whose only consonant is "p" cannot be told apart from every other
+ * word that starts with "p". "pea" and "peda" share that one consonant and
+ * nothing else, and matching them puts a sweet in the plan where a vegetable
+ * was said.
  */
 function sameSounds(a: string, b: string): boolean {
   const ca = firstConsonant(a);
@@ -493,7 +522,15 @@ function sameSounds(a: string, b: string): boolean {
   const sa = skeleton(a);
   const sb = skeleton(b);
   if (!sa.length || !sb.length) return false;
-  return sa === sb || isSubsequence(sa, sb) || isSubsequence(sb, sa);
+  if (sa === sb) return true;
+  // The heard word's consonants must all be there in the catalogue word.
+  if (!isSubsequence(sa, sb)) return false;
+  // Exactly one consonant may be missing.
+  if (sb.length - sa.length !== 1) return false;
+  // The heard word must keep at least two consonants, or it says nothing.
+  if (sa.length < 2) return false;
+  // And the one that is missing must be the last one.
+  return sa[sa.length - 1] !== sb[sb.length - 1];
 }
 
 /**
