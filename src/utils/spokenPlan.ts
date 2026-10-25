@@ -1038,6 +1038,36 @@ interface Span {
 }
 
 /**
+ * The last clause of a stretch of speech that says something.
+ *
+ * WHY A COMMA PARTS A STRETCH: a comma is the only sign in this parser that
+ * two things were said where one meal word stands — see the note on the comma
+ * in the meal loop below. The text in FRONT of a meal word can hold two
+ * dishes, and the meal word belongs to the LAST of them.
+ *
+ * WHY THE LAST ONE: "masala dosa, biryani for dinner" is one meal word and
+ * two clauses, and the meal word is at the END of the sentence, so it belongs
+ * to the clause it sits in — the biryani. Reading the whole stretch gave the
+ * dinner "masala dosa biryani", a dish that is in no catalogue, so the dinner
+ * linked to no recipe, the shopping list bought nothing for it, and nothing
+ * anywhere said the biryani the user had asked for was lost.
+ *
+ * WHY A TRAILING EMPTY CLAUSE IS DROPPED: the connector is what parts the
+ * text in front of it from the meal word, so the comma can be the last thing
+ * in the stretch — "masala dosa, for dinner" is "masala dosa" for dinner.
+ *
+ * @param text the stretch of speech
+ */
+function lastDishClause(text: string): string {
+  const parts = text.split(',');
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const clause = parts[i].trim();
+    if (clause) return clause;
+  }
+  return '';
+}
+
+/**
  * A dish a meal word takes from the text beside it.
  */
 interface DishTake {
@@ -1070,13 +1100,26 @@ interface DishTake {
  * @param src       the whole sentence
  * @param span      where the text the dish is cut from sits
  * @param knownDish the catalogue's answer, when the caller has one
+ * @param partAtComma whether the stretch holds more than one dish and only
+ *                    the last of them belongs to this meal — see
+ *                    `lastDishClause`
  */
-function dishTake(src: string, span: Span, knownDish?: KnownDishTest): DishTake {
+function dishTake(
+  src: string,
+  span: Span,
+  knownDish?: KnownDishTest,
+  partAtComma = false,
+): DishTake {
   const text = src.slice(span.start, span.end);
   const isKnown = namesKnownDish(text, knownDish);
+  // The refusal rules come FIRST, and only then the clause: "dal, no biryani"
+  // is "dal" — the biryani was refused and the dal was asked for — and the
+  // rule that takes the text before a refusal has to have its say before any
+  // clause is parted.
+  const resolved = isKnown ? text : dishWithoutRefusal(text);
   return {
     span,
-    dish: isKnown ? tidy(text) : tidy(dishWithoutRefusal(text)),
+    dish: tidy(partAtComma ? lastDishClause(resolved) : resolved),
     isKnown,
   };
 }
@@ -1281,9 +1324,14 @@ export function parseSpokenPlanResult(
   // The text before the FIRST meal word can only be that meal's own: there
   // is no meal before it that could have claimed it. There is no first meal
   // word when the text held none, and then there is no lead text either.
+  //
+  // WHY THE LEAD TEXT IS PARTED AT ITS LAST CLAUSE: the meal word is at the
+  // END of the sentence, so the stretch in front of it can hold two dishes —
+  // "masala dosa, biryani for dinner" — and the meal word belongs to the
+  // clause it sits in. See `lastDishClause`.
   const leadPre = unique.length ? src.slice(0, unique[0].at).match(PRE_CONNECTOR_RE) : null;
   if (leadPre) {
-    nextLeft = dishTake(src, { start: 0, end: leadPre[1].length }, knownDish);
+    nextLeft = dishTake(src, { start: 0, end: leadPre[1].length }, knownDish, true);
   }
 
   for (let i = 0; i < unique.length; i++) {
@@ -1372,7 +1420,10 @@ export function parseSpokenPlanResult(
         const span: Span = { start: prevEnd, end: mark.at };
         const isKnown = namesKnownDish(src.slice(span.start, span.end), knownDish);
         const afterClause = isKnown ? null : dishAfterLeadingRefusal(segBefore);
-        dish = tidy(afterClause === null ? segBefore : afterClause);
+        // The stretch in front of the meal word can hold TWO dishes, and the
+        // meal word belongs to the last clause of them — "masala dosa,
+        // biryani dinner" is the biryani. See `lastDishClause`.
+        dish = tidy(lastDishClause(afterClause === null ? segBefore : afterClause));
         take = { span, dish, isKnown };
         tookRight = false;
       }
