@@ -110,10 +110,19 @@ const DENSITY: Array<[RegExp, number]> = [
   // anything containing "til" had already been claimed as oil.
   //
   // And the loose text does not know the difference: "lentil" CONTAINS "til",
-  // so "chickpea lentils" and "lentil paste" were weighed as oil (0.92) — 8%
-  // heavier than the dal this table names for them, and 31% heavier than the
-  // lentil paste it names at 0.7. A spoonful of lentils weighed as a spoonful
-  // of oil is the wrong deduction off the user's own shelf.
+  // so the lentils below used to be weighed as oil — 8% heavier than the dal
+  // they belong to. A spoonful of lentils weighed as a spoonful of oil is the
+  // wrong deduction off the user's own shelf. They are weighed now as:
+  //
+  //     "til"              -> 0.55  seeds
+  //     "chickpea lentils" -> 0.85  dal
+  //     "lentil paste"     -> 0.85  dal
+  //
+  // AND "LENTIL PASTE" IS NOT AT THE VALUE THE LAST RULE NAMES FOR IT: the
+  // dal rule comes first and matches "lentil" inside the name, so it lands on
+  // the dal instead. Which of the two is right is a cooking judgement, and the
+  // table is left as it is on that point — the number above is the one the app
+  // uses.
   //
   // Every oil is still caught: "til oil" and "sesame oil" both contain "oil".
   // Only the bare word "til" is gone, and that is what the seeds rule says it
