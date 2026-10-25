@@ -831,6 +831,24 @@ function clauseEndOf(src: string, refusal: RefusalAt): number {
 }
 
 /**
+ * The clause a refusal was said in — the stretch of text between the commas
+ * around it.
+ *
+ * WHY A CLAUSE AND NOT THE WHOLE SENTENCE: a dish's own name comes in a
+ * clause. "no onion no garlic lobia masala, biryani for dinner" is two
+ * clauses — the first is the NAME of a dish and the second is the dinner —
+ * and asking about the whole sentence would mix the two.
+ *
+ * @param src     the whole sentence
+ * @param refusal where the refusal is
+ */
+function clauseOf(src: string, refusal: RefusalAt): string {
+  const commaBefore = src.lastIndexOf(',', refusal.at);
+  const start = commaBefore >= 0 ? commaBefore + 1 : 0;
+  return src.slice(start, clauseEndOf(src, refusal));
+}
+
+/**
  * True when the refusal POINTS BACK at the dish it was said after.
  *
  * "no it" names the dish in front of it: "for breakfast dal, no it" is "the
@@ -1454,6 +1472,25 @@ export function parseSpokenPlanResult(
       (m) => m.isKnown && refusal.at >= m.span.start && refusal.at < m.span.end,
     );
     if (insideADishName) continue;
+
+    // A refusal word that is part of a dish's own NAME is not a refusal — and
+    // the name is not always the phrase a MEAL word took.
+    //
+    // WHY THE CLAUSE IS ASKED ABOUT: the mentions above cover only the
+    // phrases a MEAL word took, so a name said with no meal word beside it was
+    // never asked about at all. "no onion no garlic lobia masala" is the name
+    // of a dish, said on its own, and it was read as a refusal of "onion no
+    // garlic lobia masala" — a dish the user never refused. The dish they had
+    // asked for was never added, and the sheet told them there was nothing to
+    // remove for a dish they had not refused.
+    //
+    // WHY THE CATALOGUE IS ASKED RATHER THAN THE WORDS: "no" and "without"
+    // are parts of 85 recipe names, and only the catalogue can say which
+    // name a phrase is.
+    //
+    // WHY THE CLAUSE AND NOT THE WHOLE SENTENCE: a refusal is about the
+    // clause it was said in, and a dish's name is what a clause holds.
+    if (namesKnownDish(clauseOf(src, refusal), knownDish)) continue;
 
     // The meal whose word FOLLOWS the refusal.
     //
