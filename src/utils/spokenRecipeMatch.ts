@@ -525,8 +525,8 @@ export function matchDish(
     return { heard: raw, best: null, alternatives: [] };
   }
 
-  // `base` is the score WITHOUT the curated bonus, and it is what the order
-  // is decided by — see the sort below.
+  // `base` is the score WITHOUT the curated bonus — and with every other
+  // guard on it — and it is what the order is decided by. See the sort below.
   const scored: (DishMatch & { base: number; preferred: boolean })[] = [];
   candidateSet.forEach((ci) => {
     const c = index.cores[ci];
@@ -584,7 +584,7 @@ export function matchDish(
     // The bonus still goes into the score that is REPORTED, so the confidence
     // bar and the sheet see the same number they saw before.
     const preferred = preferredIds?.has(c.recipe.id) === true;
-    const base = score;
+    let base = score;
     if (preferred) score += PREFERRED_BONUS;
 
     score = Math.min(1, score);
@@ -600,6 +600,15 @@ export function matchDish(
     // coincidence back over the confidence bar.
     if (heardWords.length === 1 && c.words.length === 1 && edits >= 2) {
       score = Math.min(score, COINCIDENCE_SCORE);
+      // The cap has to be on `base` as well, because `base` is what the
+      // ORDER is decided by. Without this the order ignored the guard
+      // altogether: "bhatura" was offered "Khatua" — two edits, capped at
+      // 0.30 — ABOVE "Chole bhature", which is one edit away and scores
+      // 0.48. The coincidence outranked the real near-miss, which is the
+      // one thing this cap exists to prevent, and the sheet leads with the
+      // first chip, so the wrong dish was the one the user was asked for
+      // first.
+      base = Math.min(base, COINCIDENCE_SCORE);
     }
 
     if (score <= 0) return;

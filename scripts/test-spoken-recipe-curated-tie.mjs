@@ -39,7 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { INDIAN_RECIPES } from '../src/data/indianRecipes.ts';
 import {
-  matchDish, dishCore, normalizeDish, CONFIDENT_SCORE,
+  matchDish, dishCore, normalizeDish, editDistance, CONFIDENT_SCORE,
 } from '../src/utils/spokenRecipeMatch.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -173,6 +173,99 @@ const tie = matchDish('masala dosa', catalogue, preferredIds).best;
 ok(!!tie && preferredIds.has(tie.recipe.id),
   'a curated recipe is the one kept',
   tie ? `"${tie.name}" at ${tie.score.toFixed(2)}` : 'no match');
+
+console.log('\nand a coincidence never outranks a real near-miss');
+// The tie-break decided the order by the score WITHOUT the curated bonus, and
+// the score without the bonus is taken BEFORE the coincidence cap is applied.
+// So the order stopped honouring the cap, and the sheet led with the
+// coincidence:
+//
+//   "bhatura" -> Khatua 0.30, Chole bhature 0.48
+//
+// The order said Khatua first because two edits beat one edit on the UNCAPPED
+// score, even though the cap exists for exactly that reason: "bhatura" is two
+// edits from "khatua" and one from "bhature", so the mutton dish is a
+// coincidence and the fried bread is what the user meant.
+//
+// WHY THE CAP IS THE RULE AND NOT THE ORDER: the comment on the cap says
+// "0.3 is deliberately below the weakest genuine candidate for a one-word
+// phrase ... so a coincidence never outranks a real near-miss". A coincidence
+// is a one-word phrase against a one-word core two or more edits away, so a
+// candidate that is one of those AND is reported at the cap is a coincidence,
+// and it may not come before a candidate that is not.
+{
+  const heard = matchDish('bhatura', catalogue, preferredIds);
+  const offered = [heard.best, ...heard.alternatives].filter(Boolean);
+  ok(offered[0]?.name === 'Chole bhature',
+    'the real near-miss is offered first',
+    offered.map((m) => `${m.name} ${m.score.toFixed(2)}`).join(' | '));
+  ok(
+    offered.every((m) => m.score <= (offered[0]?.score ?? 0) + 1e-9),
+    'no alternative is more confident than the one leading the list',
+    offered.map((m) => `${m.name} ${m.score.toFixed(2)}`).join(' | '));
+}
+
+// And the same rule over the whole catalogue rather than the one dish that
+// happens to trip it.
+//
+// WHY THE PHRASES ARE BUILT RATHER THAN TAKEN: the shape needs a phrase that
+// is TWO edits from a one-word core and ONE edit from a word inside a longer
+// dish name — "bhatura" is two from "khatua" and one from "bhature". A
+// catalogue name spoken the way a person says it does not reach that shape,
+// so the phrases are built from the catalogue's own words: every word that
+// sits two edits away from a one-word core is a phrase that can.
+{
+  const oneWordCores = new Set();
+  const catalogueWords = new Set();
+  for (const recipe of catalogue) {
+    const c = core(recipe.name);
+    if (!c) continue;
+    const words = c.split(' ');
+    if (words.length === 1) oneWordCores.add(c);
+    for (const w of words) catalogueWords.add(w);
+  }
+
+  const phrases = new Set();
+  for (const single of oneWordCores) {
+    for (const word of catalogueWords) {
+      // A word that IS a one-word core takes the exact path and never reaches
+      // the coincidence rules, so it cannot show the shape.
+      if (oneWordCores.has(word)) continue;
+      if (editDistance(single, word) === 2) phrases.add(word);
+    }
+  }
+
+  let checked = 0;
+  let wrong = 0;
+  const wrongExamples = [];
+  for (const said of phrases) {
+    const heard = normalizeDish(said);
+    const r = matchDish(said, catalogue, preferredIds);
+    const offered = [r.best, ...r.alternatives].filter(Boolean);
+    if (offered.length < 2) continue;
+    checked += 1;
+    // How close the candidate's own words come to what was said.
+    const nearest = (m) =>
+      Math.min(...m.name.split(' ').map((w) => editDistance(heard, normalizeDish(w))));
+    // A coincidence is a ONE-word core two or more edits away — the one the
+    // cap is about. A real near-miss has a word exactly one edit away.
+    const isCoincidence = (m) => !m.name.includes(' ') && nearest(m) >= 2;
+    const isNearMiss = (m) => nearest(m) === 1;
+    const firstNearMiss = offered.findIndex(isNearMiss);
+    const firstCoincidence = offered.findIndex(isCoincidence);
+    if (firstNearMiss < 0 || firstCoincidence < 0) continue;
+    if (firstCoincidence < firstNearMiss) {
+      wrong += 1;
+      if (wrongExamples.length < 6) {
+        wrongExamples.push(
+          `"${said}" -> ${offered.map((m) => `${m.name} ${m.score.toFixed(2)}`).join(' | ')}`);
+      }
+    }
+  }
+  ok(wrong === 0,
+    'no coincidence is offered above a real near-miss',
+    `${checked} phrases checked, ${wrong} wrong${wrongExamples.length ? ': ' + wrongExamples.join('; ') : ''}`);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
