@@ -276,11 +276,15 @@ try {
   const bundlePublic = join(bundleRoot, 'public', 'icon.svg');
   const bundleHtml = join(bundleRoot, 'index.html');
   const bundleConfig = join(bundleRoot, 'vite.config.ts');
+  const bundlePackage = join(bundleRoot, 'package.json');
+  const bundleEnv = join(bundleRoot, '.env.production');
   const bundleBuild = join(bundleRoot, 'dist', 'index.html');
   writeFileSync(bundleSource, 'export const App = 1;\n');
   writeFileSync(bundlePublic, '<svg/>\n');
   writeFileSync(bundleHtml, '<div id="root"></div>\n');
   writeFileSync(bundleConfig, 'export default {};\n');
+  writeFileSync(bundlePackage, '{ "dependencies": {} }\n');
+  writeFileSync(bundleEnv, 'VITE_BRIDGE_TOKEN=not-a-real-token\n');
   writeFileSync(bundleBuild, '<div id="root"></div>\n');
 
   // The times are set by hand rather than waited for, so the test says which
@@ -294,7 +298,14 @@ try {
   const OLD = new Date('2026-01-01T00:00:00Z');
   const MID = new Date('2026-06-01T00:00:00Z');
   const NEW = new Date('2026-12-01T00:00:00Z');
-  for (const f of [bundleSource, bundlePublic, bundleHtml, bundleConfig]) {
+  for (const f of [
+    bundleSource,
+    bundlePublic,
+    bundleHtml,
+    bundleConfig,
+    bundlePackage,
+    bundleEnv,
+  ]) {
     utimesSync(f, OLD, OLD);
   }
   utimesSync(bundleBuild, MID, MID);
@@ -334,6 +345,30 @@ try {
     `state=${bundleState(bundleRoot)}`,
   );
   utimesSync(bundleConfig, OLD, OLD);
+
+  // And for the dependencies: a dependency version IS in the JavaScript, so
+  // `npm install` that bumps a library produces a different bundle from the
+  // same source. Nothing under src/ changed, so a rule that watched only the
+  // source said "current" while the owner was served the old bundle.
+  utimesSync(bundlePackage, NEW, NEW);
+  check(
+    'a bundle older than the dependencies is stale',
+    bundleState(bundleRoot) === 'stale',
+    `state=${bundleState(bundleRoot)}`,
+  );
+  utimesSync(bundlePackage, OLD, OLD);
+
+  // And for the env file: vite INLINES the VITE_* values into the bundle, so
+  // a rotated token is a bundle that has to be rebuilt. A bundle that was not
+  // rebuilt leaves every API call from the owner's phone answering 401 while
+  // the check says healthy — broken for the owner and green for the check.
+  utimesSync(bundleEnv, NEW, NEW);
+  check(
+    'a bundle older than the env file is stale',
+    bundleState(bundleRoot) === 'stale',
+    `state=${bundleState(bundleRoot)}`,
+  );
+  utimesSync(bundleEnv, OLD, OLD);
 
   // No build at all. The link serves nothing, which is not "current".
   rmSync(bundleBuild, { force: true });

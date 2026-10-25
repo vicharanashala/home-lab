@@ -216,6 +216,27 @@ live_link_state() {
 # different CSS, and a changed vite config produces a different bundle. Both
 # are invisible to the owner's eye until the bundle that uses them is built.
 #
+# WHY THE DEPENDENCIES AND THE ENV FILES ARE INPUTS TOO: they are the two
+# inputs the list was missing, and both of them change the bundle without
+# changing a line of src/.
+#
+# A dependency version IS in the JavaScript. `npm install` that bumps a
+# library produces a different bundle from the same source, and a rule that
+# watched only src/ and the configs called that "current" while the owner was
+# served the old one.
+#
+# And vite INLINES the VITE_* values into the bundle — the bridge token sits
+# in dist/assets/*.js in plaintext, because the frontend has to send it. So a
+# rotated token in .env.production is a bundle that has to be rebuilt, and a
+# bundle that was not rebuilt leaves every API call from the owner's phone
+# answering 401 while the check says healthy. That is the worst shape of the
+# failure this rule exists to catch: the app is broken for the owner and the
+# check is green.
+#
+# WHY ONLY THE TIMES ARE READ AND NEVER THE CONTENT: these files hold the
+# secrets. The rule compares mtimes and nothing else, so no token ever
+# reaches a log, a diff or a report.
+#
 # WHY "missing" IS NOT "current": a checkout with no bundle serves the
 # owner nothing at all, and the link answers 500. That is not an app that is
 # up to date.
@@ -250,7 +271,13 @@ live_bundle_state() {
     "$root/index.html" \
     "$root/vite.config.ts" \
     "$root/tailwind.config.js" \
-    "$root/postcss.config.js"; do
+    "$root/postcss.config.js" \
+    "$root/package.json" \
+    "$root/package-lock.json" \
+    "$root/.env" \
+    "$root/.env.local" \
+    "$root/.env.production" \
+    "$root/.env.production.local"; do
     [ -e "$path" ] || continue
     mtime="$(bundle_newest_mtime "$path")"
     case "$mtime" in
