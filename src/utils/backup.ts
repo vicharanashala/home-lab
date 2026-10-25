@@ -54,6 +54,20 @@ export type BackupOutcome =
 export const SNAPSHOT_NOT_SAVED_MESSAGE =
   'Snapshot not saved — your browser refused to store it, so there is no extra copy of your data.';
 
+/**
+ * What the user is told when the restore could not be made safely.
+ *
+ * WHY IT SAYS THE DATA IS STILL THERE: the restore did not happen, so nothing
+ * was overwritten — the household on the screen is the one the user still has.
+ * "Restore failed" on its own would leave them guessing whether the restore
+ * half-worked and whether their data went.
+ *
+ * WHY IT ASKS FOR SPACE: what was missing was room for a second copy, and the
+ * user is the one who can make it.
+ */
+export const RESTORE_WITHOUT_SAFETY_COPY_MESSAGE =
+  'Your browser refused to store a safety copy of your current data, so the restore was not done — your data is still here. Free up some space and try again.';
+
 function safeLocalStorage(): Storage | null {
   try {
     if (typeof window === 'undefined') return null;
@@ -183,12 +197,29 @@ export function restoreBackup(stamp: string): RestoreResult {
   if (!isRestorableState(snapshot)) {
     return { ok: false, message: 'That backup does not look like saved app data.' };
   }
+  // Preserve what we're about to overwrite. The snapshot being restored is
+  // protected from pruning: it's already read into `snapshot`, but if the
+  // pre-restore backup pushed it past KEEP it would vanish from the list and
+  // the restore would look like it destroyed the backup it came from.
+  //
+  // WHY THE ANSWER IS READ AND NOT IGNORED: this copy is what makes the
+  // restore REVERSIBLE, and the panel promises the user that picking the
+  // wrong snapshot is not a one-way mistake. A copy the browser refused means
+  // the restore WOULD be a one-way mistake — and the app would be the one
+  // making it, on the user's behalf, without asking. The data on the screen
+  // is then the only copy left, so the restore waits until there is room for
+  // a second one.
+  //
+  // WHY ONLY A REFUSAL STOPS IT: "nothing to save" means the browser never
+  // held a household worth copying, so there is nothing good at risk — and
+  // restoring over a household the browser never stored is exactly what a
+  // user reaches for a restore to do.
+  const safety = runBackup(true, stamp);
+  if (!safety.saved && safety.reason === 'storage-refused') {
+    return { ok: false, message: RESTORE_WITHOUT_SAFETY_COPY_MESSAGE };
+  }
+
   try {
-    // Preserve what we're about to overwrite. The snapshot being restored is
-    // protected from pruning: it's already read into `snapshot`, but if the
-    // pre-restore backup pushed it past KEEP it would vanish from the list and
-    // the restore would look like it destroyed the backup it came from.
-    runBackup(true, stamp);
     ls.setItem(STATE_KEY, snapshot);
     return { ok: true, message: `Restored from ${stamp}` };
   } catch {
