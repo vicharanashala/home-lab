@@ -310,13 +310,39 @@ export function scaleFor(recipe: Recipe, servings: number): number {
 
 interface Accum {
   name: string;
-  quantity: number;
-  unit: string;
   category: ShoppingNeed['category'];
+  /**
+   * Every need for this ingredient, in the order the plan asked for them.
+   *
+   * WHY THE PIECES ARE KEPT RATHER THAN ADDED UP AS THEY ARRIVE: the catalogue
+   * measures the same ingredient in more than one unit — salt in teaspoons and
+   * tablespoons, milk in millilitres and litres, ginger in pieces and grams.
+   * Adding them as they arrive would add a count to a mass, which is not a
+   * number of anything. They are added up later, once it is known whether they
+   * can be.
+   */
+  pieces: Array<{ quantity: number; unit: string }>;
 }
 
-const keyOf = (name: string, unit: string) =>
-  `${name.trim().toLowerCase().replace(/\s+/g, ' ')}::${unit.trim().toLowerCase() || 'pcs'}`;
+/**
+ * The same ingredient, written the same way.
+ *
+ * WHY THE NAME AND NOT THE NAME AND THE UNIT: the shelf is one shelf. Two
+ * recipes asking for "Salt" in teaspoons and tablespoons are asking for the
+ * same jar, and the list has to compare that jar with the week ONCE.
+ */
+const nameKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * The same unit, written the same way.
+ *
+ * WHY THE UNIT IS NORMALISED: "G" and "g" are the same unit, and so are "TSP"
+ * and "tsp". Two needs in the same unit are simply added together, and that
+ * has to work for a unit the app does not know at all — the catalogue has
+ * "slices", and two recipes each asking for two slices of bread is four
+ * slices of bread.
+ */
+const unitKey = (unit: string) => unit.trim().toLowerCase() || 'pcs';
 
 /**
  * How much of a need the kitchen already covers, expressed in the NEED's own
@@ -390,6 +416,82 @@ function coveredAmount(
 }
 
 /**
+ * Bring a need into the unit a line is written in.
+ *
+ * WHY THE CONVERSION IS NOT A SIMPLE DIVISION: the two units may be in the
+ * same dimension (teaspoons and tablespoons, millilitres and litres, grams and
+ * kilograms) or in different ones (a mass and a volume, bridged by the
+ * ingredient's density). A count is in neither, and cannot be bridged at all.
+ *
+ * @returns the need in the target unit, or null when the two cannot be
+ *          compared.
+ */
+function convertNeedToUnit(
+  quantity: number,
+  unit: string,
+  targetUnit: string,
+  ingredientName: string,
+): number | null {
+  const from = toBaseUnit(quantity, unit);
+  const target = toBaseUnit(1, targetUnit);
+  if (!from || !target) return null;
+  if (!Number.isFinite(target.value) || target.value === 0) return null;
+
+  // Same dimension: the two units' own factors do the work.
+  if (from.dimension === target.dimension) return from.value / target.value;
+
+  // Different dimensions: only a volume and a mass can be bridged, and the
+  // ingredient's density is the honest bridge.
+  const converted = convertBase(from.value, from.dimension, target.dimension, ingredientName);
+  if (converted === null) return null;
+  return converted / target.value;
+}
+
+/**
+ * The lines one ingredient gets on the shopping list.
+ *
+ * WHY THE NEEDS ARE ADDED UP RATHER THAN LISTED SIDE BY SIDE: the shelf is one
+ * shelf. The catalogue measures the same ingredient in more than one unit —
+ * salt in teaspoons and tablespoons, milk in millilitres and litres, ginger in
+ * pieces and grams — and each line used to be checked against the WHOLE shelf
+ * on its own. Two lines for one jar therefore each got their own "the kitchen
+ * has this" verdict, and the list said the household had everything while the
+ * two lines together wanted more than the jar held.
+ *
+ * WHY THE FIRST NEED'S UNIT WINS: it is deterministic, and when every recipe
+ * asks in the same unit — which is the usual case — nothing changes at all.
+ *
+ * WHY SOME GROUPS STAY SPLIT: a count is not a mass, so "2 pcs Ginger" and
+ * "50 g Ginger" cannot be added up. Those keep their own lines, and keeping
+ * them apart is safe: only one of them can match a shelf row, because a
+ * shelf row is in one dimension too.
+ *
+ * `pieces` is never empty — a group is created together with its first need.
+ */
+function linesFor(
+  name: string,
+  pieces: Array<{ quantity: number; unit: string }>,
+): Array<{ quantity: number; unit: string }> {
+  const target = pieces[0];
+  let total = 0;
+  for (const piece of pieces) {
+    // The same unit twice is addition, and it has to work for a unit the app
+    // does not know — two recipes asking for two slices of bread is four
+    // slices, whatever the app calls a slice.
+    if (unitKey(piece.unit) === unitKey(target.unit)) {
+      total += piece.quantity;
+      continue;
+    }
+    const converted = convertNeedToUnit(piece.quantity, piece.unit, target.unit, name);
+    // One need that cannot be brought into the group's unit means the group
+    // cannot be added up at all, so every need keeps its own line.
+    if (converted === null) return pieces.map((p) => ({ quantity: p.quantity, unit: p.unit }));
+    total += converted;
+  }
+  return [{ quantity: total, unit: target.unit }];
+}
+
+/**
  * Work out everything the week needs, and how much of it the kitchen already
  * has. Only entries with a `recipeId` contribute — a hand-typed dish has no
  * known ingredient list, so guessing at one would put the wrong things on the
@@ -414,16 +516,16 @@ export function buildShoppingList(
       for (const ing of recipe.ingredients) {
         if (!ing?.name) continue;
         const unit = ing.unit || 'pcs';
-        const key = keyOf(ing.name, unit);
+        const quantity = (Number(ing.quantity) || 0) * scale;
+        const key = nameKey(ing.name);
         const prev = acc.get(key);
         if (prev) {
-          prev.quantity += (Number(ing.quantity) || 0) * scale;
+          prev.pieces.push({ quantity, unit });
         } else {
           acc.set(key, {
             name: ing.name,
-            quantity: (Number(ing.quantity) || 0) * scale,
-            unit,
             category: ing.category || 'other',
+            pieces: [{ quantity, unit }],
           });
         }
       }
@@ -432,29 +534,34 @@ export function buildShoppingList(
 
   const needs: ShoppingNeed[] = [];
   for (const a of acc.values()) {
-    if (a.quantity <= 0) continue;
+    // ONE SHELF, ONE VERDICT: the lines for an ingredient are added up before
+    // the shelf is compared with them, so two units of the same thing cannot
+    // each claim the whole jar.
+    for (const line of linesFor(a.name, a.pieces)) {
+      if (line.quantity <= 0) continue;
 
-    // Does the fridge already cover this ingredient?
-    const probe = {
-      name: a.name,
-      quantity: a.quantity,
-      unit: a.unit,
-      category: a.category,
-    };
-    const candidates = findCandidatesForIngredient(probe, stock);
-    const stockItem = candidates[0];
-    const have = coveredAmount(a.quantity, a.unit, a.name, stockItem);
-    const covered = have >= a.quantity - 1e-9;
+      // Does the fridge already cover this ingredient?
+      const probe = {
+        name: a.name,
+        quantity: line.quantity,
+        unit: line.unit,
+        category: a.category,
+      };
+      const candidates = findCandidatesForIngredient(probe, stock);
+      const stockItem = candidates[0];
+      const have = coveredAmount(line.quantity, line.unit, a.name, stockItem);
+      const covered = have >= line.quantity - 1e-9;
 
-    needs.push({
-      name: a.name,
-      category: a.category,
-      needed: round2(a.quantity),
-      unit: a.unit,
-      inStock: Boolean(stockItem),
-      ...(stockItem ? { stockItemId: stockItem.id, have } : {}),
-      covered,
-    });
+      needs.push({
+        name: a.name,
+        category: a.category,
+        needed: round2(line.quantity),
+        unit: line.unit,
+        inStock: Boolean(stockItem),
+        ...(stockItem ? { stockItemId: stockItem.id, have } : {}),
+        covered,
+      });
+    }
   }
 
   // Things you must buy first, then covered ones, then alphabetical.
