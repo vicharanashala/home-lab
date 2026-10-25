@@ -8,7 +8,7 @@
  * Deliberately local: no network, no account, nothing leaves the device.
  */
 
-const STATE_KEY = 'homehub.v1';
+import { STORAGE_KEY as STATE_KEY } from './appStorage';
 /** Snapshot keys. Must NOT be a prefix of any other key we store. */
 const SNAPSHOT_PREFIX = 'homehub.snapshot.';
 /** The "last run" marker lives OUTSIDE the snapshot namespace. */

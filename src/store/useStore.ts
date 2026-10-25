@@ -29,8 +29,7 @@ import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimens
 import { formatBaseValue, subtractBase, toBaseUnit, unitDimension } from '../utils/units';
 import { MEAL_SLOTS, rescaledServings, suggestedServingsForDay } from '../utils/portions';
 import { DEFAULT_CONSENTS } from '../utils/consent';
-
-const STORAGE_KEY = 'homehub.v1';
+import { saveAppState, STORAGE_KEY } from '../utils/appStorage';
 
 const loadFromStorage = (): AppState | null => {
   if (typeof window === 'undefined') return null;
@@ -76,12 +75,23 @@ const loadFromStorage = (): AppState | null => {
   }
 };
 
-const saveToStorage = (state: AppState) => {
-  if (typeof window === 'undefined') return;
+/**
+ * Write the app's state to the browser's storage, and say whether it landed.
+ *
+ * WHY THE ACCESS IS INSIDE THE TRY: a browser with storage blocked throws
+ * when the app READS `window.localStorage`, not only when it writes to it,
+ * so reading it can fail the same way writing it can.
+ *
+ * WHY IT REPORTS: the old code caught the error and said nothing, so a change
+ * the browser refused was a change the app showed and then forgot. See
+ * `appStorage`.
+ */
+const saveToStorage = (state: AppState): boolean => {
+  if (typeof window === 'undefined') return true;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return saveAppState(state, window.localStorage);
   } catch {
-    // ignore quota errors silently
+    return false;
   }
 };
 
@@ -220,6 +230,14 @@ export interface UseStore extends AppState {
   setDayNote: (day: MealPlanDay, note: string) => void;
   /** Record the household's composition (adults + kids by age). */
   completeHouseholdSurvey: (household: HouseholdProfile) => void;
+  /**
+   * Whether the app could not write its last change to storage.
+   *
+   * WHY IT IS ON THE INTERFACE AND NOT ONLY IN THE STORE: a change the
+   * browser refused is a change the app is showing and will forget, and the
+   * user is the one who has to know that. See `appStorage`.
+   */
+  storageFailed: boolean;
   // Toasts
   toasts: Toast[];
   toast: (message: string, kind?: ToastKind, undo?: () => void) => void;
@@ -236,6 +254,15 @@ export interface UseStore extends AppState {
 interface InternalState {
   app: AppState;
   toasts: Toast[];
+  /**
+   * Whether the app could not write its last change to storage.
+   *
+   * WHY IT IS PART OF THE STATE AND NOT A MODULE FLAG: the user has to be
+   * told, and the telling is a piece of the interface — the banner is drawn
+   * from this, so what the user reads and what the app knows are the same
+   * thing by construction.
+   */
+  storageFailed: boolean;
 }
 
 let state: InternalState | null = null;
@@ -246,6 +273,7 @@ function ensureState(): InternalState {
   const initial: InternalState = {
     app: loadFromStorage() ?? seedState(),
     toasts: [],
+    storageFailed: false,
   };
   state = initial;
   return initial;
@@ -263,7 +291,19 @@ function setState(updater: (cur: InternalState) => InternalState): void {
   // Persist app state to localStorage. Skip the very first hydration write so
   // we don't overwrite storage with the value we just read from it.
   if (cur.app !== next.app) {
-    saveToStorage(next.app);
+    const saved = saveToStorage(next.app);
+    // WHY THE FAILED WRITE IS CARRIED IN THE STATE: a change the browser
+    // refused to store is a change the app is showing and will forget, and
+    // the user is the one who has to know that. The flag is what the banner
+    // is drawn from, so it clears the moment a write works again.
+    //
+    // WHY IT IS NOT SET ON EVERY CHANGE: the flag only changes when the
+    // answer does, so a change that is saved and a change that is not do not
+    // churn the state — and a state change here would itself be a change.
+    const nowFailed = !saved;
+    if (nowFailed !== cur.storageFailed) {
+      setState((s) => ({ ...s, storageFailed: nowFailed }));
+    }
   }
   listeners.forEach((l) => l());
 }
@@ -529,6 +569,18 @@ const currentMealPlan = (): MealPlan => {
   mealPlanCache = { src, value };
   return value;
 };
+
+/**
+ * Whether the app could not write its last change.
+ *
+ * WHY IT IS READ LIVE AND NOT FROM THE SNAPSHOT: the banner has to say what
+ * is true NOW. A snapshot is what the last render saw, and a failure that
+ * happened after that render would not be in it — so the screen would keep
+ * saying everything is fine while nothing is being saved.
+ *
+ * WHY THE MEAL PLAN IS READ THE SAME WAY: see `currentMealPlan`.
+ */
+const currentStorageFailed = (): boolean => getState().storageFailed;
 
 const setMealPlanSlot: UseStore['setMealPlanSlot'] = (day, slot, entry) => {
   setState((s) => ({
@@ -1222,6 +1274,7 @@ function getSnapshot(): InternalState {
 const SERVER_SNAPSHOT: InternalState = Object.freeze({
   app: seedState(),
   toasts: [] as Toast[],
+  storageFailed: false,
 }) as InternalState;
 
 function getServerSnapshot(): InternalState {
@@ -1262,6 +1315,7 @@ export function useStore(): UseStore {
     setDayGuests,
     setDayNote,
     completeHouseholdSurvey,
+    storageFailed: currentStorageFailed(),
     toasts: snap.toasts,
     toast,
     dismissToast,

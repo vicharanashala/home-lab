@@ -2,6 +2,7 @@ import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Suspense, lazy, useEffect } from 'react';
 import { BottomNav, SideNav } from './components/BottomNav';
 import { Toaster } from './components/Toaster';
+import { StorageWarning } from './components/StorageWarning';
 import { WelcomeModal } from './components/WelcomeModal';
 import { HouseholdSurveyModal } from './components/HouseholdSurveyModal';
 import { useStore } from './store/useStore';
@@ -148,6 +149,7 @@ export default function App() {
       </div>
       <SideNav />
       <div className="flex-1 min-w-0 flex flex-col relative z-10">
+        <StorageWarning />
         <main className="flex-1" style={{ paddingBottom: 'var(--hh-nav-space)' }}>
           <ErrorBoundary>
             <Suspense fallback={<PageLoader />}>
