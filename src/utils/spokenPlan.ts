@@ -233,6 +233,74 @@ function namesKnownDish(phrase: string, knownDish?: KnownDishTest): boolean {
 }
 
 /**
+ * The first refusal word in a stretch of speech that is REALLY a refusal.
+ *
+ * WHY THE SEARCH IS NOT THE FIRST REFUSAL WORD: a refusal word is only a
+ * refusal when it is not part of a dish's own NAME, and a dish's own NAME is
+ * the clause the word was said in. "red lentil curry without coconut" is one
+ * clause and one dish, and the "without" in the middle of it is part of the
+ * name.
+ *
+ * WHY THE CLAUSE IS ASKED ABOUT AND NOT THE WHOLE STRETCH: a stretch that
+ * holds two clauses is not a dish and never will be — "red lentil curry
+ * without coconut, dal" is two dishes, and neither of them is the whole
+ * stretch. So asking the catalogue about the whole stretch says "no such
+ * dish" for every stretch with a comma in it, and the refusal word in the
+ * first clause was read as a refusal.
+ *
+ * WHY IT MATTERS: the rule that raises refusals already asks this same
+ * question about this same word — see `clauseOf` — and the two disagreed.
+ * The refusal rule left the word alone and the rule that takes a dish OUT of
+ * a stretch cut the name in half:
+ *
+ *   "red lentil curry without coconut, dal for dinner"
+ *     -> dinner "red lentil curry"
+ *
+ * That is a dish that is in no catalogue, so the shopping list bought nothing
+ * for that meal, and nothing anywhere said the dish the user had asked for
+ * was lost. In two catalogue names the cut landed on a name the catalogue
+ * DOES hold, and the shopping list bought the WRONG dish.
+ *
+ * WHY THE CLAUSE IS TAKEN FROM THE WHOLE SENTENCE AND NOT FROM THE STRETCH:
+ * the clause a word is in is a property of the sentence and not of the
+ * stretch a rule happens to be holding, and the rule that raises refusals
+ * takes it from the sentence too. Two answers to the same word would be two
+ * answers to the same question.
+ *
+ * WHY THE CLAUSE STOPS AT THE END OF THE STRETCH: the stretch ends where the
+ * dish ends, so a clause that ran past it would carry the meal word into the
+ * name and answer "no such dish" for a dish the catalogue holds.
+ *
+ * @param src       the whole sentence
+ * @param from      where the stretch starts in it
+ * @param to        where the stretch ends in it
+ * @param knownDish the catalogue's answer, when the caller has one
+ */
+function firstRealRefusal(
+  src: string,
+  from: number,
+  to: number,
+  knownDish?: KnownDishTest,
+): { at: number; word: string; before: string } | null {
+  const text = src.slice(from, to);
+  const re = new RegExp(`\\b(?:${REFUSAL_WORDS.join('|')})\\b`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const at = from + m.index;
+    // The clause this word sits in is the question. The rule that raises
+    // refusals asks it with `clauseOf`, and the answer has to be the same.
+    if (
+      knownDish &&
+      namesKnownDish(clauseOf(src, { at, end: at + m[0].length }, to), knownDish)
+    ) {
+      continue;
+    }
+    return { at, word: m[0], before: src.slice(from, at) };
+  }
+  return null;
+}
+
+/**
  * The part of a stretch of speech that comes BEFORE a refusal, or null when
  * there is no refusal in it.
  *
@@ -240,10 +308,20 @@ function namesKnownDish(phrase: string, knownDish?: KnownDishTest): boolean {
  * the refusal was swallowed as part of the dish and the plan held
  * "rice no dal", a name that matches no recipe in the catalogue and so
  * buys nothing from the shopping list.
+ *
+ * @param src       the whole sentence
+ * @param from      where the stretch starts in it
+ * @param to        where the stretch ends in it
+ * @param knownDish the catalogue's answer, when the caller has one
  */
-function dishBeforeRefusal(text: string): string | null {
-  const m = text.match(REFUSAL_ANYWHERE_RE);
-  return m ? m[1] : null;
+function dishBeforeRefusal(
+  src: string,
+  from: number,
+  to: number,
+  knownDish?: KnownDishTest,
+): string | null {
+  const m = firstRealRefusal(src, from, to, knownDish);
+  return m ? m.before : null;
 }
 
 /**
@@ -280,23 +358,30 @@ function dishBeforeRefusal(text: string): string | null {
  * one, and it sits in the middle of the dish — but whether the clause OPENS
  * with one. A refusal word further along is part of a dish's own name.
  *
- * @param text the stretch of speech
+ * @param src       the whole sentence
+ * @param from      where the stretch starts in it
+ * @param to        where the stretch ends in it
+ * @param knownDish the catalogue's answer, when the caller has one
  */
-function dishAfterLeadingRefusal(text: string): string | null {
+function dishAfterLeadingRefusal(
+  src: string,
+  from: number,
+  to: number,
+  knownDish?: KnownDishTest,
+): string | null {
   // The clause being read. Each step over a refusal makes it SHORTER, so the
   // walk cannot run for ever.
-  let clause = text;
+  let start = from;
   for (;;) {
-    const m = clause.match(REFUSAL_ANYWHERE_RE);
+    const m = firstRealRefusal(src, start, to, knownDish);
     if (!m) return null;
     // Something usable comes before the refusal, so the dish is in front of it
     // and the other rule answers.
-    if (tidy(m[1])) return null;
-    const tail = clause.slice(m[0].length);
-    const comma = tail.indexOf(',');
-    if (comma < 0) return null;
-    const after = tail.slice(comma + 1);
-    if (!tidy(after)) return null;
+    if (tidy(m.before)) return null;
+    const comma = src.indexOf(',', m.at + m.word.length);
+    if (comma < 0 || comma >= to) return null;
+    const after = comma + 1;
+    if (!tidy(src.slice(after, to))) return null;
     // Does the clause just taken open with ANOTHER refusal? "no dal, no
     // rice, biryani" — two refusals, and then the dish the user asked for.
     //
@@ -310,9 +395,9 @@ function dishAfterLeadingRefusal(text: string): string | null {
     //
     // The test is the one the first clause already uses above: nothing usable
     // comes before the refusal, so the refusal IS at the front of the clause.
-    const opens = after.match(REFUSAL_ANYWHERE_RE);
-    if (!opens || tidy(opens[1])) return after;
-    clause = after;
+    const opens = firstRealRefusal(src, after, to, knownDish);
+    if (!opens || tidy(src.slice(after, opens.at))) return src.slice(after, to);
+    start = after;
   }
 }
 
@@ -825,9 +910,10 @@ function refusalLinksToMeal(src: string, from: number, to: number): boolean {
  * @param src     the whole sentence
  * @param refusal where the refusal is
  */
-function clauseEndOf(src: string, refusal: RefusalAt): number {
+function clauseEndOf(src: string, refusal: RefusalAt, cap = src.length): number {
   const after = src.indexOf(',', refusal.end);
-  return after >= 0 ? after : src.length;
+  const end = after >= 0 ? after : src.length;
+  return end < cap ? end : cap;
 }
 
 /**
@@ -842,10 +928,38 @@ function clauseEndOf(src: string, refusal: RefusalAt): number {
  * @param src     the whole sentence
  * @param refusal where the refusal is
  */
-function clauseOf(src: string, refusal: RefusalAt): string {
+function clauseOf(src: string, refusal: RefusalAt, cap = src.length): string {
   const commaBefore = src.lastIndexOf(',', refusal.at);
   const start = commaBefore >= 0 ? commaBefore + 1 : 0;
-  return src.slice(start, clauseEndOf(src, refusal));
+  return src.slice(start, clauseEndOf(src, refusal, cap));
+}
+
+/**
+ * Where the dish in front of a meal word ends.
+ *
+ * WHY A CLAUSE NEEDS AN END THAT IS NOT THE END OF THE SENTENCE: a clause
+ * runs to the next comma or to the end of what was said, and the end of what
+ * was said is not where the DISH ends — it is where the MEAL word does. "no
+ * dal, red lentil curry without coconut for dinner" ends with "for dinner",
+ * and the dish in front of that dinner is "red lentil curry without coconut".
+ *
+ * WHY IT MATTERS: the question the clause answers is "is this refusal word
+ * part of a dish's own name", and the name ends where the dish ends. With
+ * the meal word in the clause the clause was never a dish's name, so the
+ * answer was always no, and the "without" in the middle of the name was read
+ * as a refusal of "coconut" — a dish the user never refused.
+ *
+ * WHY THE CONNECTOR IS TAKEN OFF: the connector belongs to the meal, not to
+ * the dish — "dal FOR dinner" is the dal and the dinner. The same rule the
+ * meal loop uses to find the dish in front of a meal word.
+ *
+ * @param src    the whole sentence
+ * @param mealAt where the meal word starts
+ */
+function dishCandidateEnd(src: string, mealAt: number): number {
+  const before = src.slice(0, mealAt);
+  const connector = before.match(PRE_CONNECTOR_RE);
+  return connector ? connector[1].length : before.length;
 }
 
 /**
@@ -1013,12 +1127,18 @@ function isMeaningful(s: string): boolean {
  * dropped it: the plan held no biryani, the shopping list bought no biryani,
  * and nothing anywhere said the biryani had been lost.
  */
-function dishWithoutRefusal(text: string): string {
-  const before = dishBeforeRefusal(text);
+function dishWithoutRefusal(
+  src: string,
+  from: number,
+  to: number,
+  knownDish?: KnownDishTest,
+): string {
+  const text = src.slice(from, to);
+  const before = dishBeforeRefusal(src, from, to, knownDish);
   if (before === null) return text;
   if (tidy(before)) return before;
   // Nothing usable in front of the refusal, so the refusal opens the stretch.
-  const after = dishAfterLeadingRefusal(text);
+  const after = dishAfterLeadingRefusal(src, from, to, knownDish);
   return after === null ? text : after;
 }
 
@@ -1116,7 +1236,7 @@ function dishTake(
   // is "dal" — the biryani was refused and the dal was asked for — and the
   // rule that takes the text before a refusal has to have its say before any
   // clause is parted.
-  const resolved = isKnown ? text : dishWithoutRefusal(text);
+  const resolved = isKnown ? text : dishWithoutRefusal(src, span.start, span.end, knownDish);
   return {
     span,
     dish: tidy(partAtComma ? lastDishClause(resolved) : resolved),
@@ -1388,7 +1508,7 @@ export function parseSpokenPlanResult(
       // "rice" — the dal was refused, not eaten. And when nothing is left
       // in front of the refusal, the meal itself was refused, so the text
       // before the meal word is NOT tried as a dish.
-      const beforeRefusal = afterPre ? null : dishBeforeRefusal(segAfter);
+      const beforeRefusal = afterPre ? null : dishBeforeRefusal(src, after, nextAt, knownDish);
       if (afterPre) {
         // The text behind the connector, up to the comma that parts the two
         // dishes.
@@ -1419,7 +1539,9 @@ export function parseSpokenPlanResult(
         // whole, so the biryani was dropped for the same reason.
         const span: Span = { start: prevEnd, end: mark.at };
         const isKnown = namesKnownDish(src.slice(span.start, span.end), knownDish);
-        const afterClause = isKnown ? null : dishAfterLeadingRefusal(segBefore);
+        const afterClause = isKnown
+          ? null
+          : dishAfterLeadingRefusal(src, prevEnd, mark.at, knownDish);
         // The stretch in front of the meal word can hold TWO dishes, and the
         // meal word belongs to the last clause of them — "masala dosa,
         // biryani dinner" is the biryani. See `lastDishClause`.
@@ -1524,6 +1646,18 @@ export function parseSpokenPlanResult(
     );
     if (insideADishName) continue;
 
+    // The meal whose word FOLLOWS the refusal.
+    //
+    // WHY IT IS WORKED OUT HERE: the clause below has to know where the DISH
+    // in front of that meal ends, and the dish ends at the meal word.
+    //
+    // WHY THERE MAY BE NO SUCH MEAL: the text held no meal word at all — "no
+    // dal" on its own. Then the clause runs to the end of what was said,
+    // which is where the dish ends too. That refusal is not thrown away: it
+    // names a dish and no meal, so it is about every meal holding that dish,
+    // and the day is the only thing that knows where that is.
+    const forward = mentions.findIndex((m) => m.at > refusal.at);
+
     // A refusal word that is part of a dish's own NAME is not a refusal — and
     // the name is not always the phrase a MEAL word took.
     //
@@ -1541,16 +1675,12 @@ export function parseSpokenPlanResult(
     //
     // WHY THE CLAUSE AND NOT THE WHOLE SENTENCE: a refusal is about the
     // clause it was said in, and a dish's name is what a clause holds.
-    if (namesKnownDish(clauseOf(src, refusal), knownDish)) continue;
+    const dishEnd =
+      forward >= 0 ? dishCandidateEnd(src, mentions[forward].at) : src.length;
+    if (namesKnownDish(clauseOf(src, refusal, dishEnd), knownDish)) continue;
 
-    // The meal whose word FOLLOWS the refusal.
-    //
-    // WHY THERE MAY BE NO SUCH MEAL: the text held no meal word at all — "no
-    // dal" on its own. That refusal is not thrown away: it names a dish and
-    // no meal, so it is about every meal holding that dish, and the day is
-    // the only thing that knows where that is.
-    const forward = mentions.findIndex((m) => m.at > refusal.at);
-
+    // The dish the refusal names. It is worked out from the text that FOLLOWS
+    // the refusal, and from the text it POINTS BACK at.
     let named = '';
 
     // The meal a refusal that names NO DISH is about.
