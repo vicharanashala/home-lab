@@ -15,9 +15,17 @@
 #   the bridge      is it running the code on disk?
 #   the supervisor  is it running the copy of watchdog.sh on disk?
 #   the link        does the public address answer?
+#   the bundle      is the app the owner is served built from the source?
 #
 # It exits non-zero when the app is not healthy, so it can be used by
 # anything that wants to know.
+#
+# WHY THE BUNDLE IS ONE OF THE FOUR: the bridge is the app's API, and the
+# bundle is the app the owner actually looks at. Nothing rebuilds the
+# bundle — not the supervisor, not the bridge — so a change to the source
+# that never reached a build leaves the owner's link on the old interface
+# while every other check stays green. That is the same false all-clear
+# this check exists to end, on the half of the app nobody was watching.
 #
 # WHY THE OVERRIDES ARE ENV VARS AND NOT FLAGS: the rule has to be testable
 # against a fixture — a fake bridge on a spare port — and a test cannot pass
@@ -32,6 +40,7 @@
 #   HH_SUPERVISOR_SCRIPT    the supervisor script          (watchdog.sh)
 #   HH_SUPERVISOR_STATE     where the supervisor publishes its checksum
 #   HH_PUBLIC_URL           the public address
+#   HH_BUNDLE_ROOT          the checkout whose bundle is served
 set -uo pipefail
 
 # launchd and cron both start with a minimal PATH; node lives in a user-local
@@ -65,6 +74,15 @@ SUPERVISOR_SCRIPT="${HH_SUPERVISOR_SCRIPT:-$ROOT/watchdog.sh}"
 SUPERVISOR_STATE="${HH_SUPERVISOR_STATE:-/tmp/hh_supervisor.checksum}"
 PUBLIC_URL="${HH_PUBLIC_URL:-https://narayana.tailac25b4.ts.net}"
 
+# The checkout whose bundle the owner is served.
+#
+# WHY IT IS A SEPARATE VARIABLE: the bundle is built from a checkout and
+# served out of it, and the check has to look at the SAME checkout the app
+# was built from. A check run against a copy must say so rather than quietly
+# reading the real app's bundle — the same reason the other paths here are
+# overridable.
+BUNDLE_ROOT="${HH_BUNDLE_ROOT:-$ROOT}"
+
 # The launchd agent that runs the supervisor.
 #
 # WHY THE LABEL IS A VARIABLE AND NOT A CONSTANT BURIED IN THE TEXT: the label
@@ -76,6 +94,7 @@ SUPERVISOR_LABEL="${HH_SUPERVISOR_LABEL:-com.homehub.supervisor}"
 bridge_state="$(live_bridge_state "$BRIDGE_PORT" "$BRIDGE_DIR")"
 supervisor_state="$(live_supervisor_state "$SUPERVISOR_SCRIPT" "$SUPERVISOR_STATE")"
 link_state="$(live_link_state "$PUBLIC_URL")"
+bundle_state="$(live_bundle_state "$BUNDLE_ROOT")"
 
 say() { printf '%s\n' "$*"; }
 
@@ -84,6 +103,7 @@ say ""
 say "   bridge      $bridge_state   (127.0.0.1:$BRIDGE_PORT)"
 say "   supervisor  $supervisor_state   ($SUPERVISOR_SCRIPT)"
 say "   link        $link_state   ($PUBLIC_URL)"
+say "   bundle      $bundle_state   ($BUNDLE_ROOT/dist vs $BUNDLE_ROOT/src)"
 say ""
 
 case "$bridge_state" in
@@ -117,6 +137,20 @@ case "$supervisor_state" in
     ;;
 esac
 
+case "$bundle_state" in
+  stale)
+    say "   the bundle the owner is served is OLDER than the source — the link is"
+    say "   running an interface that is behind the code in the repository"
+    ;;
+  missing)
+    say "   there is no bundle at all — the link has nothing to serve"
+    ;;
+  unknown)
+    say "   the bundle's state could not be read — the app cannot be told apart"
+    say "   from one that is running an old interface"
+    ;;
+esac
+
 # How to put the supervisor back onto the copy of watchdog.sh on disk.
 #
 # WHY THIS IS HERE AND NOT ONLY IN A COMMIT MESSAGE: this check is what a
@@ -140,8 +174,27 @@ case "$supervisor_state" in
     ;;
 esac
 
+# How to put the owner's link back onto the current code.
+#
+# WHY IT IS HERE AND NOT ONLY IN A COMMIT MESSAGE: the bundle is the half of
+# the app the owner actually looks at, and NOTHING rebuilds it — the
+# supervisor restarts the bridge, starts tailscale and the voice daemon, and
+# never runs a build. So the command is the whole recovery, and it is the one
+# part of it that cannot be worked out from the message.
+#
+# WHY IT IS NOT RUN FROM HERE: the check only LOOKS at the app. A health
+# check that rebuilds the thing it is checking is a health check that cannot
+# be trusted to say the app is broken.
+case "$bundle_state" in
+  stale | missing)
+    say ""
+    say "   to put the owner's link back onto the current code:"
+    say "     npm run build"
+    ;;
+esac
+
 say ""
-verdict="$(live_verdict "$bridge_state" "$supervisor_state" "$link_state")"
+verdict="$(live_verdict "$bridge_state" "$supervisor_state" "$link_state" "$bundle_state")"
 say "   $verdict"
 
 case "$verdict" in

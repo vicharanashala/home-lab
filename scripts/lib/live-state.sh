@@ -175,7 +175,121 @@ live_link_state() {
   esac
 }
 
-# live_verdict <bridge-state> <supervisor-state> <link-state>
+# live_bundle_state <root>
+#
+# What the BUNDLE the owner is served is doing:
+#
+#   current      the bundle was built after the last change to the source
+#   stale        the source is newer than the bundle
+#   missing      there is no bundle at all
+#   unknown      the source cannot be read, so nothing can be compared
+#
+# WHY THE BUNDLE IS ASKED ABOUT AND NOT ONLY THE BRIDGE: the bridge is the
+# app's API. The bundle is the app the owner actually LOOKS AT — the pages,
+# the scripts, the whole interface — and the bridge serves it as static files
+# out of dist/.
+#
+# WHY NOTHING REBUILDS IT: the supervisor restarts the bridge when the
+# bridge's own code changes, and it starts tailscale and the voice daemon.
+# It never runs a build. So the bundle stays exactly as it was left, and the
+# only thing that puts a change in front of the owner is an agent running
+# `npm run build`.
+#
+# That is the 2026-10-24 incident on the other half of the app. The bridge
+# ran code from 14:34 while the code on disk was from 19:18, and every check
+# stayed green. A change to src/ that never reached a build does the same
+# thing to the interface, and nothing was able to see it: this check asks the
+# BRIDGE whether it is on the code on disk, and said nothing about the half
+# of the app the owner is actually looking at.
+#
+# WHY THE BUILD IS MARKED BY dist/index.html AND NOT BY THE ASSETS: vite
+# writes the assets first and index.html last, so index.html is the last
+# thing written and the one file whose time says when the build finished. An
+# asset that was written earlier is not evidence of anything.
+#
+# WHY THE INPUTS ARE THE WHOLE OF src/ AND public/ AND NOT JUST THE FILES
+# THAT WERE CHANGED: a rule that watched one file would miss every other
+# one, and a rule that watched only TypeScript would miss the stylesheet,
+# the icon and the manifest — all of which the owner sees.
+#
+# WHY THE CONFIG FILES ARE INPUTS TOO: a changed tailwind config produces
+# different CSS, and a changed vite config produces a different bundle. Both
+# are invisible to the owner's eye until the bundle that uses them is built.
+#
+# WHY "missing" IS NOT "current": a checkout with no bundle serves the
+# owner nothing at all, and the link answers 500. That is not an app that is
+# up to date.
+#
+# WHY "unknown" IS NEVER "current": the comparison needs two numbers — the
+# time the source was last changed and the time the bundle was built. With
+# the source missing there is nothing to compare, and "current" would be a
+# guess dressed up as a measurement.
+live_bundle_state() {
+  local root="$1"
+  local build="$root/dist/index.html"
+
+  # The source has to be there for the comparison to mean anything.
+  [ -d "$root/src" ] || { echo unknown; return 0; }
+
+  if [ ! -f "$build" ]; then
+    echo missing
+    return 0
+  fi
+
+  local build_mtime
+  build_mtime="$(stat -f %m "$build" 2>/dev/null)"
+  case "$build_mtime" in
+    '' | *[!0-9]*) echo unknown; return 0 ;;
+  esac
+
+  # The newest of everything that goes into the bundle.
+  local newest=0 path mtime
+  for path in \
+    "$root/src" \
+    "$root/public" \
+    "$root/index.html" \
+    "$root/vite.config.ts" \
+    "$root/tailwind.config.js" \
+    "$root/postcss.config.js"; do
+    [ -e "$path" ] || continue
+    mtime="$(bundle_newest_mtime "$path")"
+    case "$mtime" in
+      '' | *[!0-9]*) echo unknown; return 0 ;;
+    esac
+    [ "$mtime" -gt "$newest" ] && newest="$mtime"
+  done
+
+  # Nothing to compare against — the source exists but holds no file whose
+  # time could be read.
+  [ "$newest" -gt 0 ] || { echo unknown; return 0; }
+
+  if [ "$newest" -gt "$build_mtime" ]; then
+    echo stale
+    return 0
+  fi
+  echo current
+  return 0
+}
+
+# bundle_newest_mtime <path>
+#
+# The newest mtime under a path — a file's own time, or the newest time of
+# any file under a directory.
+#
+# WHY THE DIRECTORY IS WALKED RATHER THAN THE DIRECTORY'S OWN TIME: a
+# directory's mtime changes when an entry is added or removed, not when a
+# file inside it is edited. A rule that read the directory would keep saying
+# the bundle is current while a source file was being changed under it.
+bundle_newest_mtime() {
+  local path="$1"
+  if [ -d "$path" ]; then
+    find "$path" -type f -exec stat -f %m {} + 2>/dev/null | sort -n | tail -1
+  else
+    stat -f %m "$path" 2>/dev/null
+  fi
+}
+
+# live_verdict <bridge-state> <supervisor-state> <link-state> <bundle-state>
 #
 # The one word that says whether the app is healthy: "healthy", or
 # "unhealthy — <what is wrong>".
@@ -208,28 +322,46 @@ live_link_state() {
 # thing that made the app unrecoverable was the thing the report left out.
 #
 # MEASURED ON THE LIVE MACHINE (2026-10-25)
-#   live_verdict stale unpublished reachable  ->  "unhealthy — the bridge is stale"
-#   live_verdict stale current    reachable  ->  "unhealthy — the bridge is stale"
+#   live_verdict stale unpublished reachable current ->  "unhealthy — the bridge is stale and the supervisor is unpublished"
+#   live_verdict stale current    reachable current ->  "unhealthy — the bridge is stale"
 #
 # Two different apps, one report. The verdict now names both when both are
 # wrong, so the line an owner reads on a phone cannot be the same line for an
 # app that can recover and an app that cannot.
+# WHY EVERY PROBLEM IS NAMED, NOT JUST THE FIRST: the report is read on a
+# phone by somebody who has to decide what to do about it, and a verdict that
+# names one problem out of two reads exactly like a verdict about an app with
+# one problem. So the problems are collected and named together.
+#
+# WHY THE BUNDLE IS ONE OF THEM: the bundle is the half of the app the owner
+# actually looks at, and nothing rebuilds it on its own. A verdict that said
+# "healthy" while the owner's link was serving an interface hours behind the
+# repository would be the false all-clear this whole check exists to end.
+#
+# WHY A MISSING ARGUMENT IS NOT "CURRENT": the verdict fails closed. A caller
+# that forgets to ask about the bundle gets "the bundle is " in the report,
+# which is not healthy — the same way an unreadable state is not healthy.
 live_verdict() {
-  local bridge="$1" supervisor="$2" link="$3"
-  if [ "$bridge" != "current" ] && [ "$supervisor" != "current" ]; then
-    echo "unhealthy — the bridge is $bridge and the supervisor is $supervisor"
-    return 0
-  fi
+  local bridge="$1" supervisor="$2" link="$3" bundle="$4"
+  local problems="" sep=""
   if [ "$bridge" != "current" ]; then
-    echo "unhealthy — the bridge is $bridge"
-    return 0
+    problems="the bridge is $bridge"
+    sep=" and "
   fi
   if [ "$supervisor" != "current" ]; then
-    echo "unhealthy — the supervisor is $supervisor"
-    return 0
+    problems="${problems}${sep}the supervisor is $supervisor"
+    sep=" and "
   fi
   if [ "$link" != "reachable" ]; then
-    echo "unhealthy — the link is $link"
+    problems="${problems}${sep}the link is $link"
+    sep=" and "
+  fi
+  if [ "$bundle" != "current" ]; then
+    problems="${problems}${sep}the bundle is $bundle"
+    sep=" and "
+  fi
+  if [ -n "$problems" ]; then
+    echo "unhealthy — $problems"
     return 0
   fi
   echo healthy

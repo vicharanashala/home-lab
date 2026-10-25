@@ -25,7 +25,7 @@
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +78,19 @@ function supervisorState(script, publishedFile) {
 function bridgeState(port, dir) {
   try {
     return sh(`live_bridge_state ${port} "${dir}"`);
+  } catch (err) {
+    return `error: ${err.message}`;
+  }
+}
+
+/**
+ * Ask the rule what state the BUNDLE the owner is served is in.
+ *
+ * @param root the checkout the bundle belongs to
+ */
+function bundleState(root) {
+  try {
+    return sh(`live_bundle_state "${root}"`);
   } catch (err) {
     return `error: ${err.message}`;
   }
@@ -238,36 +251,143 @@ try {
     `state=${bridgeState(port, join(work, 'missing-bridge-dir'))}`,
   );
 
+  console.log('\nthe bundle: is the app the owner is served built from the code on disk?');
+  //
+  // WHY THE BUNDLE IS ASKED ABOUT AT ALL
+  //
+  // The bridge is the app's API. The BUNDLE is the app the owner actually
+  // looks at — the pages, the scripts, the whole interface — and it is
+  // served from dist/ as static files. Nothing rebuilds it: the supervisor
+  // restarts the bridge when bridge/*.mjs changes, and starts tailscale and
+  // the voice daemon, but it never runs a build. So the bundle stays exactly
+  // as it was left until an agent runs `npm run build`.
+  //
+  // That is the 2026-10-24 incident again, on the other half of the app. The
+  // bridge ran code from 14:34 while the code on disk was from 19:18, and
+  // every check stayed green. The same is true of the bundle, and nothing
+  // asked it: a committed change to src/ that never reached a build left the
+  // owner's link serving the old interface, and `npm run check:live` said
+  // "healthy" — a false all-clear about half the app.
+  const bundleRoot = join(work, 'bundle');
+  mkdirSync(join(bundleRoot, 'src'), { recursive: true });
+  mkdirSync(join(bundleRoot, 'public'), { recursive: true });
+  mkdirSync(join(bundleRoot, 'dist'), { recursive: true });
+  const bundleSource = join(bundleRoot, 'src', 'App.tsx');
+  const bundlePublic = join(bundleRoot, 'public', 'icon.svg');
+  const bundleHtml = join(bundleRoot, 'index.html');
+  const bundleConfig = join(bundleRoot, 'vite.config.ts');
+  const bundleBuild = join(bundleRoot, 'dist', 'index.html');
+  writeFileSync(bundleSource, 'export const App = 1;\n');
+  writeFileSync(bundlePublic, '<svg/>\n');
+  writeFileSync(bundleHtml, '<div id="root"></div>\n');
+  writeFileSync(bundleConfig, 'export default {};\n');
+  writeFileSync(bundleBuild, '<div id="root"></div>\n');
+
+  // The times are set by hand rather than waited for, so the test says which
+  // side is newer instead of hoping the clock agrees.
+  //
+  // THREE TIMES, NOT TWO: the rule asks "is the source NEWER than the
+  // build", and two times cannot say both "older" and "newer" — a tie is
+  // "not newer", so a change made at the same second as the build would read
+  // as current. So the build sits in the middle: the source can be put on
+  // either side of it.
+  const OLD = new Date('2026-01-01T00:00:00Z');
+  const MID = new Date('2026-06-01T00:00:00Z');
+  const NEW = new Date('2026-12-01T00:00:00Z');
+  for (const f of [bundleSource, bundlePublic, bundleHtml, bundleConfig]) {
+    utimesSync(f, OLD, OLD);
+  }
+  utimesSync(bundleBuild, MID, MID);
+
+  check(
+    'a bundle built after the source is current',
+    bundleState(bundleRoot) === 'current',
+    `state=${bundleState(bundleRoot)}`,
+  );
+
+  // A change to src/ that never reached a build. The owner's link keeps
+  // serving the old interface, and nothing else in the repo can see it.
+  utimesSync(bundleSource, NEW, NEW);
+  check(
+    'a bundle older than the source is stale',
+    bundleState(bundleRoot) === 'stale',
+    `state=${bundleState(bundleRoot)}`,
+  );
+
+  // The same for a file that is not TypeScript: the icon, the manifest and
+  // the stylesheet all go into the bundle too.
+  utimesSync(bundleSource, OLD, OLD);
+  utimesSync(bundlePublic, NEW, NEW);
+  check(
+    'a bundle older than the public files is stale',
+    bundleState(bundleRoot) === 'stale',
+    `state=${bundleState(bundleRoot)}`,
+  );
+  utimesSync(bundlePublic, OLD, OLD);
+
+  // And for the build configuration: a changed tailwind config rebuilds
+  // different CSS, so it is an input to the bundle like any other.
+  utimesSync(bundleConfig, NEW, NEW);
+  check(
+    'a bundle older than the build config is stale',
+    bundleState(bundleRoot) === 'stale',
+    `state=${bundleState(bundleRoot)}`,
+  );
+  utimesSync(bundleConfig, OLD, OLD);
+
+  // No build at all. The link serves nothing, which is not "current".
+  rmSync(bundleBuild, { force: true });
+  check(
+    'a bundle that was never built is missing, never current',
+    bundleState(bundleRoot) === 'missing',
+    `state=${bundleState(bundleRoot)}`,
+  );
+
+  // A checkout with no source in it. The comparison cannot be made, so the
+  // answer is "unknown" — never "current".
+  const emptyRoot = join(work, 'empty-bundle');
+  mkdirSync(join(emptyRoot, 'dist'), { recursive: true });
+  writeFileSync(join(emptyRoot, 'dist', 'index.html'), '<div id="root"></div>\n');
+  check(
+    'a bundle whose source cannot be read is unknown, never current',
+    bundleState(emptyRoot) === 'unknown',
+    `state=${bundleState(emptyRoot)}`,
+  );
+
   console.log('\nthe verdict: nothing unknown is ever healthy');
-  const verdict = (b, s, l) => sh(`live_verdict ${b} ${s} ${l}`);
-  check('everything current is healthy', verdict('current', 'current', 'reachable') === 'healthy');
+  // WHY EVERY CALL STATES ALL FOUR: the verdict is a classifier that fails
+  // closed, so a dimension left out is a dimension that reads as "not
+  // healthy". A helper that filled in the fourth for the caller would let a
+  // new case pass without the bundle ever being asked about.
+  const verdict = (b, s, l, u) => sh(`live_verdict ${b} ${s} ${l} ${u}`);
+  check('everything current is healthy', verdict('current', 'current', 'reachable', 'current') === 'healthy');
   check(
     'a stale bridge is not healthy',
-    verdict('stale', 'current', 'reachable').startsWith('unhealthy'),
+    verdict('stale', 'current', 'reachable', 'current').startsWith('unhealthy'),
   );
   check(
     'a down bridge is not healthy',
-    verdict('down', 'current', 'reachable').startsWith('unhealthy'),
+    verdict('down', 'current', 'reachable', 'current').startsWith('unhealthy'),
   );
   check(
     'a bridge whose state cannot be read is not healthy',
-    verdict('unknown', 'current', 'reachable').startsWith('unhealthy'),
+    verdict('unknown', 'current', 'reachable', 'current').startsWith('unhealthy'),
   );
   check(
     'a supervisor that cannot notice changes is not healthy',
-    verdict('current', 'unpublished', 'reachable').startsWith('unhealthy'),
+    verdict('current', 'unpublished', 'reachable', 'current').startsWith('unhealthy'),
   );
   check(
     'a supervisor whose publisher is gone is not healthy',
-    verdict('current', 'orphaned', 'reachable').startsWith('unhealthy'),
+    verdict('current', 'orphaned', 'reachable', 'current').startsWith('unhealthy'),
   );
   check(
     'an unreadable state is not healthy',
-    verdict('current', 'unknown', 'reachable').startsWith('unhealthy'),
+    verdict('current', 'unknown', 'reachable', 'current').startsWith('unhealthy'),
   );
   check(
     'an unreachable link is not healthy',
-    verdict('current', 'current', 'unreachable').startsWith('unhealthy'),
+    verdict('current', 'current', 'unreachable', 'current').startsWith('unhealthy'),
   );
 
   // WHY THE VERDICT HAS TO NAME BOTH WHEN BOTH ARE WRONG: the bridge is
@@ -283,21 +403,59 @@ try {
   // the app unrecoverable was the thing the report left out.
   check(
     'a stale bridge with a broken supervisor names both',
-    verdict('stale', 'unpublished', 'reachable').includes('bridge is stale') &&
-      verdict('stale', 'unpublished', 'reachable').includes('supervisor is unpublished'),
-    verdict('stale', 'unpublished', 'reachable'),
+    verdict('stale', 'unpublished', 'reachable', 'current').includes('bridge is stale') &&
+      verdict('stale', 'unpublished', 'reachable', 'current').includes('supervisor is unpublished'),
+    verdict('stale', 'unpublished', 'reachable', 'current'),
   );
   check(
     'a down bridge with a broken supervisor names both',
-    verdict('down', 'orphaned', 'reachable').includes('bridge is down') &&
-      verdict('down', 'orphaned', 'reachable').includes('supervisor is orphaned'),
-    verdict('down', 'orphaned', 'reachable'),
+    verdict('down', 'orphaned', 'reachable', 'current').includes('bridge is down') &&
+      verdict('down', 'orphaned', 'reachable', 'current').includes('supervisor is orphaned'),
+    verdict('down', 'orphaned', 'reachable', 'current'),
   );
   check(
     'a stale bridge with a healthy supervisor says only about the bridge',
-    verdict('stale', 'current', 'reachable').includes('bridge is stale') &&
-      !verdict('stale', 'current', 'reachable').includes('supervisor'),
-    verdict('stale', 'current', 'reachable'),
+    verdict('stale', 'current', 'reachable', 'current').includes('bridge is stale') &&
+      !verdict('stale', 'current', 'reachable', 'current').includes('supervisor'),
+    verdict('stale', 'current', 'reachable', 'current'),
+  );
+
+  // WHY THE BUNDLE IS IN THE VERDICT AND NOT ONLY IN THE REPORT: the report
+  // is read by a person who has to know what to do about it. A verdict that
+  // says "healthy" while the owner's link is serving an interface that is
+  // hours behind the repository is the false all-clear this whole check
+  // exists to end — the owner reads "healthy" and stops looking.
+  check(
+    'a stale bundle is not healthy',
+    verdict('current', 'current', 'reachable', 'stale').startsWith('unhealthy'),
+    verdict('current', 'current', 'reachable', 'stale'),
+  );
+  check(
+    'a bundle that was never built is not healthy',
+    verdict('current', 'current', 'reachable', 'missing').startsWith('unhealthy'),
+    verdict('current', 'current', 'reachable', 'missing'),
+  );
+  check(
+    'a bundle whose state cannot be read is not healthy',
+    verdict('current', 'current', 'reachable', 'unknown').startsWith('unhealthy'),
+    verdict('current', 'current', 'reachable', 'unknown'),
+  );
+  check(
+    'a stale bundle is named in the verdict',
+    verdict('current', 'current', 'reachable', 'stale').includes('bundle is stale'),
+    verdict('current', 'current', 'reachable', 'stale'),
+  );
+  check(
+    'a stale bundle with a stale bridge names both',
+    verdict('stale', 'current', 'reachable', 'stale').includes('bridge is stale') &&
+      verdict('stale', 'current', 'reachable', 'stale').includes('bundle is stale'),
+    verdict('stale', 'current', 'reachable', 'stale'),
+  );
+  check(
+    'a stale bundle with a healthy bridge says only about the bundle',
+    verdict('current', 'current', 'reachable', 'stale').includes('bundle is stale') &&
+      !verdict('current', 'current', 'reachable', 'stale').includes('bridge'),
+    verdict('current', 'current', 'reachable', 'stale'),
   );
 
   console.log('\nthe check script, end to end, against the fake bridge');
@@ -305,6 +463,57 @@ try {
   writeFileSync(fakeSupervisor, '#!/bin/bash\necho supervisor\n');
   const fakePublished = join(work, 'live-published.checksum');
   writeFileSync(fakePublished, `${checksumOf(fakeSupervisor)} ${process.pid}\n`);
+
+  // Two bundles: one built after its source, and one whose source was changed
+  // after the build. The check has to tell them apart, because that is the
+  // whole difference between the owner's link running today's code and
+  // running yesterday's.
+  const makeBundle = (name, builtAfter) => {
+    const root = join(work, name);
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(join(root, 'public'), { recursive: true });
+    mkdirSync(join(root, 'dist'), { recursive: true });
+    const source = join(root, 'src', 'App.tsx');
+    const build = join(root, 'dist', 'index.html');
+    writeFileSync(source, 'export const App = 1;\n');
+    writeFileSync(join(root, 'public', 'icon.svg'), '<svg/>\n');
+    writeFileSync(join(root, 'index.html'), '<div id="root"></div>\n');
+    writeFileSync(join(root, 'vite.config.ts'), 'export default {};\n');
+    writeFileSync(build, '<div id="root"></div>\n');
+    // EVERY input gets the same time, not only the TypeScript file: the
+    // stylesheet, the icon, the page and the build config all go into the
+    // bundle, and a fixture that left them at "now" would be measuring the
+    // clock instead of the rule.
+    //
+    // AND THE BUILD GOES ON THE OTHER SIDE OF THE INPUTS: a bundle built
+    // BEFORE the source is stale, and one built AFTER it is current. The
+    // two times have to differ, or "newer" is a tie and the rule is right
+    // to say nothing.
+    const inputTime = builtAfter ? OLD : NEW;
+    const buildTime = builtAfter ? NEW : OLD;
+    for (const f of [source, join(root, 'public', 'icon.svg'), join(root, 'index.html'), join(root, 'vite.config.ts')]) {
+      utimesSync(f, inputTime, inputTime);
+    }
+    utimesSync(build, buildTime, buildTime);
+    return root;
+  };
+  const freshBundleRoot = makeBundle('bundle-fresh', true);
+  const staleBundleRoot = makeBundle('bundle-stale', false);
+
+  /**
+   * The verdict line of a check run — the last thing the report says.
+   *
+   * WHY NOT A SUBSTRING: "healthy" is inside "unhealthy", so a test that
+   * asks whether the output CONTAINS "healthy" passes for an app that said
+   * the opposite. The line has to be read whole.
+   */
+  const verdictLine = (out) =>
+    out
+      .trim()
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .pop();
 
   const runCheck = (extra = {}) => {
     try {
@@ -317,6 +526,12 @@ try {
           HH_SUPERVISOR_SCRIPT: fakeSupervisor,
           HH_SUPERVISOR_STATE: fakePublished,
           HH_PUBLIC_URL: `http://127.0.0.1:${port}`,
+          // WHY THE BUNDLE IS POINTED AT A FIXTURE AND NOT LEFT AT THE REAL
+          // REPOSITORY: the check would otherwise read the developer's own
+          // checkout, and its answer would depend on whether somebody happened
+          // to be editing a source file at that moment. The test has to say
+          // what the app is doing, not what the working tree is doing.
+          HH_BUNDLE_ROOT: freshBundleRoot,
           ...extra,
         },
       });
@@ -329,8 +544,8 @@ try {
   const current = runCheck();
   check(
     'a live app on the current code passes the check',
-    current.code === 0 && current.out.includes('healthy'),
-    `exit=${current.code}`,
+    current.code === 0 && verdictLine(current.out) === 'healthy',
+    `exit=${current.code} verdict=${verdictLine(current.out)}`,
   );
 
   // The check that finds the supervisor out of date has to say HOW to put it
@@ -356,6 +571,29 @@ try {
     'and the report names the command that puts it back',
     unpublished.out.includes('launchctl kickstart -k gui/$(id -u)/com.homehub.supervisor'),
     'the command has to name the launchd agent that runs the supervisor',
+  );
+
+  // The bundle the owner is served. Nothing rebuilds it on its own — the
+  // supervisor restarts the bridge, starts tailscale and the voice daemon,
+  // and never runs a build — so a change to src/ that never reached a build
+  // leaves the owner's link on the old interface while every other check
+  // stays green.
+  console.log('\nand the check reports a bundle that is behind the source');
+  const staleBundle = runCheck({ HH_BUNDLE_ROOT: staleBundleRoot });
+  check(
+    'a bundle older than the source is reported as stale',
+    staleBundle.out.includes('bundle is stale'),
+    `exit=${staleBundle.code}`,
+  );
+  check(
+    'and the check does not call that app healthy',
+    staleBundle.code !== 0 && verdictLine(staleBundle.out) !== 'healthy',
+    `exit=${staleBundle.code} verdict=${verdictLine(staleBundle.out)}`,
+  );
+  check(
+    'and the report names the command that rebuilds it',
+    staleBundle.out.includes('npm run build'),
+    'the command has to be there — the bundle is not rebuilt by anything',
   );
 
   // The file time has one-second resolution, so the new code is written in a
