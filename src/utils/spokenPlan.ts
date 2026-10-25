@@ -206,19 +206,38 @@ function dishBeforeRefusal(text: string): string | null {
  * comma in the meal loop below. A refusal clause with no comma after it runs
  * to the end of the stretch, and then the stretch holds no dish at all.
  *
+ * WHY EVERY LEADING REFUSAL IS STEPPED OVER, AND NOT ONLY THE FIRST: a
+ * stretch may hold more than one refusal clause — "no dal, no rice, biryani"
+ * refuses two dishes and asks for a third. Stepping over the first clause
+ * alone left the text beginning with the SECOND refusal word ("no rice,
+ * biryani"), and the rule that keeps a refused dish out of the plan then
+ * threw the BIRYANI out with it. The biryani the user said out loud vanished
+ * without a trace: the plan held no biryani, the shopping list bought no
+ * biryani, and nothing anywhere said the biryani had been lost.
+ *
  * @param text the stretch of speech
  */
 function dishAfterLeadingRefusal(text: string): string | null {
-  const m = text.match(REFUSAL_ANYWHERE_RE);
-  if (!m) return null;
-  // Something usable comes before the refusal, so the dish is in front of it
-  // and the other rule answers.
-  if (tidy(m[1])) return null;
-  const tail = text.slice(m[0].length);
-  const comma = tail.indexOf(',');
-  if (comma < 0) return null;
-  const after = tail.slice(comma + 1);
-  return tidy(after) ? after : null;
+  // The clause being read. Each step over a refusal makes it SHORTER, so the
+  // walk cannot run for ever.
+  let clause = text;
+  for (;;) {
+    const m = clause.match(REFUSAL_ANYWHERE_RE);
+    if (!m) return null;
+    // Something usable comes before the refusal, so the dish is in front of it
+    // and the other rule answers.
+    if (tidy(m[1])) return null;
+    const tail = clause.slice(m[0].length);
+    const comma = tail.indexOf(',');
+    if (comma < 0) return null;
+    const after = tail.slice(comma + 1);
+    if (!tidy(after)) return null;
+    // Does the clause just taken open with ANOTHER refusal? "no dal, no
+    // rice, biryani" — two refusals, and then the dish the user asked for.
+    const opens = after.match(REFUSAL_ANYWHERE_RE);
+    if (!opens) return after;
+    clause = after;
+  }
 }
 
 /**
@@ -1187,7 +1206,16 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
     } else {
       // The refusal came after the last meal word, so it names the dish in
       // front of it — "dal for dinner, no dal".
-      named = dishOf(src.slice(refusal.end));
+      //
+      // WHY IT STOPS AT THE COMMA, LIKE THE OTHER TWO BRANCHES: a comma ends
+      // the clause it is in, and a refusal is about the clause it was said in.
+      // "no dal, biryani" refuses the dal and asks for the biryani — two
+      // clauses. The refusal was naming "dal biryani", the whole rest of the
+      // sentence, and that matches no dish on the day: NOTHING was emptied.
+      // The dal the user had refused stayed on the plan, and the shopping
+      // list buys the plan, so the list bought the very dish the user had
+      // refused — while the sheet said the refusal had been heard.
+      named = dishBetween(src, refusal.end, src.length);
     }
 
     // The meal that loses the dish.
