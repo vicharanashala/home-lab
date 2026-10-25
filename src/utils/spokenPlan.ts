@@ -189,6 +189,39 @@ function dishBeforeRefusal(text: string): string | null {
 }
 
 /**
+ * The part of a stretch of speech that comes AFTER a refusal clause which
+ * OPENS the stretch, or null when there is no such clause.
+ *
+ * "no dal, biryani" is "biryani" — the dal was refused and the biryani was
+ * asked for, and they are two clauses. The rule that takes the text BEFORE a
+ * refusal cannot answer this one, because there is nothing in front of the
+ * refusal to take.
+ *
+ * WHY ONLY WHEN THE REFUSAL OPENS THE STRETCH: "rice, no dal" is "rice" — the
+ * dish comes first there, and `dishBeforeRefusal` already answers it. Reaching
+ * past the refusal as well would throw the rice away.
+ *
+ * WHY THE CLAUSE ENDS AT A COMMA: a comma is the only sign in this parser
+ * that two things were said where one meal word stands — see the note on the
+ * comma in the meal loop below. A refusal clause with no comma after it runs
+ * to the end of the stretch, and then the stretch holds no dish at all.
+ *
+ * @param text the stretch of speech
+ */
+function dishAfterLeadingRefusal(text: string): string | null {
+  const m = text.match(REFUSAL_ANYWHERE_RE);
+  if (!m) return null;
+  // Something usable comes before the refusal, so the dish is in front of it
+  // and the other rule answers.
+  if (tidy(m[1])) return null;
+  const tail = text.slice(m[0].length);
+  const comma = tail.indexOf(',');
+  if (comma < 0) return null;
+  const after = tail.slice(comma + 1);
+  return tidy(after) ? after : null;
+}
+
+/**
  * The words that can sit between a refusal and the meal word it refuses.
  *
  * "don't want lunch dal" IS a refusal of the lunch, but "want" is in the
@@ -736,11 +769,26 @@ function isMeaningful(s: string): boolean {
  * — and not on the paths that go through a connector, which is why the same
  * sentence was split correctly with a connector removed ("lunch rice, no
  * dal") and not with one ("rice, no dal for dinner").
+ *
+ * WHY THE TEXT AFTER THE REFUSAL IS TAKEN WHEN NOTHING IS IN FRONT OF IT: a
+ * refusal that OPENS a stretch is a clause of its own, and the clause after
+ * it may hold the dish the user asked for. "no dal, biryani for dinner" is
+ * the dal refused and the biryani asked for.
+ *
+ * It was filed as nothing at all. The stretch in front of the dinner was "no
+ * dal, biryani", and with the refusal's own clause left in, the dish began
+ * with a refusal word — so the rule that keeps a refused dish out of the plan
+ * threw the BIRYANI out with it. The user asked for biryani and the app
+ * dropped it: the plan held no biryani, the shopping list bought no biryani,
+ * and nothing anywhere said the biryani had been lost.
  */
 function dishWithoutRefusal(text: string): string {
   const before = dishBeforeRefusal(text);
   if (before === null) return text;
-  return tidy(before) ? before : text;
+  if (tidy(before)) return before;
+  // Nothing usable in front of the refusal, so the refusal opens the stretch.
+  const after = dishAfterLeadingRefusal(text);
+  return after === null ? text : after;
 }
 
 /**
@@ -973,7 +1021,14 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
       if (!isMeaningful(dish) && !hasPrev && beforeRefusal === null) {
         // The first meal word, and nothing behind it either: the dish was
         // spoken before the meal word with no connector to say so.
-        dish = tidy(segBefore);
+        //
+        // WHY THE REFUSAL IS TAKEN OUT OF IT: "no dal, biryani dinner" says
+        // the same thing as "no dal, biryani for dinner" — the dal is refused
+        // and the biryani is the dinner. With the refusal's own clause still
+        // in the dish, the dish began with a refusal word and was thrown out
+        // whole, so the biryani was dropped for the same reason.
+        const afterClause = dishAfterLeadingRefusal(segBefore);
+        dish = tidy(afterClause === null ? segBefore : afterClause);
         tookRight = false;
       }
     }
