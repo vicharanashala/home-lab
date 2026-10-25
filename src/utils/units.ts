@@ -180,6 +180,45 @@ export function convertScoop(
   return null; // count- or unknown-dimension stock can't absorb a scoop
 }
 
+/**
+ * Convert a base amount from one dimension into another, by density.
+ *
+ * WHY THIS EXISTS: a spoon is not a gram, and the two sides of a deduction
+ * can end up in different dimensions — a shelf measured in spoons against a
+ * recipe written in grams. The density of the ingredient is the only honest
+ * bridge between them.
+ *
+ * WHY A SPOON AND A MILLILITRE ARE THE SAME THING HERE: both are measured in
+ * millilitres (`SCOOP` counts a cup as 240 ml), so a "cup" and a "250 ml"
+ * are the same dimension wearing different labels. Treating them as
+ * different would refuse to compare two amounts that are already in the
+ * same unit.
+ *
+ * @returns the amount in the target dimension, or null when the two
+ *          dimensions cannot be bridged (a count is not a mass).
+ */
+export function convertBase(
+  value: number,
+  from: UnitDimension,
+  to: UnitDimension,
+  ingredientName: string,
+): number | null {
+  if (from === to) return value;
+
+  const fromIsVolume = from === 'vol' || from === 'scoop';
+  const toIsVolume = to === 'vol' || to === 'scoop';
+
+  // Both sides are millilitres already — only the label differs.
+  if (fromIsVolume && toIsVolume) return value;
+  if (fromIsVolume && to === 'mass') return value * densityFor(ingredientName);
+  if (from === 'mass' && toIsVolume) {
+    const density = densityFor(ingredientName);
+    if (!Number.isFinite(density) || density === 0) return null;
+    return value / density;
+  }
+  return null; // a count cannot be turned into a mass, or the other way round
+}
+
 /** Convert a value (in base unit) back to a human-readable display unit. */
 export function fromBaseUnit(value: number, dimension: UnitDimension): { quantity: number; unit: string } {
   if (dimension === 'mass') {
@@ -204,6 +243,36 @@ function round(n: number, decimals: number): number {
 /** Pick a nice display unit for a base-unit quantity (same shape as `fromBaseUnit`). */
 export function formatBaseValue(value: number, dimension: UnitDimension): string {
   const { quantity, unit } = fromBaseUnit(value, dimension);
+  return unit ? `${quantity} ${unit}` : `${quantity}`;
+}
+
+/**
+ * A base-unit amount written back in the unit the stock row is held in.
+ *
+ * WHY IT LIVES HERE AND NOT IN THE STORE: the store writes the remainder
+ * back onto the row, and the preview shows the same remainder to the user.
+ * One rule, one place — a number that means one thing in both.
+ *
+ * WHY THE FACTOR COMES FROM THE SAME TABLE AS EVERYTHING ELSE: the old
+ * hand-written list in the store only knew g/kg/ml/L/pcs/dozen, so a row
+ * measured in tbsp, oz or litres was divided by 1 and came back as an
+ * absurd number: 10 tbsp minus a 2 tbsp recipe wrote back "120 tbsp".
+ */
+export function toDisplayUnit(baseValue: number, unit: string): number {
+  const factor = toBaseUnit(1, unit)?.value ?? 1;
+  if (!Number.isFinite(factor) || factor === 0) return Math.max(0, baseValue);
+  return Math.max(0, baseValue / factor);
+}
+
+/**
+ * The same amount, written the way the user reads it: "2.75 tbsp".
+ *
+ * WHY IT USES THE ROW'S OWN UNIT AND NOT THE DIMENSION: the row says "10
+ * tbsp" and the app says what it took from that row, so the two numbers
+ * have to be in the same unit for the user to check one against the other.
+ */
+export function formatInUnit(baseValue: number, unit: string): string {
+  const quantity = Math.round(toDisplayUnit(baseValue, unit) * 100) / 100;
   return unit ? `${quantity} ${unit}` : `${quantity}`;
 }
 

@@ -1,21 +1,30 @@
 import type { Recipe, StockItem, RecipeIngredient } from '../types';
 import {
-  formatBaseValue,
+  convertBase,
+  convertScoop,
+  formatInUnit,
   subtractBase,
   toBaseUnit,
-  unitDimension,
-  convertScoop,
   type UnitDimension,
 } from './units';
 
 export interface DeductionResult {
   ingredient: RecipeIngredient;
   stockItem: StockItem;
-  /** Amount deducted (in base units of the ingredient's dimension). */
+  /**
+   * Amount taken from the stock, in the STOCK ITEM'S OWN base unit.
+   *
+   * WHY THE STOCK'S AND NOT THE RECIPE'S: this number is subtracted from the
+   * stock row and the result is written back onto it, and a row is held in
+   * the unit the user measured it in. A deduction in another dimension
+   * cannot be subtracted from it — 100 grams is not 100 millilitres, and
+   * subtracting one from the other gives a number that is not a quantity of
+   * anything.
+   */
   deductedBase: number;
-  /** Stock quantity after deduction (base units). */
+  /** What is left of the stock row, in the same base unit as `deductedBase`. */
   remainingBase: number;
-  /** Human-readable summary of what was deducted, e.g. "150 g", "1.5 pcs". */
+  /** Human-readable summary of what was deducted, in the row's own unit. */
   deductedLabel: string;
   /**
    * All stock items that could plausibly match this ingredient, ranked by score.
@@ -225,17 +234,39 @@ export function planRecipeDeduction(
       continue;
     }
 
-    const ingDim: UnitDimension = common.dimension;
-    const ingBase = { value: common.ingValue, dimension: ingDim };
-    const stkBase = { value: common.stkValue, dimension: ingDim };
+    // Put the deduction in the STOCK ROW'S base unit, because that is the unit
+    // it is subtracted from and written back in.
+    //
+    // WHY THE COMMON DIMENSION IS NOT ENOUGH: "common" means the dimension the
+    // two sides can be compared in, and that is the RECIPE's dimension unless
+    // the recipe is the one in spoons. A shelf measured in spoons against a
+    // recipe in grams therefore resolves to grams — and a deduction in grams
+    // subtracted from a stock row held in millilitres is the wrong number
+    // entirely. The density is what turns one into the other.
+    const stockBase = toBaseUnit(match.quantity, match.unit);
+    if (!stockBase) {
+      skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
+      continue;
+    }
+    const ingInStockUnits = convertBase(
+      common.ingValue,
+      common.dimension,
+      stockBase.dimension,
+      ing.name,
+    );
+    if (ingInStockUnits === null) {
+      skipped.push({ ingredient: ing, reason: 'unit-mismatch', candidates });
+      continue;
+    }
 
-    const newStock = subtractBase(stkBase.value, ingBase.value);
+    const deductedBase = Math.min(ingInStockUnits, stockBase.value);
+    const remainingBase = subtractBase(stockBase.value, ingInStockUnits);
     deductions.push({
       ingredient: ing,
       stockItem: match,
-      deductedBase: Math.min(ingBase.value, stkBase.value),
-      remainingBase: newStock,
-      deductedLabel: formatBaseValue(Math.min(ingBase.value, stkBase.value), ingDim),
+      deductedBase,
+      remainingBase,
+      deductedLabel: formatInUnit(deductedBase, match.unit),
       candidates,
     });
   }

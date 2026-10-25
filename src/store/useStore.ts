@@ -26,7 +26,7 @@ import { INDIAN_RECIPES } from '../data/indianRecipes';
 const BUILT_IN_RECIPES = [...STARTER_RECIPES, ...INDIAN_RECIPES] as any;
 import { uid } from '../utils/uid';
 import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimension } from '../utils/recipeMatch';
-import { formatBaseValue, subtractBase, toBaseUnit, unitDimension } from '../utils/units';
+import { convertBase, formatInUnit, subtractBase, toBaseUnit, toDisplayUnit } from '../utils/units';
 import { MEAL_SLOTS, rescaledServings, suggestedServingsForDay } from '../utils/portions';
 import { DEFAULT_CONSENTS } from '../utils/consent';
 import { saveAppState, STORAGE_KEY, IMPORT_NOT_SAVED_MESSAGE } from '../utils/appStorage';
@@ -806,7 +806,13 @@ const setDayNote: UseStore['setDayNote'] = (day, note) => {
  * `.find()`, which returns only the FIRST match, so every later deduction
  * against that item was silently discarded and stock stayed too high.
  * Summing first, then deriving the remainder from the item's own quantity,
- * also keeps a single base-units conversion per item. */
+ * also keeps a single base-units conversion per item.
+ *
+ * WHY THE AMOUNTS ARE ALREADY IN THE ITEM'S OWN BASE UNIT: they are
+ * subtracted from that item's quantity and written back onto it, so both
+ * sides of the subtraction have to be in the same unit. The deductions
+ * arrive that way from `planRecipeDeduction`; summing them here keeps them
+ * that way. */
 function sumDeductionsByStockId(
   deductions: Array<{
     deductedBase: number;
@@ -821,17 +827,6 @@ function sumDeductionsByStockId(
     totals.set(id, (totals.get(id) || 0) + d.deductedBase);
   }
   return totals;
-}
-
-/** Convert a base-unit remainder back into the stock item's own display unit. */
-function baseToDisplay(remainingBase: number, unit: string): number {
-  // Derive the factor from the SAME table the rest of the app uses. The old
-  // hand-written list only knew g/kg/ml/L/pcs/dozen, so a stock row measured
-  // in tbsp, oz or litres was divided by 1 and came back as an absurd number:
-  // 10 tbsp minus a 2 tbsp recipe wrote back "120 tbsp".
-  const factor = toBaseUnit(1, unit)?.value ?? 1;
-  if (!Number.isFinite(factor) || factor === 0) return Math.max(0, remainingBase);
-  return Math.max(0, remainingBase / factor);
 }
 
 const logMealFromRecipe: UseStore['logMealFromRecipe'] = (input) => {
@@ -865,13 +860,24 @@ const logMealFromRecipe: UseStore['logMealFromRecipe'] = (input) => {
       picked.unit,
     );
     if (!common) return d;
-    const deductedBase = Math.min(common.ingValue, common.stkValue);
+    // The deduction is written back onto the PICKED row, so it is expressed in
+    // that row's own base unit — the unit the user measured it in.
+    const stockBase = toBaseUnit(picked.quantity, picked.unit);
+    if (!stockBase) return d;
+    const ingInStockUnits = convertBase(
+      common.ingValue,
+      common.dimension,
+      stockBase.dimension,
+      d.ingredient.name,
+    );
+    if (ingInStockUnits === null) return d;
+    const deductedBase = Math.min(ingInStockUnits, stockBase.value);
     return {
       ...d,
       stockItem: picked,
       deductedBase,
-      remainingBase: subtractBase(common.stkValue, common.ingValue),
-      deductedLabel: formatBaseValue(deductedBase, common.dimension),
+      remainingBase: subtractBase(stockBase.value, ingInStockUnits),
+      deductedLabel: formatInUnit(deductedBase, picked.unit),
     };
   });
 
@@ -886,7 +892,7 @@ const logMealFromRecipe: UseStore['logMealFromRecipe'] = (input) => {
     if (!stkBase) return it;
     return {
       ...it,
-      quantity: baseToDisplay(stkBase.value - deductedBase, it.unit),
+      quantity: toDisplayUnit(stkBase.value - deductedBase, it.unit),
       updatedAt: Date.now(),
     };
   });
@@ -1021,14 +1027,31 @@ const logMealFromRecipes: UseStore['logMealFromRecipes'] = (input) => {
       skippedNames.push(`${ing.name} (unit mismatch)`);
       continue;
     }
-    const deductedBase = Math.min(common.ingValue, common.stkValue);
+    // The deduction is written back onto the stock row, so it is expressed in
+    // that row's own base unit — the unit the user measured it in.
+    const stockBase = toBaseUnit(picked.quantity, picked.unit);
+    if (!stockBase) {
+      skippedNames.push(`${ing.name} (unit mismatch)`);
+      continue;
+    }
+    const ingInStockUnits = convertBase(
+      common.ingValue,
+      common.dimension,
+      stockBase.dimension,
+      ing.name,
+    );
+    if (ingInStockUnits === null) {
+      skippedNames.push(`${ing.name} (unit mismatch)`);
+      continue;
+    }
+    const deductedBase = Math.min(ingInStockUnits, stockBase.value);
     combinedDeductions.push({
       name: ing.name,
       quantity: ing.quantity,
       unit: ing.unit,
       deductedBase,
-      remainingBase: subtractBase(common.stkValue, common.ingValue),
-      deductedLabel: formatBaseValue(deductedBase, common.dimension),
+      remainingBase: subtractBase(stockBase.value, ingInStockUnits),
+      deductedLabel: formatInUnit(deductedBase, picked.unit),
       stockItemId: picked.id,
     });
   }
@@ -1043,7 +1066,7 @@ const logMealFromRecipes: UseStore['logMealFromRecipes'] = (input) => {
     if (!stkBase) return it;
     return {
       ...it,
-      quantity: baseToDisplay(stkBase.value - deductedBase, it.unit),
+      quantity: toDisplayUnit(stkBase.value - deductedBase, it.unit),
       updatedAt: Date.now(),
     };
   });

@@ -19,7 +19,7 @@ import { useStore } from '../store/useStore';
 import clsx from 'clsx';
 import type { MealType } from '../types';
 import { planRecipeDeduction } from '../utils/recipeMatch';
-import { formatBaseValue, unitDimension } from '../utils/units';
+import { formatInUnit } from '../utils/units';
 import { AutocompleteInput, type Suggestion } from './AutocompleteInput';
 import { MealPhotoButton } from './MealPhotoButton';
 import { DishIcon } from './icons/DishIcons';
@@ -364,9 +364,14 @@ export function LogMealModal({ open, onClose, initialMealType }: Props) {
                     <label className="label">What we'll use from your fridge</label>
                     <ul className="rounded-xl border border-sage-100 dark:border-ink-700 divide-y divide-sage-100 dark:divide-ink-700 overflow-hidden">
                       {plan.deductions.map((d) => {
-                        const dim = unitDimension(d.ingredient.unit);
-                        const remainingLabel =
-                          dim === 'unknown' ? '—' : formatBaseValue(d.remainingBase, dim);
+                        // WHY THE ROW'S OWN UNIT: the row says "10 tbsp" and
+                        // this says what was taken from that row, so the two
+                        // numbers have to be in the same unit for the user to
+                        // check one against the other. The old code used the
+                        // RECIPE's unit, which printed a bare "372.8" with no
+                        // unit at all when the recipe was in spoons, and a
+                        // number in grams beside a row held in tablespoons.
+                        const remainingLabel = formatInUnit(d.remainingBase, d.stockItem.unit);
                         const pickedId = pickedStock[d.ingredient.name] ?? d.stockItem.id;
                         const isPickedDifferent = pickedId !== d.stockItem.id;
                         const isAmbiguous = d.candidates.length > 1;
