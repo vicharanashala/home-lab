@@ -351,9 +351,24 @@ function nearWords(
 
   // The doubled-vowel spelling, compared with the doubling taken out of
   // both sides. "aalu" for "aloo".
+  //
+  // WHY ONE OF THE TWO HAS TO SPELL A DOUBLED VOWEL: the rule takes a
+  // repeated LETTER out of both sides, and a repeated CONSONANT is not a
+  // vowel spelled two ways — it is a different word. "puddin" repeats a "d"
+  // and "pudina" does not, so with the doubling taken out of both they are
+  // one edit apart, and they keep the same consonants ("pdn" either way).
+  // That was enough for "rice puddin" to be matched to "Pudina Rice" — mint
+  // rice, not pudding — and the wrong dish was written into the meal plan
+  // at full confidence. "musalla" and "masala" are the same story.
+  //
+  // A wrong dish is worse than a missing one, so the rule fires only for
+  // the case it was written for: one of the two words spells a doubled
+  // VOWEL, which is how "aalu" and "aloo" are the same word.
   if (loose) {
+    const wordHasDoubledVowel = hasDoubledVowel(word);
     for (const cand of index.words) {
       if (cand === word) continue;
+      if (!wordHasDoubledVowel && !hasDoubledVowel(cand)) continue;
       const du = editDistance(undouble(word), undouble(cand));
       if (du <= 0 || du > limit) continue;
       if (skeleton(undouble(word)) !== skeleton(undouble(cand))) continue;
@@ -382,11 +397,30 @@ function skeleton(word: string): string {
  * are the same word, and so are "gobhi" and "gobi". On their own "aalu" is
  * three edits from "aloo" — too far to be a near-miss — but once the
  * doubling is taken out of both it is one.
+ *
+ * WHY THIS IS NOT ENOUGH ON ITS OWN: the doubling it takes out is not
+ * always a vowel. "puddin" repeats a "d", and taking that out makes
+ * "puddin" and "pudina" one edit apart — two different dishes. So the
+ * caller asks `hasDoubledVowel` first, and only compares words that
+ * actually spell a doubled vowel.
  */
 function undouble(word: string): string {
   let out = '';
   for (const ch of word) if (out[out.length - 1] !== ch) out += ch;
   return out;
+}
+
+/**
+ * Whether a word spells a doubled vowel — "aloo" does, "pudina" does not.
+ *
+ * WHY THIS IS ITS OWN QUESTION: "puddin" repeats a "d" and "pudina" does
+ * not, so the two are one edit apart once the doubling is taken out of
+ * both, and they keep the same consonants — "pdn" either way. Without this
+ * question the near-miss rule matched two DIFFERENT dishes, and
+ * "rice puddin" was written into the meal plan as "Pudina Rice".
+ */
+function hasDoubledVowel(word: string): boolean {
+  return /([aeiou])\1/.test(word);
 }
 
 /**
