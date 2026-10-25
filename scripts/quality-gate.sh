@@ -99,6 +99,37 @@ step() { printf '\n── %s\n' "$*"; }
 bad()  { printf '   ✗ %s\n' "$*"; FAILED=1; }
 warn() { printf '   ! %s\n' "$*"; WARNED=1; }
 
+# A fingerprint of the index as it stands right now.
+#
+# WHY THE GATE FINGERPRINTS THE INDEX AT ALL: the gate exports the index ONCE
+# and checks that export. The checks take a minute or two, and in that window
+# another agent can change the index — `git stash` is the one that bites,
+# because it takes a staged change out of the index and puts it back on the
+# worktree. The commit is then made from the index as it stands at the END,
+# not from the one that was checked, so the gate can say "GATE PASSED" about
+# code it never tested.
+#
+# It is not a theory. On 2026-10-25 commit 195e14b landed carrying a test that
+# was RED against the code shipped beside it: the fix had been staged, the gate
+# checked the fix and the test together and passed, and a `git stash` from
+# another agent took the fix out of the index in the middle. The commit held
+# the proof and not the thing it proved.
+#
+# WHY `git ls-files -s` AND NOT `git write-tree`: write-tree writes tree
+# objects into the repository as a side effect of asking. ls-files only reads,
+# and it reports every entry with its stage and its blob hash, so two indexes
+# with the same fingerprint hold exactly the same thing.
+#
+# WHY IT REPORTS FAILURE RATHER THAN HASHING NOTHING: `shasum` is happy to
+# hash an empty stream, so a git that failed would produce a fingerprint that
+# looks like a real one — the hash of nothing. An index that could not be
+# read is not an index that held still, and the two must not look alike.
+index_fingerprint() {
+  local entries
+  entries="$(git ls-files -s 2>/dev/null)" || return 1
+  printf '%s' "$entries" | shasum | cut -d' ' -f1
+}
+
 # Lines the commit adds, minus the diff header lines. Used by every
 # "did this commit introduce something bad" check.
 #
@@ -131,6 +162,17 @@ source_lines() { printf '%s\n' "$ADDED_WITH_PATH" | grep -E "$SOURCE_RE" | cut -
 # ─────────────────────────────────────────────────────────────────────────────
 # Export the staged index so we check the commit, not the mess around it.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# The index, as it stands BEFORE the export.
+#
+# WHY IT IS TAKEN BEFORE THE EXPORT AND NOT AFTER: the export is what gets
+# checked, so the fingerprint has to describe the index as it was when the
+# export was taken. Taken after, an index that changed between the two would
+# describe the NEW index while the export held the OLD one, and the check at
+# the end would pass about code it never read — the same false all-clear this
+# fingerprint exists to end.
+INDEX_FINGERPRINT_BEFORE="$(index_fingerprint)"
+
 WORK="$(mktemp -d /tmp/hh-gate.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -347,6 +389,34 @@ if [ -n "$NOISY" ]; then
   warn "this commit adds console logging:"
   printf '%s\n' "$NOISY" | sed 's/^/     /'
   say "     remove it, or route it through the bridge's logger"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. The index must not have moved while the gate was checking it
+# ─────────────────────────────────────────────────────────────────────────────
+step "the index"
+
+# WHY THIS IS CHECKED LAST: it is the one check that can invalidate every
+# check above it. If the index moved while they ran, they were answers about
+# code that is no longer the code about to be committed — so the commit is
+# refused rather than made on the strength of them.
+#
+# WHY IT FAILS THE COMMIT RATHER THAN WARNING: a warning here would be a
+# false all-clear with a footnote. The gate's whole promise is that the
+# commit it passes is the commit it checked.
+INDEX_FINGERPRINT_AFTER="$(index_fingerprint)"
+
+if [ -z "$INDEX_FINGERPRINT_BEFORE" ] || [ -z "$INDEX_FINGERPRINT_AFTER" ]; then
+  # Not a git repository, or an index git will not describe. There is nothing
+  # to compare, and refusing every commit would be worse than not checking.
+  say "   · the index could not be fingerprinted — nothing to compare"
+elif [ "$INDEX_FINGERPRINT_BEFORE" = "$INDEX_FINGERPRINT_AFTER" ]; then
+  say "   ✓ the index did not change while this commit was being checked"
+else
+  bad "the index changed while this commit was being checked"
+  say "     another agent changed the index during the check — the commit would"
+  say "     hold different code from the one that was just tested."
+  say "     stage your work again and commit again."
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
