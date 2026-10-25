@@ -2,8 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { Volume2, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
-
-const VOICE_KEY = 'homehub.voice';
+import type { UseStore } from '../store/useStore';
+import {
+  VOICE_LABELS,
+  VOICE_NOT_SAVED_MESSAGE,
+  saveVoiceId,
+  storedVoiceId,
+} from '../utils/voice';
 
 export interface VoiceGroup {
   label: string;
@@ -20,19 +25,8 @@ const FALLBACK_GROUPS: VoiceGroup[] = [
   { label: 'British (male)', voices: ['bm_daniel', 'bm_george'] },
 ];
 
-const PRETTY: Record<string, string> = {
-  mixed: 'Indian dishes, English words',
-  hf_alpha: 'Aditi', hf_beta: 'Priya',
-  hm_omega: 'Arjun', hm_psi: 'Kabir',
-  af_heart: 'Ava', af_bella: 'Bella', af_nicole: 'Nina', af_sarah: 'Sarah', af_sky: 'Skye',
-  am_michael: 'Michael', am_fenrir: 'Fenrir', am_puck: 'Puck', am_echo: 'Echo',
-  bf_emma: 'Emma', bf_isabella: 'Isabella', bf_lily: 'Lily',
-  bm_daniel: 'Daniel', bm_george: 'George',
-};
-
 /** Previews a voice by synthesising one short line through the local engine. */
-function useVoicePreview() {
-  const { toast } = useStore();
+function useVoicePreview(toast: UseStore['toast']) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const preview = useCallback(async (voice: string) => {
@@ -65,11 +59,16 @@ function useVoicePreview() {
 }
 
 export function VoicePickerCard() {
+  const { toast } = useStore();
   const [groups, setGroups] = useState<VoiceGroup[]>(FALLBACK_GROUPS);
-  const [voice, setVoice] = useState<string>(() => {
-    try { return localStorage.getItem(VOICE_KEY) || 'hf_alpha'; } catch { return 'hf_alpha'; }
-  });
-  const { busy, preview } = useVoicePreview();
+  // WHY THE CARD ASKS THE SAME MODULE THE VOICE USES: the voice House Bot
+  // speaks with is read from the storage by `storedVoiceId`, and the card
+  // used to have a fallback of its own. The two disagreed, so the card
+  // ticked "Aditi" on a browser that had never chosen a voice while House
+  // Bot spoke with Mixed, and the tick is the only thing that tells the
+  // user which voice they have.
+  const [voice, setVoice] = useState<string>(() => storedVoiceId());
+  const { busy, preview } = useVoicePreview(toast);
 
   // Ask the local engine what it actually supports, so the list never offers
   // a voice that would silently fall back.
@@ -91,8 +90,16 @@ export function VoicePickerCard() {
   }, []);
 
   const choose = (v: string) => {
+    // WHY THE CHIP DOES NOT MOVE WHEN THE WRITE IS REFUSED: the voice House
+    // Bot speaks with is the one in the storage, and the storage still holds
+    // the old one. Moving the chip would tick a voice the app does not use —
+    // and the chip jumping back on the next reload would be the same lie in
+    // the other direction.
+    if (!saveVoiceId(v)) {
+      toast(VOICE_NOT_SAVED_MESSAGE, 'warning');
+      return;
+    }
     setVoice(v);
-    try { localStorage.setItem(VOICE_KEY, v); } catch { /* ignore */ }
   };
 
   return (
@@ -131,7 +138,7 @@ export function VoicePickerCard() {
                         : 'bg-white dark:bg-ink-800 text-sage-700 dark:text-cream-100 border-sage-200 dark:border-ink-700 hover:bg-sage-50 dark:hover:bg-ink-700',
                     )}
                   >
-                    {busy === v ? '…' : PRETTY[v] || v}
+                    {busy === v ? '…' : VOICE_LABELS[v] || v}
                     {on && <Check size={11} />}
                   </button>
                 );

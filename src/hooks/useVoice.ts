@@ -3,6 +3,7 @@ import { bridgeHeaders } from '../utils/bridgeToken';
 import { useStore } from '../store/useStore';
 import { blockedReason, policyAllowsMicrophone, requestMicrophone, speechRecognitionSupported } from '../utils/micPermission';
 import type { MicGate } from '../utils/micPermission';
+import { storedVoiceId } from '../utils/voice';
 
 export { speechRecognitionSupported };
 
@@ -176,11 +177,7 @@ function playWav(blob: Blob, slot: { current: WavPlayback | null }): Promise<voi
   });
 }
 
-function storedVoice(): string {
-  try { return localStorage.getItem('homehub.voice') || 'mixed'; } catch { return 'mixed'; }
-}
-
-export function useVoice(voiceId = storedVoice()): UseVoice {
+export function useVoice(voiceId = storedVoiceId()): UseVoice {
   const { settings, updateSettings, toast } = useStore();
   // Respect the Settings switch even on a browser that would happily allow
   // the mic: turning it off must actually mean off. `=== true` matches the
