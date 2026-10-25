@@ -1,4 +1,16 @@
 import type { MealType } from '../types';
+// The extension is written out on purpose.
+//
+// WHY: this module is imported by test scripts that do NOT register the
+// resolver hook, because until now it reached for nothing at runtime — its
+// only other import was a type. An extensionless path here is a path node's
+// ESM resolver cannot add, so those tests would die on
+// ERR_MODULE_NOT_FOUND the moment the parser reached for a sibling. The
+// explicit extension resolves in node, in the bundler and in tsc
+// (allowImportingTsExtensions), and it keeps the parser's one runtime
+// dependency from breaking the nine test scripts that were written to import
+// it directly.
+import { dishCore } from './spokenRecipeMatch.ts';
 
 /**
  * Turn a spoken sentence into meal-plan slots.
@@ -418,9 +430,41 @@ export function namesHeldDish(named: string, held: string | undefined): boolean 
   //
   // WHY THE FILLERS COME OFF BEFORE THE LETTERS: a filler is a WORD — "want",
   // "more", "really" — and the words have to still be words to take them off.
+  //
+  // WHY BOTH SIDES GO THROUGH THE APP'S OWN "WHAT A PERSON WOULD SAY" RULE
+  // FIRST: a dish name reaches this rule in two shapes, and the rule used to
+  // compare them in those shapes. The dish the user SAYS is a spoken fragment
+  // — "bhindi masala". The dish the DAY holds is a recipe's own name, and a
+  // recipe's own name is written with a gloss on it:
+  //
+  //   day holds "Bhindi masala (okra)"   user says "no bhindi masala for dinner"
+  //                                             -> the meal was NOT emptied
+  //
+  // The same happened for every name the app itself rewrites when it writes
+  // the plan, and for every name the recipe picker and the suggestion sheet
+  // write: "Lemon rice (chitranna)", "Upma (rava upma)", "Baingan Bharta
+  // Recipe - Brinjal Bharta", "Homemade Tater Tots".
+  //
+  // It is not a corner case. Of the 5,894 scraped names and the curated ones,
+  // 143 are rewritten by the app's own matcher to a DIFFERENT name, and 132 of
+  // those could not be refused by the name the user had said. The shopping list
+  // buys the plan, so the refused dish stayed on the list and the sheet said
+  // there was nothing to remove.
+  //
+  // `dishCore` is the rule the rest of the app already uses to answer "is
+  // this the same dish?", and it is what the matcher matches on: it takes the
+  // gloss, the "Recipe -" tail, the leading "Homemade" and the " | " second
+  // name off, so the two shapes become the one dish they are. Folding both
+  // sides through it makes this rule agree with the matcher, which is the
+  // whole point of a shared answer — see `sameDish`.
+  //
+  // WHY IT DOES NOT MAKE TWO DISHES ONE: `dishCore` only ever strips a
+  // gloss, a tail and a leading noise word, so a dish that merely CONTAINS
+  // the named one is still a different dish — "dal" is still not "dal tadka",
+  // and the refusal of a dal leaves a dal tadka alone.
   return (
-    dishLetters(withoutFillers(comparableDish(named))) ===
-    dishLetters(withoutFillers(comparableDish(held)))
+    dishLetters(withoutFillers(comparableDish(dishCore(named)))) ===
+    dishLetters(withoutFillers(comparableDish(dishCore(held))))
   );
 }
 
