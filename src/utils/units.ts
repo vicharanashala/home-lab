@@ -104,7 +104,21 @@ export function toBaseUnit(quantity: number, unit: string): { value: number; dim
 const DENSITY: Array<[RegExp, number]> = [
   [/water|stock|broth|buttermilk|chaas|pani/i, 1.0],
   [/milk|doodh|curd|yogurt|dahi|cream|malai/i, 1.03],
-  [/oil|ghee|butter|til|desi ghee/i, 0.92],
+  // WHY "til" IS NOT IN THIS RULE: the rule that matches an ingredient first
+  // wins, and this one comes before the seeds rule that also lists "til" — for
+  // sesame. With "til" here, that seeds rule could never fire, because
+  // anything containing "til" had already been claimed as oil.
+  //
+  // And the loose text does not know the difference: "lentil" CONTAINS "til",
+  // so "chickpea lentils" and "lentil paste" were weighed as oil (0.92) — 8%
+  // heavier than the dal this table names for them, and 31% heavier than the
+  // lentil paste it names at 0.7. A spoonful of lentils weighed as a spoonful
+  // of oil is the wrong deduction off the user's own shelf.
+  //
+  // Every oil is still caught: "til oil" and "sesame oil" both contain "oil".
+  // Only the bare word "til" is gone, and that is what the seeds rule says it
+  // is. See scripts/test-units-density.mjs.
+  [/oil|ghee|butter|desi ghee/i, 0.92],
   [/flour|atta|maida|besan|chickpea flour|bread flour/i, 0.53],
   [/rice|chawal|basmati|pulao/i, 0.85],
   [/dal|daal|lentil|toor|masoor|moong|chana dal|rajma|beans?/i, 0.85],
@@ -113,7 +127,18 @@ const DENSITY: Array<[RegExp, number]> = [
   [/spice|masala|chilli|chili|pepper|turmeric|haldi|cumin|jeera|coriander powder/i, 0.5],
   [/honey|jam|syrup|treacle/i, 1.4],
   [/bread|roti|chapati|dosa|idli|biscuit|cake/i, 0.45],
-  [/nuts?|cashew|almond|peanut|til|sesame/i, 0.55],
+  // WHY "til" IS MATCHED AS A WORD HERE AND NOT AS LOOSE TEXT: "til" is three
+  // letters, and three letters turn up inside other words. "until" and "till"
+  // — the cooking instructions the scrape carries in the ingredient name —
+  // contain it, and so do "tortilla", "tomatillo" and "pitiless". Matched as
+  // loose text, every one of those was weighed as a seed:
+  //
+  //     "Chicken breasts - cooked till tender"   0.55  seeds
+  //     "Tortillas"                               0.55  seeds
+  //
+  // Neither is a seed, and both are in the catalogue. The word boundary is
+  // what tells "til" the seed from "until" the instruction.
+  [/nuts?|cashew|almond|peanut|\btil\b|sesame/i, 0.55],
   [/chocolate|coffee powder|cocoa/i, 0.6],
   [/lentil paste|besan|papad/i, 0.7],
 ];
