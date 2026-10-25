@@ -2720,7 +2720,14 @@ const MAX_NAME_LEN = 60;
 
 const cleanName = (v, max = MAX_NAME_LEN) =>
   typeof v === 'string'
-    ? v.replace(/[ -]/g, '').trim().slice(0, max)
+    // WHY THE CONTROL CHARACTERS ARE WRITTEN AS ESCAPES AND NOT AS RAW
+    // BYTES: a raw NUL byte makes ripgrep treat this whole file as a
+    // binary file and stop searching it, so every line after this one was
+    // invisible to a search — including the routes and the token handling,
+    // which is 39% of the bridge. The raw bytes and the escapes mean the
+    // same thing to the regex; only the escapes keep this file readable to
+    // the tools that look at it. See scripts/test-source-files-are-text.mjs.
+    ? v.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max)
     : '';
 
 /** Returns a sanitised action, or null if it is not safe/recognised. */
