@@ -20,6 +20,37 @@ const STORAGE_KEY_FIRED = 'homehub.endOfDayReminder.lastFired'; // ISO date 'YYY
 export const DEFAULT_REMINDER_HOUR = 21; // 9 PM
 const MS_PER_HOUR = 60 * 60 * 1000;
 
+/**
+ * What the user is told when the browser refused to store the reminder.
+ *
+ * WHY IT SAYS WHICH WAY THE REMINDER IS POINTING AND NOT ONLY THAT SOMETHING
+ * WENT WRONG: the reminder is a preference, and a preference the browser
+ * refused is a preference that is not there. "Not saved" on its own leaves the
+ * user guessing whether the switch they are looking at is the truth.
+ */
+export const REMINDER_NOT_SAVED_MESSAGE =
+  'Reminder not saved — your browser refused to store it, so the reminder is still off.';
+
+/**
+ * What the user is told when the browser refused to turn the reminder OFF.
+ *
+ * WHY IT IS A SEPARATE MESSAGE: the truth runs the other way here. The
+ * reminder is still ON in the storage, so it will still fire at the hour it
+ * was set for, and a user who was told "not saved" would be looking for a
+ * reminder that is coming.
+ */
+export const REMINDER_NOT_TURNED_OFF_MESSAGE =
+  'Reminder not turned off — your browser refused to store it, so the reminder is still on.';
+
+/**
+ * What the user is told when the browser refused to store the reminder's hour.
+ *
+ * WHY IT NAMES THE OLD TIME: the hour that is still in use is the one the
+ * reminder will actually fire at, and the slider is showing a different one.
+ */
+export const REMINDER_HOUR_NOT_SAVED_MESSAGE =
+  'Reminder time not saved — your browser refused to store it, so the old time is still in use.';
+
 type ReminderTimer = ReturnType<typeof setTimeout> | null;
 let currentTimer: ReminderTimer = null;
 
@@ -68,20 +99,33 @@ export function getReminderEnabled(): boolean {
   }
 }
 
-export function setReminderEnabled(enabled: boolean): void {
+/**
+ * Turn the reminder on or off, and say whether the browser kept it.
+ *
+ * WHY IT REPORTS INSTEAD OF SWALLOWING: the write used to be swallowed here,
+ * so the screen could not tell a kept preference from a lost one and said
+ * "Daily reminder set" either way. See `REMINDER_NOT_SAVED_MESSAGE`.
+ *
+ * @returns whether the browser stored the preference
+ */
+export function setReminderEnabled(enabled: boolean): boolean {
   const s = safeStorage();
+  // WHY IT STARTS FALSE: a browser with no storage to use — blocked, or
+  // refused at the very first touch — is a browser that kept nothing.
+  let saved = false;
   if (s) {
     try {
       if (enabled) s.setItem(STORAGE_KEY_ENABLED, 'true');
       else s.removeItem(STORAGE_KEY_ENABLED);
+      saved = true;
     } catch {
-      // The browser refused the write. The reminder is a preference rather
-      // than the user's data, and this module has nowhere of its own to
-      // report it — the app reports a refused storage write where the state
-      // is saved, in `appStorage`.
+      // The browser refused the write. The caller is told, so the screen can
+      // say so rather than showing a reminder that is not there.
+      saved = false;
     }
   }
   scheduleEndOfDayReminder(); // re-schedule (or clear) right away
+  return saved;
 }
 
 export function getReminderHour(): number {
@@ -102,17 +146,32 @@ export function getReminderHour(): number {
   return n;
 }
 
-export function setReminderHour(hour: number): void {
+/**
+ * Set the hour the reminder fires at, and say whether the browser kept it.
+ *
+ * WHY IT REPORTS INSTEAD OF SWALLOWING: the slider shows the hour the user
+ * dragged to, and the reminder fires at the hour in the storage. A refused
+ * write leaves the two different, so the screen has to be told. See
+ * `REMINDER_HOUR_NOT_SAVED_MESSAGE`.
+ *
+ * @returns whether the browser stored the hour
+ */
+export function setReminderHour(hour: number): boolean {
   const s = safeStorage();
+  let saved = false;
   if (s) {
     const safe = Math.max(0, Math.min(23, Math.floor(hour)));
     try {
       s.setItem(STORAGE_KEY_HOUR, String(safe));
+      saved = true;
     } catch {
-      // The browser refused the write — see `setReminderEnabled`.
+      // The browser refused the write — the caller is told, so the slider can
+      // stay on the hour the reminder will really use.
+      saved = false;
     }
   }
   scheduleEndOfDayReminder();
+  return saved;
 }
 
 /** Compute the next Date that matches the configured hour (today if not yet passed, else tomorrow). */

@@ -43,6 +43,9 @@ import {
   scheduleEndOfDayReminder,
   fireReminderNotification,
   notificationsAvailable,
+  REMINDER_NOT_SAVED_MESSAGE,
+  REMINDER_NOT_TURNED_OFF_MESSAGE,
+  REMINDER_HOUR_NOT_SAVED_MESSAGE,
 } from '../utils/endOfDayReminder';
 import { canVibrate, hapticSuccess } from '../utils/haptics';
 import { FoodTrainerModal } from '../components/FoodTrainerModal';
@@ -100,6 +103,11 @@ export function SettingsPage() {
   // End-of-day reminder local state — synced from localStorage so it persists across reloads.
   const [reminderEnabled, setReminderEnabledLocal] = useState(getReminderEnabled());
   const [reminderHour, setReminderHourLocal] = useState(getReminderHour());
+  // WHY THIS IS A REF AND NOT A STATE: it remembers whether the user has
+  // already been told that the browser refused the hour, and a re-render must
+  // not reset it. A range input reports every step of a drag, so a refused
+  // write would otherwise warn once per pixel of the drag.
+  const hourRefusalWarned = useRef(false);
 
   const { setConsents } = useStore();
   const consents: UserConsents = {
@@ -665,11 +673,25 @@ export function SettingsPage() {
                       toast('Notifications blocked — enable them in browser settings', 'warning');
                       return;
                     }
-                    setReminderEnabled(true);
+                    // WHY THE SWITCH STAYS WHERE IT IS WHEN THE WRITE IS
+                    // REFUSED: the reminder is scheduled from what the storage
+                    // says, and the storage never got the value — so the
+                    // reminder is NOT on, and a switch showing it on would be
+                    // showing a reminder that will not fire.
+                    if (!setReminderEnabled(true)) {
+                      toast(REMINDER_NOT_SAVED_MESSAGE, 'warning');
+                      return;
+                    }
                     setReminderEnabledLocal(true);
                     toast(`Daily reminder set for ${reminderHour}:00`, 'success');
                   } else {
-                    setReminderEnabled(false);
+                    // The other direction of the same lie: a refused removal
+                    // leaves the reminder ON in the storage, so it would still
+                    // fire at the hour it was set for.
+                    if (!setReminderEnabled(false)) {
+                      toast(REMINDER_NOT_TURNED_OFF_MESSAGE, 'warning');
+                      return;
+                    }
                     setReminderEnabledLocal(false);
                     toast('Reminder turned off', 'info');
                   }
@@ -725,7 +747,21 @@ export function SettingsPage() {
                       value={reminderHour}
                       onChange={(e) => {
                         const h = Number(e.target.value);
-                        setReminderHour(h);
+                        // WHY THE SLIDER DOES NOT MOVE WHEN THE WRITE IS
+                        // REFUSED: the reminder fires at the hour in the
+                        // storage, and the storage still holds the old one.
+                        // Moving the slider would show a time the reminder
+                        // will not use.
+                        if (!setReminderHour(h)) {
+                          if (!hourRefusalWarned.current) {
+                            hourRefusalWarned.current = true;
+                            toast(REMINDER_HOUR_NOT_SAVED_MESSAGE, 'warning');
+                          }
+                          return;
+                        }
+                        // A write that worked clears the warning, so a later
+                        // refusal is told about again.
+                        hourRefusalWarned.current = false;
                         setReminderHourLocal(h);
                       }}
                       className="flex-1 accent-sage-600"
