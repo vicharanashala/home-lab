@@ -273,6 +273,13 @@ function dishBeforeRefusal(text: string): string | null {
  * without a trace: the plan held no biryani, the shopping list bought no
  * biryani, and nothing anywhere said the biryani had been lost.
  *
+ * WHY A CLAUSE COUNTS AS A REFUSAL CLAUSE ONLY WHEN IT OPENS WITH ONE: the
+ * walk has to tell a second refusal clause ("no dal, no rice, biryani") from
+ * a dish that merely holds a refusal word ("no dal, biryani without onion").
+ * The question is not whether the clause HOLDS a refusal word — "without" is
+ * one, and it sits in the middle of the dish — but whether the clause OPENS
+ * with one. A refusal word further along is part of a dish's own name.
+ *
  * @param text the stretch of speech
  */
 function dishAfterLeadingRefusal(text: string): string | null {
@@ -292,8 +299,19 @@ function dishAfterLeadingRefusal(text: string): string | null {
     if (!tidy(after)) return null;
     // Does the clause just taken open with ANOTHER refusal? "no dal, no
     // rice, biryani" — two refusals, and then the dish the user asked for.
+    //
+    // WHY THE REFUSAL HAS TO BE AT THE FRONT OF THE CLAUSE: a refusal word
+    // further along is part of a dish, not the opening of another clause.
+    // "no dal, biryani without onion" is ONE dish — the biryani without
+    // onion — and reading the "without" as the opening of a second refusal
+    // clause lost the dish altogether: the plan held nothing, the shopping
+    // list bought nothing for the dinner, and nothing anywhere said the
+    // biryani the user asked for had been lost.
+    //
+    // The test is the one the first clause already uses above: nothing usable
+    // comes before the refusal, so the refusal IS at the front of the clause.
     const opens = after.match(REFUSAL_ANYWHERE_RE);
-    if (!opens) return after;
+    if (!opens || tidy(opens[1])) return after;
     clause = after;
   }
 }
