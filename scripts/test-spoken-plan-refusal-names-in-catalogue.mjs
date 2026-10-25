@@ -45,6 +45,11 @@
  * swallow a refusal. "no dal", "no dosa" and the rest are refusals, and they
  * name no dish the catalogue holds.
  *
+ * MEASURED
+ *   5 of the 9 checks fail on 3f748f7 and all 9 pass on 2466f42, which asks
+ *   the catalogue whether a phrase IS a dish's name rather than whether it
+ *   matches one.
+ *
  * Run with:  node scripts/test-spoken-plan-refusal-names-in-catalogue.mjs
  */
 import { register } from 'node:module';
