@@ -175,6 +175,64 @@ const NEGATION_RE = new RegExp(`^\\s*(?:${REFUSAL_WORDS.join('|')})\\b\\s*`, 'i'
 const REFUSAL_ANYWHERE_RE = new RegExp(`^(.*?)\\b(?:${REFUSAL_WORDS.join('|')})\\b`, 'i');
 
 /**
+ * Tells the parser whether a phrase names a dish the app knows.
+ *
+ * WHY IT IS PASSED IN AND NOT FOUND HERE: this module is a parser and knows
+ * nothing about the catalogue, and the catalogue is 5,894 recipes wide. The
+ * question "is this phrase a dish?" is a question about the catalogue, and the
+ * app already has ONE rule that answers it — `matchDish`, the rule the recipe
+ * picker, the suggestion sheet and the shopping list all use. So the caller
+ * hands the parser that rule's answer and the parser never has to know what
+ * the catalogue holds.
+ *
+ * WHY IT IS NEEDED AT ALL: "no" and "without" are refusal words, and they are
+ * ALSO parts of 85 recipe names — "No Onion No Garlic Lobia Masala", "Red
+ * Lentil Curry Without Coconut", "No-Bake Tangy Lemon Pie". The words alone
+ * cannot say which is which. Only the catalogue can.
+ */
+export type KnownDishTest = (phrase: string) => boolean;
+
+/**
+ * True when the phrase names a dish the app knows.
+ *
+ * WHY ONLY A PHRASE THAT HOLDS A REFUSAL WORD IS ASKED ABOUT: a phrase with
+ * no refusal word in it is never cut and never raises a refusal, so asking
+ * the catalogue about it would cost a match and change nothing.
+ *
+ * WHY THE PHRASE IS FOLDED THROUGH `dishCore` FIRST: a recipe's own name
+ * carries a tail the app itself writes on — "No Onion No Garlic Lobia Masala
+ * Recipe In Electric Pressure Cooker" IS the dish "no onion no garlic lobia
+ * masala" — and the rule the whole app compares names with already takes that
+ * tail off. A spoken phrase that carries the tail has to be folded the same
+ * way, or the two sides of the same question get different answers.
+ *
+ * WHY THE WORD AT THE FRONT IS ASKED ABOUT A SECOND TIME: a phrase can be a
+ * dish AND begin with a refusal word, and then the word may be a refusal OF
+ * that dish rather than part of its name. "no no onion no garlic lobia
+ * masala" is the user refusing the dish "no onion no garlic lobia masala" —
+ * the phrase without the front word is that dish, and the phrase with it is
+ * not. So the word at the front is part of the name only when the rest of the
+ * phrase is NOT a dish on its own.
+ *
+ * @param phrase    the phrase to ask about
+ * @param knownDish the catalogue's answer, when the caller has one
+ */
+function namesKnownDish(phrase: string, knownDish?: KnownDishTest): boolean {
+  if (!knownDish) return false;
+  if (!REFUSAL_ANYWHERE_RE.test(phrase)) return false;
+  const core = dishCore(phrase).toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!core) return false;
+  if (!knownDish(core)) return false;
+  // The word at the front of the phrase may be a refusal OF a dish whose own
+  // name begins with a refusal word — "no no onion no garlic lobia masala".
+  const withoutFront = core
+    .replace(new RegExp(`^(?:${REFUSAL_WORDS.join('|')})\\b\\s*`, 'i'), '')
+    .trim();
+  if (withoutFront && withoutFront !== core && knownDish(withoutFront)) return false;
+  return true;
+}
+
+/**
  * The part of a stretch of speech that comes BEFORE a refusal, or null when
  * there is no refusal in it.
  *
@@ -835,6 +893,65 @@ function dishWithoutRefusal(text: string): string {
 }
 
 /**
+ * A stretch of the sentence, and where it sits in the sentence.
+ *
+ * WHY THE POSITION IS KEPT AND NOT ONLY THE TEXT: a refusal word is only a
+ * refusal if it is not part of a dish's own NAME, and a dish's own name is
+ * the phrase a meal took its dish from. So the rules that read the sentence
+ * afterwards have to be able to ask "is this word inside that phrase?".
+ */
+interface Span {
+  /** Where the stretch starts. */
+  start: number;
+  /** Where the stretch ends. */
+  end: number;
+}
+
+/**
+ * A dish a meal word takes from the text beside it.
+ */
+interface DishTake {
+  /** The text the dish was cut from. */
+  span: Span;
+  /** The dish. */
+  dish: string;
+  /**
+   * True when the text names a dish the app knows — which means the refusal
+   * word inside it is part of that dish's own name and not a refusal at all.
+   */
+  isKnown: boolean;
+}
+
+/**
+ * The dish a stretch of the sentence carries.
+ *
+ * WHY A PHRASE THAT NAMES A KNOWN DISH IS NOT CUT: "no" and "without" are
+ * refusal words, and they are also parts of 85 recipe names. "Red Lentil
+ * Curry Without Coconut" is one dish, and the cut took "without coconut" off
+ * it and left "red lentil curry" — a different dish, one that matches no
+ * recipe by that name, so the shopping list bought the wrong thing while the
+ * sheet said the meal had been heard.
+ *
+ * WHY IT IS THE CATALOGUE THAT DECIDES: the words cannot. "no dal" is a
+ * refusal and "no onion no garlic lobia masala" is a dish, and the two differ
+ * in no way that the sentence alone can show. The catalogue knows, so the
+ * catalogue is asked.
+ *
+ * @param src       the whole sentence
+ * @param span      where the text the dish is cut from sits
+ * @param knownDish the catalogue's answer, when the caller has one
+ */
+function dishTake(src: string, span: Span, knownDish?: KnownDishTest): DishTake {
+  const text = src.slice(span.start, span.end);
+  const isKnown = namesKnownDish(text, knownDish);
+  return {
+    span,
+    dish: isKnown ? tidy(text) : tidy(dishWithoutRefusal(text)),
+    isKnown,
+  };
+}
+
+/**
  * A dish the user said they did not want.
  */
 export interface SpokenRefusal {
@@ -869,9 +986,13 @@ export interface SpokenPlanResult {
  *
  * Returns only the meals that were actually named — a partial dict is a
  * legitimate result and the caller fills just those slots.
+ *
+ * @param text       what was heard or typed
+ * @param knownDish the catalogue's answer to "is this a dish?", when the
+ *                   caller has one — see `KnownDishTest`
  */
-export function parseSpokenPlan(text: string): SpokenPlan {
-  return parseSpokenPlanResult(text).plan;
+export function parseSpokenPlan(text: string, knownDish?: KnownDishTest): SpokenPlan {
+  return parseSpokenPlanResult(text, knownDish).plan;
 }
 
 /**
@@ -884,8 +1005,15 @@ export function parseSpokenPlan(text: string): SpokenPlan {
  * to mean and why the dal the user had REFUSED stayed in the plan and on the
  * shopping list. The refusal has to be said out loud, or the one thing the
  * user was clearest about is the one thing the plan cannot carry.
+ *
+ * @param text       what was heard or typed
+ * @param knownDish the catalogue's answer to "is this a dish?", when the
+ *                   caller has one — see `KnownDishTest`
  */
-export function parseSpokenPlanResult(text: string): SpokenPlanResult {
+export function parseSpokenPlanResult(
+  text: string,
+  knownDish?: KnownDishTest,
+): SpokenPlanResult {
   // The contraction is expanded first so that EVERY rule below — the one
   // that reads the text in front of a meal word and the one that reads the
   // dish itself — sees the refusal in the same words.
@@ -987,7 +1115,17 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
    * So the split is worked out by the meal on the left, one step early, and
    * handed to the meal on the right.
    */
-  let nextLeftDish = '';
+  /**
+   * The text the next meal word takes its dish from, and where that text
+   * sits in the sentence.
+   *
+   * WHY THE TEXT AND ITS PLACE ARE BOTH KEPT: a refusal word is only a
+   * refusal if it is not part of a dish's own NAME, and a dish's own name is
+   * the phrase a meal took its dish from. The rule that reads the sentence
+   * afterwards has to ask "is this word inside that phrase?", and that
+   * question is about a place in the sentence and not only about a name.
+   */
+  let nextLeft: DishTake | null = null;
 
   /**
    * Every meal the text mentioned, with the dish each one would file.
@@ -996,14 +1134,27 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
    * EARLIER mention of the same meal — "lunch rice, no lunch rice" files the
    * rice on the first mention and refuses it on the second — and by the time
    * the loop is over, this is the only place that answer is.
+   *
+   * WHY EACH MENTION KEEPS THE PHRASE IT TOOK ITS DISH FROM: the phrase is
+   * what says whether the refusal word in it is a refusal at all — see
+   * `DishTake`.
    */
-  const mentions: { slot: PlanSlot; at: number; len: number; dish: string }[] = [];
+  const mentions: {
+    slot: PlanSlot;
+    at: number;
+    len: number;
+    dish: string;
+    span: Span;
+    isKnown: boolean;
+  }[] = [];
 
   // The text before the FIRST meal word can only be that meal's own: there
   // is no meal before it that could have claimed it. There is no first meal
   // word when the text held none, and then there is no lead text either.
   const leadPre = unique.length ? src.slice(0, unique[0].at).match(PRE_CONNECTOR_RE) : null;
-  if (leadPre) nextLeftDish = tidy(dishWithoutRefusal(leadPre[1]));
+  if (leadPre) {
+    nextLeft = dishTake(src, { start: 0, end: leadPre[1].length }, knownDish);
+  }
 
   for (let i = 0; i < unique.length; i++) {
     const mark = unique[i];
@@ -1031,7 +1182,6 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
     // one meal word stands.
     const commaAt = afterFront.lastIndexOf(',');
     const afterHead = commaAt >= 0 ? afterFront.slice(0, commaAt) : afterFront;
-    const afterTail = commaAt >= 0 ? afterFront.slice(commaAt + 1) : '';
 
     // Which side of the meal word holds the dish? "dinner dal" puts it
     // behind; "dal for dinner" puts it in front. A connector right before the
@@ -1046,20 +1196,39 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
     // dosa under LUNCH, butter chicken under DINNER, and left breakfast
     // empty.
     let dish: string;
+    // The phrase the dish was cut from, and whether that phrase names a dish
+    // the app knows — see `DishTake`.
+    let take: DishTake;
     // Which side of THIS meal word the dish was taken from, so the next
     // meal word can tell a repeated dish from a dish that was never claimed.
     let tookRight = false;
-    if (isMeaningful(nextLeftDish)) {
-      dish = nextLeftDish;
+    if (nextLeft && isMeaningful(nextLeft.dish)) {
+      dish = nextLeft.dish;
+      take = nextLeft;
     } else {
       // A refusal inside the stretch of speech SPLITS it: "rice, no dal" is
       // "rice" — the dal was refused, not eaten. And when nothing is left
       // in front of the refusal, the meal itself was refused, so the text
       // before the meal word is NOT tried as a dish.
       const beforeRefusal = afterPre ? null : dishBeforeRefusal(segAfter);
-      dish = afterPre
-        ? tidy(dishWithoutRefusal(afterHead))
-        : tidy(beforeRefusal ?? segAfter);
+      if (afterPre) {
+        // The text behind the connector, up to the comma that parts the two
+        // dishes.
+        take = dishTake(src, { start: after, end: after + afterHead.length }, knownDish);
+        dish = take.dish;
+      } else {
+        // The text behind the meal word. The dish is the part of it in FRONT
+        // of the refusal — "rice, no dal" is "rice".
+        //
+        // WHY THE WHOLE TEXT IS ASKED ABOUT RATHER THAN THE PART IN FRONT:
+        // the refusal word may be part of the dish's own name — "red lentil
+        // curry without coconut" — and then the part in front of it is not the
+        // dish but half of it.
+        const span: Span = { start: after, end: after + segAfter.length };
+        const isKnown = namesKnownDish(src.slice(span.start, span.end), knownDish);
+        dish = isKnown ? tidy(segAfter) : tidy(beforeRefusal ?? segAfter);
+        take = { span, dish, isKnown };
+      }
       tookRight = true;
       if (!isMeaningful(dish) && !hasPrev && beforeRefusal === null) {
         // The first meal word, and nothing behind it either: the dish was
@@ -1070,8 +1239,11 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
         // and the biryani is the dinner. With the refusal's own clause still
         // in the dish, the dish began with a refusal word and was thrown out
         // whole, so the biryani was dropped for the same reason.
-        const afterClause = dishAfterLeadingRefusal(segBefore);
+        const span: Span = { start: prevEnd, end: mark.at };
+        const isKnown = namesKnownDish(src.slice(span.start, span.end), knownDish);
+        const afterClause = isKnown ? null : dishAfterLeadingRefusal(segBefore);
         dish = tidy(afterClause === null ? segBefore : afterClause);
+        take = { span, dish, isKnown };
         tookRight = false;
       }
     }
@@ -1079,14 +1251,28 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
     // Hand the next meal word the part of this stretch of text that is its
     // own: the tail when this meal took the head, and the whole of it when
     // this meal took its dish from the other side entirely.
-    nextLeftDish = tookRight
-      ? tidy(dishWithoutRefusal(afterTail))
-      : tidy(dishWithoutRefusal(afterFront));
+    nextLeft = dishTake(
+      src,
+      tookRight
+        ? {
+            start: after + (commaAt >= 0 ? commaAt + 1 : afterFront.length),
+            end: after + afterFront.length,
+          }
+        : { start: after, end: after + afterFront.length },
+      knownDish,
+    );
 
     // The dish this mention would file, kept even when the mention is
     // refused below: the refusal names the dish, and this is where that
     // dish is written down.
-    mentions.push({ slot: mark.slot, at: mark.at, len: mark.len, dish });
+    mentions.push({
+      slot: mark.slot,
+      at: mark.at,
+      len: mark.len,
+      dish,
+      span: take.span,
+      isKnown: take.isKnown,
+    });
 
     // A refusal is a refusal wherever it sits.
     //
@@ -1099,7 +1285,13 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
     // had asked for: "lunch rice, no lunch dal" filed lunch as "dal" and
     // threw the rice away. A dish the user said they did not want is worse
     // than a missing one, because the shopping list buys it.
-    if (NEGATION_RE.test(dish) || refusesBefore(segBefore)) continue;
+    //
+    // WHY A DISH THE APP KNOWS IS NEVER TREATED AS A REFUSAL: the dish's own
+    // name may begin with a refusal word — "No Onion No Garlic Lobia Masala"
+    // — and then the word is part of the name and not a refusal at all.
+    if ((NEGATION_RE.test(dish) && !take.isKnown) || (refusesBefore(segBefore) && !take.isKnown)) {
+      continue;
+    }
 
     // The LAST mention of a meal wins.
     //
@@ -1134,6 +1326,23 @@ export function parseSpokenPlanResult(text: string): SpokenPlanResult {
   // nothing anywhere said so: the sheet said the dinner had been heard and
   // the list bought it.
   for (const refusal of refusalsIn(src)) {
+    // A refusal word that is part of a dish's own NAME is not a refusal.
+    //
+    // WHY: "no" and "without" are refusal words, and they are also parts of
+    // 85 recipe names — "No Onion No Garlic Lobia Masala", "Red Lentil Curry
+    // Without Coconut". The word alone cannot say which it is; the catalogue
+    // can, and the phrase a meal took its dish from is what says whether the
+    // word is inside that name.
+    //
+    // WHY IT MATTERS: the user asked for the dish. The refusal rule took the
+    // word for a refusal, the dish was thrown out of the plan, and the sheet
+    // said there was nothing to remove — so the user was told their dish had
+    // been refused, and the shopping list bought nothing for that meal.
+    const insideADishName = mentions.some(
+      (m) => m.isKnown && refusal.at >= m.span.start && refusal.at < m.span.end,
+    );
+    if (insideADishName) continue;
+
     // The meal whose word FOLLOWS the refusal.
     //
     // WHY THERE MAY BE NO SUCH MEAL: the text held no meal word at all — "no

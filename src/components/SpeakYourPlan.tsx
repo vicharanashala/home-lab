@@ -1,9 +1,15 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Mic, MicOff, Loader2, Check, X, Sparkles } from 'lucide-react';
 import { useWhisperSTT, WHISPER_MODELS, STT_LANGUAGES, AUTO_MODEL } from '../hooks/useWhisperSTT';
 import { parseSpokenPlanResult } from '../utils/spokenPlan';
 import type { SpokenPlan } from '../utils/spokenPlan';
-import { resolveSpokenPlan, retypeDish, pickDish } from '../utils/spokenRecipeMatch';
+import {
+  resolveSpokenPlan,
+  retypeDish,
+  pickDish,
+  matchDish,
+  CONFIDENT_SCORE,
+} from '../utils/spokenRecipeMatch';
 import { spokenPlanClears, spokenPlanEditSlot, spokenPlanError, spokenPlanOutcome } from '../utils/spokenPlanEntries';
 import type { SpokenDraft, SpokenPlanOutcome } from '../utils/spokenPlanEntries';
 import { sheetNoteFor } from '../utils/spokenPlanSheet';
@@ -79,6 +85,24 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
   const whisper = useWhisperSTT(model, language);
 
   /**
+   * Whether a phrase names a dish the app knows.
+   *
+   * WHY THE PARSER IS GIVEN THIS: "no" and "without" are refusal words, and
+   * they are ALSO parts of 85 recipe names — "No Onion No Garlic Lobia
+   * Masala", "Red Lentil Curry Without Coconut". The words alone cannot say
+   * which is which, so the parser asks the catalogue — and the catalogue is
+   * asked with the app's own rule, `matchDish`, so the sheet, the plan and
+   * the shopping list cannot disagree about what a dish is called.
+   */
+  const knownDish = useMemo(
+    () => (phrase: string): boolean => {
+      const match = matchDish(phrase, catalogue);
+      return !!match.best && match.best.score >= CONFIDENT_SCORE;
+    },
+    [catalogue],
+  );
+
+  /**
    * Parse the transcript and then try to match each dish to a real recipe.
    *
    * Both the spoken and the typed path go through here: a typo is the same
@@ -92,7 +116,7 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
   const buildDraft = (
     text: string,
   ): { draft: SpokenDraft | null; outcome: SpokenPlanOutcome } => {
-    const { plan: parsed, refusals } = parseSpokenPlanResult(text);
+    const { plan: parsed, refusals } = parseSpokenPlanResult(text, knownDish);
     // What the utterance did: a plan to fill, a refusal with nothing to
     // remove, or nothing understood. The three are told apart here so that
     // the message the user reads is the one that is true.
