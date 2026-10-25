@@ -38,6 +38,17 @@
  * construct, so the test fails on the old behaviour rather than merely
  * describing it.
  *
+ * WHY A SERVICE THAT DID NOT COME UP IS REPORTED AND NOT THROWN
+ * A starter that is broken and a machine that is busy produce the same
+ * picture: the service is not there. The starter throws its own errors
+ * away — the construct under test ends in `>/dev/null 2>&1` — so the only
+ * record of what went wrong is the log the service would have written to.
+ * When that log was not read, and the wait for the service was short enough
+ * to be missed on a busy box, the two cases were indistinguishable: one
+ * opaque "NO_STUB" for a broken supervisor and for a slow machine alike,
+ * and every other assertion in the file went unrun because the throw took
+ * the file down with it.
+ *
  * Run with:  node scripts/test-supervisor-starters.mjs
  *
  *   HH_WATCHDOG_PATH   the supervisor script to read   (watchdog.sh)
@@ -52,6 +63,24 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const watchdog = process.env.HH_WATCHDOG_PATH || join(here, '..', 'watchdog.sh');
 const bridgeLib = process.env.HH_BRIDGE_LIB_PATH || join(here, 'lib', 'bridge-stale.sh');
+
+/**
+ * How long the harness waits for the service to appear, in ticks of 0.2s.
+ *
+ * WHY IT IS NOT TWO SECONDS: what is being waited for is a fork and an exec,
+ * and how long that takes is the machine's business, not the starter's. On a
+ * busy box the service can take longer than two seconds to come up, and the
+ * old two-second window reported that as "the service never started" — the
+ * very same report it gives for a starter that is genuinely broken. The two
+ * could not be told apart, and the one that was reported said nothing about
+ * which of them it was.
+ *
+ * WHY IT IS STILL BOUNDED: a starter that is broken has to fail this test,
+ * not hang it. Fifty ticks is more than forty times the time the service
+ * takes to appear on an idle machine (about a fifth of a second), and it is
+ * a ceiling rather than an open wait.
+ */
+const STARTUP_WINDOW_TICKS = 50;
 
 let passed = 0;
 let failed = 0;
@@ -144,12 +173,17 @@ function runStarter(fn, setup, dir) {
       'BRIDGE_LOG="' + log + '"',
       'VOICE_LOG="' + log + '"',
       'start_service',
-      'for _ in 1 2 3 4 5 6 7 8 9 10; do',
+      `for ((tick = 0; tick < ${STARTUP_WINDOW_TICKS}; tick++)); do`,
       '  [ -s "$STUB_PID_FILE" ] && break',
       '  sleep 0.2',
       'done',
       'STUB_PID="$(cat "$STUB_PID_FILE" 2>/dev/null || true)"',
-      'if [ -z "$STUB_PID" ]; then echo "NO_STUB"; exit 1; fi',
+      // WHY THE HARNESS DOES NOT FAIL THE PROCESS WHEN THE SERVICE DID NOT
+      // COME UP: the reason has to reach the assertions below, and a process
+      // that exits non-zero takes the whole test file down with a stack
+      // trace before a single assertion is reported. The harness says what
+      // it saw and lets the assertions decide what it means.
+      'if [ -z "$STUB_PID" ]; then echo "NO_STUB"; exit 0; fi',
       'echo "STUB_PID=$STUB_PID"',
       'echo "STUB_PPID=$(ps -o ppid= -p "$STUB_PID" 2>/dev/null | tr -d " ")"',
       'echo "STARTER_PID=$$"',
@@ -177,6 +211,30 @@ function runStarter(fn, setup, dir) {
   };
 }
 
+/**
+ * What the starter had to say when the service did not come up.
+ *
+ * WHY THIS IS READ AT ALL: the starter throws its own errors away — the
+ * construct under test ends in `>/dev/null 2>&1` — so the only record of
+ * WHY the service did not start is the log the service would have written
+ * to. Without it, a starter that is broken and a machine that is busy
+ * produce the same report, and neither one of them can be acted on.
+ *
+ * WHY IT SAYS "SAID NOTHING" WHEN THE LOG IS EMPTY: a starter that failed
+ * before it could write anything is a different thing from a starter that
+ * wrote down what went wrong, and the first is worth saying out loud
+ * rather than leaving the reader to wonder whether the log was even looked
+ * at.
+ *
+ * @param result what the harness saw
+ * @returns a sentence for the assertion's detail, or '' when it started
+ */
+function startupDetail(result) {
+  if (result.stubPid) return '';
+  const said = result.log.trim();
+  return said ? ` — the starter said: ${said}` : ' — the starter said nothing';
+}
+
 /* -------------------------------------------------------------------------- */
 
 console.log('\nthe bridge starter leaves no bash behind holding the bridge');
@@ -190,7 +248,7 @@ console.log('\nthe bridge starter leaves no bash behind holding the bridge');
   ].join('\n');
   const result = runStarter(fn, setup, dir);
 
-  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}`);
+  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}${startupDetail(result)}`);
   check(
     'nothing is left between the supervisor and the bridge',
     result.stubPpid !== '' && result.stubPpid === result.starterPid,
@@ -216,7 +274,7 @@ console.log('\nand the voice starter leaves no bash behind holding the voice dae
   ].join('\n');
   const result = runStarter(fn, setup, dir);
 
-  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}`);
+  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}${startupDetail(result)}`);
   check(
     'nothing is left between the supervisor and the voice daemon',
     result.stubPpid !== '' && result.stubPpid === result.starterPid,
@@ -236,7 +294,7 @@ console.log('\nand a restart of the bridge leaves no bash behind either');
   ].join('\n');
   const result = runStarter(fn, setup, dir);
 
-  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}`);
+  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}${startupDetail(result)}`);
   check(
     'nothing is left between the supervisor and the restarted bridge',
     result.stubPpid !== '' && result.stubPpid === result.starterPid,
@@ -260,7 +318,7 @@ console.log('\nthe OLD construct is what the live supervisor was running');
   ].join('\n');
   const result = runStarter(oldFn, setup, dir);
 
-  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}`);
+  check('the service started', result.stubPid !== '', `pid=${result.stubPid || 'none'}${startupDetail(result)}`);
   check(
     'and it DID leave a bash behind — this is the bug the fix removes',
     result.stubPpid !== '' && result.stubPpid !== result.starterPid,
