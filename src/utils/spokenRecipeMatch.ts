@@ -493,6 +493,40 @@ export function matchDish(
 }
 
 /**
+ * Whether a phrase IS the name of a dish the catalogue holds.
+ *
+ * WHY THIS IS NOT THE SAME QUESTION AS "DOES IT MATCH A DISH": the parser
+ * asks whether a refusal word inside a phrase is part of a dish's own NAME,
+ * and that is a question about the phrase BEING the name — not about the
+ * phrase being CLOSE to one. The two answers are not the same, and taking the
+ * looser one here loses refusals:
+ *
+ *   "rice, no dal"
+ *     matches "Dal-rice" at 0.753 — a near-word match, one word away from a
+ *     real one — so a rule that accepts any match over the confidence bar
+ *     says "this is a dish the app knows". The parser then takes the refusal
+ *     word to be part of that dish's own name, and the refusal of the dal is
+ *     swallowed: the plan holds "rice no dal" (a name that matches no
+ *     recipe, so the shopping list buys nothing for it) and NO refusal is
+ *     raised at all — so the dal the user had refused stayed on the plan,
+ *     where the shopping list buys it.
+ *
+ * So the rule here is the exact one: the WHOLE phrase has to be a catalogue
+ * core. "no onion no garlic lobia masala" is a dish; "rice, no dal" is not.
+ *
+ * WHY IT IS A NAMED RULE AND NOT A LINE IN THE COMPONENT: the app and the
+ * test that proves this have to hand the parser the SAME answer, or the test
+ * proves a rule the app does not use.
+ *
+ * @param phrase    the phrase to ask about
+ * @param catalogue the recipes the app knows
+ */
+export function isDishName(phrase: string, catalogue: Recipe[]): boolean {
+  const match = matchDish(phrase, catalogue);
+  return !!match.best && match.best.tier === 'exact';
+}
+
+/**
  * Correct a whole spoken plan.
  *
  * Each slot is matched on its own. A slot is only rewritten when the match

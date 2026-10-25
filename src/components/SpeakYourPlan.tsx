@@ -7,8 +7,7 @@ import {
   resolveSpokenPlan,
   retypeDish,
   pickDish,
-  matchDish,
-  CONFIDENT_SCORE,
+  isDishName,
 } from '../utils/spokenRecipeMatch';
 import { spokenPlanClears, spokenPlanEditSlot, spokenPlanError, spokenPlanOutcome } from '../utils/spokenPlanEntries';
 import type { SpokenDraft, SpokenPlanOutcome } from '../utils/spokenPlanEntries';
@@ -90,15 +89,19 @@ export function SpeakYourPlan({ onApply, catalogue, preferredIds, dayPlan }: Pro
    * WHY THE PARSER IS GIVEN THIS: "no" and "without" are refusal words, and
    * they are ALSO parts of 85 recipe names — "No Onion No Garlic Lobia
    * Masala", "Red Lentil Curry Without Coconut". The words alone cannot say
-   * which is which, so the parser asks the catalogue — and the catalogue is
-   * asked with the app's own rule, `matchDish`, so the sheet, the plan and
-   * the shopping list cannot disagree about what a dish is called.
+   * which is which, so the parser asks the catalogue.
+   *
+   * WHY THE CATALOGUE IS ASKED WHETHER THE PHRASE IS THE NAME AND NOT
+   * WHETHER IT MATCHES ONE: the parser uses the answer to decide that a
+   * refusal word inside the phrase is part of a dish's own NAME. A phrase
+   * that merely MATCHES a dish is not that dish's name, and answering the
+   * looser question lost refusals — "rice, no dal" matches "Dal-rice", so
+   * the dal the user had refused was read as part of a dish's name and the
+   * refusal was swallowed. `isDishName` is the one rule for it, and the test
+   * that proves this hands the parser the same rule the app does.
    */
   const knownDish = useMemo(
-    () => (phrase: string): boolean => {
-      const match = matchDish(phrase, catalogue);
-      return !!match.best && match.best.score >= CONFIDENT_SCORE;
-    },
+    () => (phrase: string): boolean => isDishName(phrase, catalogue),
     [catalogue],
   );
 
