@@ -332,12 +332,12 @@ function nearWords(
   const strict = maxWordDistance(word, false);
   const limit = maxWordDistance(word, loose);
 
-  if (!limit) {
-    out.sort((a, b) => a.cost - b.cost);
-    return out;
-  }
-
   // Only compare words of a length that could possibly be that close.
+  //
+  // NOTE: this loop is skipped for a short word that is allowed no edits at
+  // all, and the rules BELOW it are the ones that still have to run for such
+  // a word — "nan" for "naan" and "alu" for "aloo" are not edit distances at
+  // all, they are spellings.
   for (let len = word.length - limit; len <= word.length + limit; len++) {
     const bucket = index.wordsByLength.get(len);
     if (!bucket) continue;
@@ -358,15 +358,58 @@ function nearWords(
       // as the start of a dish name, and the refusal was never recognised.
       // A refusal that is not recognised is a refusal that gets bought.
       if (!loose || d > limit) continue;
-      if (skeleton(word) !== skeleton(cand)) continue;
+      if (!sameSounds(word, cand)) continue;
       out.push({ word: cand, cost: d });
       continue;
     }
   }
 
+  // A WORD THE RECOGNISER CUT SHORT.
+  //
+  // "nan" for "naan", "rab" for "rabri", "cof" for "coffee". A truncation is
+  // a spelling difference and not a different word, and it is not caught by
+  // the edit distance at all: "nan" and "naan" are one edit apart, but a
+  // three-letter word on its own is only allowed an exact match, because
+  // nothing disambiguates it.
+  //
+  // The rule is its own thing rather than a looser distance, because it is
+  // SAFE in a way that a looser distance is not: a prefix keeps the whole
+  // of the shorter word, so the consonants are all still there. It is what
+  // stops a bare "dal" from matching "dalia" and "dal jeera" — no, it does
+  // not, and that is why the length difference is capped at three letters
+  // and the word has to be at least three letters long.
+  for (const cand of index.words) {
+    if (cand === word) continue;
+    const shorter = word.length <= cand.length ? word : cand;
+    const longer = word.length <= cand.length ? cand : word;
+    const diff = longer.length - shorter.length;
+    if (diff < 1 || diff > 3) continue;
+    if (shorter.length < 3) continue;
+    if (!longer.startsWith(shorter)) continue;
+    if (!sameSounds(word, cand)) continue;
+    out.push({ word: cand, cost: diff });
+  }
+
+  // A SHORT spoken word that is a longer catalogue word with one vowel
+  // added. "nan" for "naan", "alu" for "aloo".
+  //
+  // A short word on its own is allowed no edits at all, because nothing
+  // disambiguates it — a bare "dal" could be any of hundreds of dishes.
+  // But a VOWEL appearing is not the word changing, it is the word being
+  // spelled the other way, and this is the one case where the shorter
+  // spelling is the spoken one.
+  if (word.length <= 3) {
+    for (const cand of index.words) {
+      if (cand === word) continue;
+      if (cand.length !== word.length + 1) continue;
+      if (!isVowelAdded(word, cand)) continue;
+      if (!sameSounds(word, cand)) continue;
+      out.push({ word: cand, cost: 1 });
+    }
+  }
+
   // The doubled-vowel spelling, compared with the doubling taken out of
   // both sides. "aalu" for "aloo".
-  //
   // WHY ONE OF THE TWO HAS TO SPELL A DOUBLED VOWEL: the rule takes a
   // repeated LETTER out of both sides, and a repeated CONSONANT is not a
   // vowel spelled two ways — it is a different word. "puddin" repeats a "d"
@@ -384,9 +427,15 @@ function nearWords(
     for (const cand of index.words) {
       if (cand === word) continue;
       if (!wordHasDoubledVowel && !hasDoubledVowel(cand)) continue;
+      // WHY THE COST IS CAPPED AT ONE: the rule is about a VOWEL appearing
+      // or disappearing, and one vowel is the whole of it. "aalu" and "aloo"
+      // are one apart with the doubling taken out, and so are "aloo" and
+      // "alu". Two apart is a different thing — "paal" (milk) and "poli" (a
+      // rice cake) are two apart with the doubling taken out, and matching
+      // them put the wrong dish in the meal plan at full confidence.
       const du = editDistance(undouble(word), undouble(cand));
-      if (du <= 0 || du > limit) continue;
-      if (skeleton(undouble(word)) !== skeleton(undouble(cand))) continue;
+      if (du < 0 || du > 1) continue;
+      if (!sameSounds(undouble(word), undouble(cand))) continue;
       out.push({ word: cand, cost: du });
     }
   }
@@ -403,6 +452,48 @@ function nearWords(
  */
 function skeleton(word: string): string {
   return word.toLowerCase().replace(/[^a-z]/g, '').replace(/[aeiou]/g, '');
+}
+
+/** True when every character of `small` appears in `big`, in order. */
+function isSubsequence(small: string, big: string): boolean {
+  let i = 0;
+  for (let j = 0; j < big.length && i < small.length; j++) {
+    if (small[i] === big[j]) i++;
+  }
+  return i === small.length;
+}
+
+/** The first consonant of a word, or '' when it has none. */
+function firstConsonant(word: string): string {
+  const m = word.toLowerCase().match(/[bcdfghjklmnpqrstvwxyz]/);
+  return m ? m[0] : '';
+}
+
+/**
+ * True when two words share the same consonants, give or take one that was
+ * added or dropped.
+ *
+ * THE WORD MUST START WITH THE SAME CONSONANT. That is what separates the
+ * spellings from the different words:
+ *
+ *   "painter" and "paneer"  p…  the recogniser heard a "t" that is not in
+ *                            the word — the same dish
+ *   "alu" and "aloo"        l…  a vowel spelled two ways — the same dish
+ *   "alu" and "dal"         l…d  a different consonant at the front — a
+ *                            DIFFERENT dish, and "Alu Bukhara" was matched to
+ *                            "Dal Bukhara" because of it
+ *
+ * What it must NOT allow is a different consonant altogether: "no" and "tok"
+ * share nothing, and that is a refusal word, not a spelling.
+ */
+function sameSounds(a: string, b: string): boolean {
+  const ca = firstConsonant(a);
+  const cb = firstConsonant(b);
+  if (ca && cb && ca !== cb) return false;
+  const sa = skeleton(a);
+  const sb = skeleton(b);
+  if (!sa.length || !sb.length) return false;
+  return sa === sb || isSubsequence(sa, sb) || isSubsequence(sb, sa);
 }
 
 /**
@@ -436,6 +527,47 @@ function undouble(word: string): string {
  */
 function hasDoubledVowel(word: string): boolean {
   return /([aeiou])\1/.test(word);
+}
+
+/**
+ * True when the longer word is the shorter one with a single VOWEL added.
+ *
+ * "nan" for "naan", "alu" for "aloo", "puri" for "poori". Indian English
+ * spells a long vowel two ways and the recogniser hears whichever one it
+ * hears, so a vowel appearing or disappearing is a spelling difference and
+ * not a different word.
+ *
+ * A CONSONANT appearing is a different thing: "dal" and "dhal" are the same
+ * dish, but "dal" and "dhal" are also two different words to a catalogue
+ * that lists both, so the consonant case is left to the ordinary distance
+ * rules.
+ */
+function isVowelAdded(shorter: string, longer: string): boolean {
+  if (longer.length !== shorter.length + 1) return false;
+  let i = 0;
+  let j = 0;
+  let extra = '';
+  while (i < shorter.length && j < longer.length) {
+    if (shorter[i] === longer[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    extra = longer[j];
+    j++;
+    if (i < shorter.length && shorter[i] === longer[j]) {
+      // the vowel was inserted before this letter, not after it
+      i++;
+      j++;
+      break;
+    }
+  }
+  if (i < shorter.length) return false;
+  if (!extra) {
+    // the vowel was added at the end
+    extra = longer[longer.length - 1];
+  }
+  return 'aeiou'.includes(extra);
 }
 
 /**
