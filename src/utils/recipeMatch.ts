@@ -1,7 +1,6 @@
 import type { Recipe, StockItem, RecipeIngredient } from '../types';
 import {
   convertBase,
-  convertScoop,
   formatInUnit,
   subtractBase,
   toBaseUnit,
@@ -141,12 +140,18 @@ export interface RecipeDeductionPlan {
  * Put an ingredient amount and a stock amount into ONE shared dimension so
  * the two can be compared honestly.
  *
- * The conversion has to be symmetric: if the recipe measures in spoons
- * ("2 tbsp oil") we convert the ingredient, but if the STOCK is what we hold
- * in spoons, we must convert the stock instead. One-way conversion made
- * "2 cups of flour" deduct 1 cup and leave 1 — but "1 cup stock, 1 cup
- * recipe" left 240, because the ml value was written back onto a
- * scoop-denominated item untouched.
+ * WHAT COUNTS AS "THE SAME DIMENSION": a spoon and a millilitre are the same
+ * volume, and a volume and a mass are the same substance measured two ways —
+ * the ingredient's density is the honest bridge between them. The two sides
+ * meet in the STOCK row's dimension, because that is the unit the deduction
+ * is written back in.
+ *
+ * WHY THE BRIDGE HAS TO WORK FROM BOTH SIDES: a shelf held in spoons against
+ * a recipe in grams has to compare, and so does a shelf held in grams
+ * against a recipe in spoons. One-way conversion made "2 cups of flour"
+ * deduct 1 cup and leave 1 — but "1 cup stock, 1 cup recipe" left 240,
+ * because the ml value was written back onto a scoop-denominated item
+ * untouched.
  *
  * Returns null when the two cannot be compared at all: an unknown unit, or
  * two genuinely different dimensions ("200 g" against "2 pcs") where no
@@ -166,32 +171,39 @@ export function resolveToCommonDimension(
   if (!ingRaw || !stkRaw) return null;
   if (ingRaw.dimension === 'unknown' || stkRaw.dimension === 'unknown') return null;
 
-  let ingDim: UnitDimension = ingRaw.dimension;
-  let ingValue = ingRaw.value;
-  let stkDim: UnitDimension = stkRaw.dimension;
-  let stkValue = stkRaw.value;
+  const ingDim: UnitDimension = ingRaw.dimension;
+  const stkDim: UnitDimension = stkRaw.dimension;
+  const stkValue = stkRaw.value;
 
-  if (ingDim === 'scoop' && stkDim !== 'scoop') {
-    const converted = convertScoop(ingValue, ingName, stkDim);
-    if (converted === null) return null;
-    ingValue = converted;
-    ingDim = stkDim;
-  } else if (stkDim === 'scoop' && ingDim !== 'scoop') {
-    const converted = convertScoop(stkValue, ingName, ingDim);
-    if (converted === null) return null;
-    stkValue = converted;
-    stkDim = ingDim;
-  } else if (ingDim !== stkDim) {
-    // "200 g" does not cover "2 pcs" — not a quantity question at all.
-    return null;
-  }
+  // Bring the ingredient into the stock row's dimension.
+  //
+  // WHY THE STOCK'S DIMENSION IS THE MEETING PLACE: the two sides have to be
+  // comparable, and the row the deduction is written back onto is the one
+  // that fixes the unit the answer comes out in.
+  //
+  // WHY A VOLUME AND A MASS ARE BRIDGED: they are the same substance measured
+  // two ways, and the ingredient's density is the honest bridge between them.
+  //
+  // WHY THE MILLILITRE WAS MISSING AND THE SPOON WAS NOT: only the spoon
+  // dimension was bridged, because a spoon is a volume too and that rule was
+  // written first. But `ml` and `L` are the ONLY volume units the app's own
+  // stock dropdown offers — so a user who measured their oil in millilitres
+  // had NOTHING taken off a recipe written in grams, while the very same oil
+  // measured in spoons had most of it taken off. The same oil, the same
+  // recipe, two different answers.
+  //
+  // WHY A COUNT IS NOT BRIDGED: a count is not a mass at all, and pretending
+  // otherwise is how a 200 g bag of flour got deleted by a recipe that asked
+  // for one cup.
+  const ingValue = convertBase(ingRaw.value, ingDim, stkDim, ingName);
+  if (ingValue === null) return null;
 
   // A non-finite amount means malformed data, not a real deduction. Skip it
   // rather than letting NaN propagate: subtractBase would return NaN, and the
   // row would then fail `quantity > 0` and be deleted from the kitchen.
   if (!Number.isFinite(ingValue) || !Number.isFinite(stkValue)) return null;
 
-  return { ingValue, stkValue, dimension: ingDim };
+  return { ingValue, stkValue, dimension: stkDim };
 }
 
 /**

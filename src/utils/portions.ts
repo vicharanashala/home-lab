@@ -16,7 +16,7 @@
  */
 
 import { findCandidatesForIngredient } from './recipeMatch';
-import { convertScoop, toBaseUnit } from './units';
+import { convertBase, toBaseUnit } from './units';
 import type {
   HouseholdProfile,
   MealPlanDay,
@@ -332,6 +332,11 @@ const keyOf = (name: string, unit: string) =>
  * Both sides are converted to a common base unit first, and the result is
  * converted back into the need's unit so the number shown to the user is
  * always the one that makes sense next to the unit shown.
+ *
+ * WHY A VOLUME AND A MASS MEET: they are the same substance measured two
+ * ways, and the density is the honest bridge. A need in millilitres against a
+ * kilo on the shelf counted as nothing there, so the list told the user to
+ * buy the milk they were standing next to.
  */
 function coveredAmount(
   need: number,
@@ -349,22 +354,29 @@ function coveredAmount(
 
   // Both sides expressed in ONE base unit.
   let needInCommon = needBase.value;
-  let stockInCommon = stockBase.value;
+  const stockInCommon = stockBase.value;
 
-  if (needBase.dimension === 'scoop' && stockBase.dimension !== 'scoop') {
-    // The recipe measures in spoons, the kitchen holds it in grams/ml —
-    // convert the recipe with the ingredient's density, exactly as
-    // `planRecipeDeduction` does, so the two agree.
-    const converted = convertScoop(needInCommon, ingredientName, stockBase.dimension);
+  // WHY THE NEED IS BROUGHT INTO THE STOCK'S DIMENSION: the two sides have to
+  // be comparable, and the answer is reported in the need's own unit — so the
+  // conversion has to pass through one shared dimension.
+  //
+  // WHY A VOLUME AND A MASS ARE BRIDGED: they are the same substance measured
+  // two ways, and the density is the honest bridge between them. A shelf
+  // measured in millilitres against a recipe written in grams counted as
+  // NOTHING there, so the shopping list told the user to buy the milk they
+  // were standing next to — while the same milk measured in spoons was
+  // counted correctly.
+  //
+  // WHY A COUNT IS NOT BRIDGED: a count is not a mass at all.
+  if (needBase.dimension !== stockBase.dimension) {
+    const converted = convertBase(
+      needInCommon,
+      needBase.dimension,
+      stockBase.dimension,
+      ingredientName,
+    );
     if (converted === null) return 0;
     needInCommon = converted;
-  } else if (stockBase.dimension === 'scoop' && needBase.dimension !== 'scoop') {
-    const converted = convertScoop(stockInCommon, ingredientName, needBase.dimension);
-    if (converted === null) return 0;
-    stockInCommon = converted;
-  } else if (needBase.dimension !== stockBase.dimension) {
-    // 200 g does not meaningfully cover a recipe asking for 2 "pcs".
-    return 0;
   }
 
   if (!Number.isFinite(needInCommon) || !Number.isFinite(stockInCommon)) return 0;
