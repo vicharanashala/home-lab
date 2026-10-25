@@ -40,7 +40,6 @@ src/pages/Stores.tsx TS6133 'SettingsIcon' is declared but its value is never re
 src/pages/Stores.tsx TS6133 'Star' is declared but its value is never read.
 src/pages/Stores.tsx TS6133 'toast' is declared but its value is never read.
 src/pages/Stores.tsx TS6133 'useEffect' is declared but its value is never read.
-src/store/useStore.ts TS6133 'unitDimension' is declared but its value is never read.
 src/store/useStore.ts TS6196 'ThemeMode' is declared but never used.
 src/utils/bridgeToken.ts TS6196 'ViteEnv' is declared but never used.
 src/utils/foodClassifier.ts TS6133 'KNOWN_LOCAL_VEG_CANONICAL' is declared but its value is never read.
@@ -49,7 +48,6 @@ src/utils/foodClassifier.ts TS6196 'OverwatchReply' is declared but never used.
 src/utils/mealSuggest.ts TS6133 'household' is declared but its value is never read.
 src/utils/mealSuggest.ts TS6133 'servings' is declared but its value is never read.
 src/utils/mealSuggest.ts TS6196 'MealPlanEntry' is declared but never used.
-src/utils/recipeMatch.ts TS6133 'unitDimension' is declared but its value is never read.
 src/utils/substitutions.ts TS6133 'PANTRY_STAPLE' is declared but its value is never read.
 src/utils/substitutions.ts TS6133 'UNIVERSAL_RATIO' is declared but its value is never read.
 src/utils/substitutions.ts TS6133 'reasonFor' is declared but its value is never read.

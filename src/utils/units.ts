@@ -219,33 +219,6 @@ export function convertBase(
   return null; // a count cannot be turned into a mass, or the other way round
 }
 
-/** Convert a value (in base unit) back to a human-readable display unit. */
-export function fromBaseUnit(value: number, dimension: UnitDimension): { quantity: number; unit: string } {
-  if (dimension === 'mass') {
-    if (value >= 1000) return { quantity: round(value / 1000, 2), unit: 'kg' };
-    return { quantity: round(value, 1), unit: 'g' };
-  }
-  if (dimension === 'vol') {
-    if (value >= 1000) return { quantity: round(value / 1000, 2), unit: 'L' };
-    return { quantity: round(value, 1), unit: 'ml' };
-  }
-  if (dimension === 'count') {
-    return { quantity: Math.round(value), unit: 'pcs' };
-  }
-  return { quantity: round(value, 2), unit: '' };
-}
-
-function round(n: number, decimals: number): number {
-  const f = Math.pow(10, decimals);
-  return Math.round(n * f) / f;
-}
-
-/** Pick a nice display unit for a base-unit quantity (same shape as `fromBaseUnit`). */
-export function formatBaseValue(value: number, dimension: UnitDimension): string {
-  const { quantity, unit } = fromBaseUnit(value, dimension);
-  return unit ? `${quantity} ${unit}` : `${quantity}`;
-}
-
 /**
  * A base-unit amount written back in the unit the stock row is held in.
  *
