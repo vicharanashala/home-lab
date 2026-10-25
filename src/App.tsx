@@ -25,6 +25,7 @@ import {
 // Lazy-load heavier / less-frequently-used routes so the entry bundle stays small.
 const SettingsPage = lazy(() => import('./pages/Settings').then((m) => ({ default: m.SettingsPage })));
 const StoresPage = lazy(() => import('./pages/Stores').then((m) => ({ default: m.StoresPage })));
+const DigitalStoresPage = lazy(() => import('./pages/DigitalStores').then((m) => ({ default: m.DigitalStoresPage })));
 const DiscoverPage = lazy(() => import('./pages/Discover').then((m) => ({ default: m.DiscoverPage })));
 const MealPlanPage = lazy(() => import('./pages/MealPlan').then((m) => ({ default: m.default })));
 const ShoppingModePage = lazy(() =>
@@ -166,6 +167,7 @@ export default function App() {
                 <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/stores" element={<StoresPage />} />
+                <Route path="/digital-stores" element={<DigitalStoresPage />} />
                 <Route path="/discover" element={<DiscoverPage />} />
                 <Route path="/meal-plan" element={<MealPlanPage />} />
                 <Route path="/shopping" element={<ShoppingModePage />} />

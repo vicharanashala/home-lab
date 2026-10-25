@@ -1,5 +1,5 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Home, ShoppingCart, Refrigerator, Bell, Settings, MapPin, Sparkles, Bot } from 'lucide-react';
+import { Home, ShoppingCart, Refrigerator, Bell, Settings, MapPin, Sparkles, Bot, Globe } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../store/useStore';
 import { useMemo } from 'react';
@@ -224,6 +224,23 @@ export function SideNav() {
           <MapPin size={18} />
           <span>See near stores</span>
         </button>
+        {/* The shops that come to the door, next to the ones you can walk into.
+            Reached from the side nav only: the mobile bar has no room for
+            seven items, and the physical stores are not in it either. */}
+        <NavLink
+          to="/digital-stores"
+          className={({ isActive }) =>
+            clsx(
+              'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold transition-all duration-200 lift',
+              isActive
+                ? 'bg-sage-100 dark:bg-sage-900/40 text-sage-800 dark:text-cream-50'
+                : 'text-sage-600 dark:text-ink-300 hover:bg-sage-50 dark:hover:bg-ink-700 hover:text-sage-800 dark:hover:text-cream-50',
+            )
+          }
+        >
+          <Globe size={18} />
+          <span>Digital stores</span>
+        </NavLink>
         <NavLink
           to="/settings"
           className={({ isActive }) =>
