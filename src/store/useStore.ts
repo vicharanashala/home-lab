@@ -1238,6 +1238,17 @@ const importAppData: UseStore['importAppData'] = (raw) => {
     ...portableSettings
   } = settings;
 
+  // WHY THE HOUSEHOLD IS HELD BACK UNTIL THE BROWSER TAKES IT: the import
+  // replaces the household with the file's contents, and until the browser
+  // has taken it the household is still there. An imported screen over a
+  // browser that still holds the old data is the worst of the two — the user
+  // is told the import did not happen while the screen says it did, and the
+  // next write that DOES get through stores that imported screen in full and
+  // takes the household's grocery list and fridge with it, for good. This is
+  // the same hole the clearing had, and the clearing was closed a commit ago
+  // (a0afabd) — the import was left behind.
+  const before = getState().app;
+
   setState((s) => ({
     ...s,
     app: {
@@ -1261,6 +1272,13 @@ const importAppData: UseStore['importAppData'] = (raw) => {
   // made and the answer recorded, so this is the same measurement read once
   // more, not a second attempt that could disagree with the first.
   if (currentStorageFailed()) {
+    // The browser refused the write, so the import did not happen. Put the
+    // household back: the screen then agrees with the message the user
+    // reads, and the next write that gets through stores the household and
+    // not the file. Rolling back here is also what keeps the refusal
+    // harmless — an imported screen left in place would be written out in
+    // full by the very next change the user made.
+    setState((s) => ({ ...s, app: before }));
     return {
       ok: false,
       error: IMPORT_NOT_SAVED_MESSAGE,

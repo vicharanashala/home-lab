@@ -331,6 +331,68 @@ console.log('\nand the two actions that replace the household with a file');
   check('and the change that came after it is there too', storedAfter.grocery.some((g) => g.name === 'Potatoes'), true);
 }
 
+console.log('\nand the import is undone when the browser refuses it');
+{
+  // WHY THE IMPORT HAS TO BE UNDONE AND NOT LEFT ON SCREEN: the import
+  // replaces the household with the file's contents, so a refused import left
+  // in place is the same hole the clearing had — and the clearing's hole was
+  // closed a commit ago (a0afabd). The message says "nothing was replaced",
+  // which is only true if the replacement is undone.
+  //
+  // The next write that gets through stores whatever is on screen, so a
+  // refused import left in place takes the household's grocery list and
+  // fridge with it, for good, and nothing said so.
+  //
+  // The names here are deliberately different from the backup's, so "the
+  // household is still here" cannot be confused with "the file was imported".
+  // The earlier blocks in this file already put onions and milk in the
+  // household, so the file's own items have to be names nothing else uses.
+  const file = JSON.stringify({
+    app: 'homehub',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      grocery: [{ id: 'g9', name: 'Basmati Rice', quantity: '2 kg', category: 'vegetables', purchased: false, createdAt: 1 }],
+      stock: [{ id: 's9', name: 'Paneer', quantity: '200 g', category: 'dairy', createdAt: 1, updatedAt: 1, location: 'fridge' }],
+      mealLogs: [],
+      recipes: [],
+      settings: { theme: 'system' },
+    },
+  });
+
+  refuseWrites = false;
+  refresh().addGrocery({ name: 'Tomatoes', quantity: '1 kg', category: 'vegetables' });
+  refresh().addStock({ name: 'Curd', quantity: '500 g', category: 'dairy', location: 'fridge' });
+  check(
+    'the household is there before the import',
+    JSON.parse(exportAppData()).data.grocery.some((g) => g.name === 'Tomatoes'),
+    true,
+  );
+
+  refuseWrites = true;
+  refresh().importAppData(file);
+  const afterRefusedImport = JSON.parse(exportAppData()).data;
+  check(
+    'and it is still on screen after a refused import',
+    afterRefusedImport.grocery.some((g) => g.name === 'Tomatoes'),
+    true,
+  );
+  check(
+    'and the file did not take the grocery list over',
+    afterRefusedImport.grocery.some((g) => g.name === 'Basmati Rice'),
+    false,
+  );
+  check('and so is the fridge', afterRefusedImport.stock.some((s) => s.name === 'Curd'), true);
+
+  // The write that gets through next must carry the household with it.
+  refuseWrites = false;
+  refresh().addGrocery({ name: 'Spinach', quantity: '1 bunch', category: 'vegetables' });
+  const storedAfter = JSON.parse(held[STORAGE_KEY]);
+  check('and the grocery list survives the next write', storedAfter.grocery.some((g) => g.name === 'Tomatoes'), true);
+  check('and so does the fridge', storedAfter.stock.some((s) => s.name === 'Curd'), true);
+  check('and the file did not take it over either', storedAfter.grocery.some((g) => g.name === 'Basmati Rice'), false);
+}
+
 console.log('\nand the messages those two leave behind');
 {
   // The clearing message has to say the data is STILL THERE. The store puts
@@ -355,6 +417,11 @@ console.log('\nand the messages those two leave behind');
     'the import message does not claim the data was restored',
     /restored \d/i.test(IMPORT_NOT_SAVED_MESSAGE),
     false,
+  );
+  check(
+    'and it says the household is still here — the store puts it back',
+    /still here/i.test(IMPORT_NOT_SAVED_MESSAGE),
+    true,
   );
 }
 

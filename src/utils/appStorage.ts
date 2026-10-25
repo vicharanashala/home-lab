@@ -43,9 +43,15 @@ export const STORAGE_FAILURE_MESSAGE =
  * saved. This says the IMPORT did not happen, which is a different fact — the
  * screen would otherwise have said "Restored 12 grocery items" and the user
  * would believe the household's data was replaced when nothing was stored.
+ *
+ * WHY IT SAYS THE DATA IS STILL THERE: the store undoes an import the browser
+ * refused, so the household is on the screen the user is looking at. "Not
+ * saved" on its own would leave them guessing whether the import half
+ * worked, and a message about the file coming back would describe a loss that
+ * did not happen — the household's data never left.
  */
 export const IMPORT_NOT_SAVED_MESSAGE =
-  'Your browser refused to store the imported data, so nothing was replaced — the import is only here until you close the app.';
+  'Your browser refused to store the imported data, so nothing was imported — your current data is still here.';
 
 /**
  * What the user is told when the app could not store the clearing of the data.
