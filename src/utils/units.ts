@@ -13,7 +13,7 @@
  *
  * Scoop units are volume-like but recipes mean mass when the ingredient is a
  * dry good ("1 cup flour"). They're converted with a per-ingredient density —
- * see `convertScoop` — because 1 cup of water is 240ml and 1 cup of flour is
+ * see `convertBase` — because 1 cup of water is 240ml and 1 cup of flour is
  * roughly 120g. Without this, 55% of the recipe catalogue measured in spoons
  * could never match a stock quantity and was silently dropped from deductions.
  */
@@ -160,24 +160,6 @@ export function densityFor(ingredientName: string): number {
     if (re.test(ingredientName)) return d;
   }
   return DEFAULT_DENSITY;
-}
-
-/**
- * Convert a millilitre-equivalent scoop measurement into the dimension a
- * stock item is actually tracked in, using the ingredient's density.
- *
- * This is what lets "2 tbsp oil" match a stock item held in grams, and
- * "1 cup milk" match one held in ml.
- */
-export function convertScoop(
-  ml: number,
-  ingredientName: string,
-  target: UnitDimension,
-): number | null {
-  // Already expressed in millilitres — nothing to do.
-  if (target === 'vol' || target === 'scoop') return ml;
-  if (target === 'mass') return ml * densityFor(ingredientName);
-  return null; // count- or unknown-dimension stock can't absorb a scoop
 }
 
 /**

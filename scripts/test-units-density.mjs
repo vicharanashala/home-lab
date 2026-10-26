@@ -52,9 +52,8 @@ import { register } from 'node:module';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
-const { densityFor, convertScoop, toBaseUnit, unitDimension } = await import(
-  '../src/utils/units.ts'
-);
+const units = await import('../src/utils/units.ts');
+const { densityFor, convertBase, toBaseUnit, unitDimension } = units;
 const { resolveToCommonDimension } = await import('../src/utils/recipeMatch.ts');
 
 let passed = 0;
@@ -125,19 +124,52 @@ console.log('');
 const tbsp = toBaseUnit(2, 'tbsp');
 eq(tbsp?.value, 30, '2 tbsp is 30 ml');
 eq(tbsp?.dimension, 'scoop', 'a tablespoon is a scoop');
-close(convertScoop(30, 'chickpea lentils', 'mass') ?? 0, 25.5, '2 tbsp of lentils is 25.5 g');
-close(convertScoop(30, 'sesame seeds', 'mass') ?? 0, 16.5, '2 tbsp of sesame is 16.5 g');
-close(convertScoop(30, 'sesame oil', 'mass') ?? 0, 27.6, '2 tbsp of sesame oil is 27.6 g');
+close(convertBase(30, 'scoop', 'mass', 'chickpea lentils') ?? 0, 25.5, '2 tbsp of lentils is 25.5 g');
+close(convertBase(30, 'scoop', 'mass', 'sesame seeds') ?? 0, 16.5, '2 tbsp of sesame is 16.5 g');
+close(convertBase(30, 'scoop', 'mass', 'sesame oil') ?? 0, 27.6, '2 tbsp of sesame oil is 27.6 g');
 
 // A volume stays a volume. Nothing is invented.
-eq(convertScoop(30, 'chickpea lentils', 'vol'), 30, 'a scoop into millilitres is unchanged');
-eq(convertScoop(30, 'chickpea lentils', 'scoop'), 30, 'a scoop into scoops is unchanged');
+eq(convertBase(30, 'scoop', 'vol', 'chickpea lentils'), 30, 'a scoop into millilitres is unchanged');
+eq(convertBase(30, 'scoop', 'scoop', 'chickpea lentils'), 30, 'a scoop into scoops is unchanged');
 
 // A count cannot absorb a spoonful. The app has to skip the ingredient
 // rather than guess, or a "200 g bag of flour" gets deleted by a recipe that
 // asked for one cup.
-eq(convertScoop(30, 'flour', 'count'), null, 'a spoonful cannot become a count');
-eq(convertScoop(30, 'flour', 'unknown'), null, 'a spoonful cannot become an unknown');
+eq(convertBase(30, 'scoop', 'count', 'flour'), null, 'a spoonful cannot become a count');
+eq(convertBase(30, 'scoop', 'unknown', 'flour'), null, 'a spoonful cannot become an unknown');
+
+// THE OTHER DIRECTION, AND WHY IT MATTERS
+//
+// There used to be a second converter here, `convertScoop`, that could only
+// go one way: a spoonful into grams. It could not bring grams back into
+// millilitres, because it took the amount as millilitres and had no way of
+// knowing it was really a mass.
+//
+// That one-way rule is not a limitation, it is the bug. A shelf measured in
+// spoons against a recipe written in grams has to compare, and so does a
+// shelf measured in grams against a recipe written in spoons. Converting
+// only one side is how "2 cups of flour" deducted 1 cup and left 1.
+//
+// So the bridge has to work from both sides, which is why there is one
+// converter and not two. A converter that only knows one direction is a
+// trap for the next person who reaches for it.
+close(convertBase(500, 'mass', 'vol', 'milk') ?? 0, 500 / 1.03, '500 g of milk is about 485 ml');
+eq(convertBase(500, 'mass', 'count', 'milk'), null, 'a mass cannot become a count');
+eq(convertBase(500, 'mass', 'unknown', 'milk'), null, 'a mass cannot become an unknown');
+
+// AND THERE IS ONLY ONE CONVERTER
+//
+// This assertion is here to keep the second one gone. It is not about the
+// numbers — it is about the shape of the module. A one-way converter sitting
+// in the units file is a trap: the next person who reaches for "the thing
+// that converts spoons" finds it, it compiles, it works in the one direction
+// it was written for, and it silently reintroduces the bug it looks like it
+// solves.
+eq(
+  units.convertScoop,
+  undefined,
+  'units.ts exports no second, one-way converter',
+);
 
 console.log('\nthe same answer on both sides of the kitchen');
 console.log('');
