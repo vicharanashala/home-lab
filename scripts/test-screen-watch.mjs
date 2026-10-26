@@ -196,5 +196,40 @@ console.log('\na watch that comes back to life knows the store again');
   );
 }
 
+console.log('\na share that moves to another store does not keep the old picture');
+{
+  const now = 1000;
+  const amazonFrame = frameFromDataUrl('data:image/jpeg;base64,QU1BWk9O', 900, 506);
+  const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
+
+  let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Amazon Fresh' }, now);
+  state = reduceWatch(state, { kind: 'frame', frame: amazonFrame }, now);
+  ok(state.frame === amazonFrame, 'the first store is being watched');
+
+  // The person now shares a different store. The sharer names it at once, and
+  // the first picture of the new store is up to two seconds away.
+  state = reduceWatch(state, { kind: 'status', watching: true, label: 'Big Bazaar' }, now + 10);
+  ok(state.label === 'Big Bazaar', 'the new store is named');
+  ok(
+    state.frame === null,
+    "THE OLD STORE'S PICTURE IS DROPPED",
+    state.frame ? `still held: ${state.frame.data}` : '',
+  );
+
+  // And the new store's picture is used when it arrives.
+  const bazaarFrame = frameFromDataUrl('data:image/jpeg;base64,QklHQkFaQVJU', 900, 506);
+  state = reduceWatch(state, { kind: 'frame', frame: bazaarFrame }, now + 20);
+  ok(state.frame === bazaarFrame, 'and the new store\'s picture is used');
+
+  // A status that names the SAME store keeps the picture: the sharer answers
+  // a hello with a status, and that must not throw the picture away.
+  state = reduceWatch(state, { kind: 'status', watching: true, label: 'Big Bazaar' }, now + 30);
+  ok(
+    state.frame === bazaarFrame,
+    'a status for the same store keeps the picture',
+    state.frame ? '' : 'the picture was thrown away',
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

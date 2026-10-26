@@ -186,11 +186,27 @@ export function applyWatchMessage(
     return { ...state, watching: true, frame: msg.frame, lastSeenAt: now };
   }
   if (msg.kind === 'status') {
+    // WHY A FRAME IS DROPPED WHEN THE STORE CHANGES: a frame belongs to the
+    // store it was taken from. When the share moves to another store, the
+    // frame still held is a picture of the OLD one, and keeping it under the
+    // NEW name would let House Bot answer a question about the new store
+    // with a picture of the old one — the person's "how much is this?"
+    // answered with another shop's price, which is worse than saying nothing.
+    //
+    // WHY THE GAP IS REAL AND NOT THEORETICAL: the first frame of the new
+    // store arrives on the next tick of the frame timer, up to two seconds
+    // later, and a freshly-opened video may not have a picture yet at all.
+    //
+    // WHY THE LABEL IS WHAT IS COMPARED: the sharer names the store in every
+    // status, and the frame arrives after the status that names the store it
+    // was taken from — so the label the watcher holds is the store the held
+    // frame came from.
+    const sameStore = msg.label === state.label;
     return {
       watching: msg.watching,
       label: msg.label,
       // A share that has stopped leaves no frame to send.
-      frame: msg.watching ? state.frame : null,
+      frame: msg.watching && sameStore ? state.frame : null,
       lastSeenAt: msg.watching ? (state.watching ? state.lastSeenAt : now) : null,
     };
   }

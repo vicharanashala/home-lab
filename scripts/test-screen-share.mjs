@@ -37,7 +37,7 @@
  * Run with:  node scripts/test-screen-share.mjs
  */
 import React from 'react';
-import { SCREEN_WATCH_CHANNEL } from '../src/utils/screenWatch.ts';
+import { SCREEN_WATCH_CHANNEL, reduceWatch } from '../src/utils/screenWatch.ts';
 
 let passed = 0;
 let failed = 0;
@@ -492,6 +492,58 @@ console.log('\nthe person stops the share while the picker is open');
     `watching: ${harness.value.state.watching}`,
   );
   ok(timers.size === 0, 'and no frame timer is left running', `timers: ${timers.size}`);
+}
+
+console.log('\na share that moves to another store does not keep the old picture');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+  const watcher = new FakeChannel(SCREEN_WATCH_CHANNEL);
+  const harness = mountHook(() => useScreenSharer());
+
+  // What the other tab knows. This is the rule the other tab folds the
+  // sharer's messages with — the same one House Bot uses.
+  let watch = { watching: false, label: null, frame: null, lastSeenAt: null };
+  const deliver = (m) => {
+    watch = reduceWatch(watch, m, Date.now());
+  };
+
+  await harness.value.start('Amazon Fresh', () => {});
+  // The frame timer fires once, so the other tab holds a picture of the first
+  // store — which is what it would answer a question with.
+  for (const fn of [...timers.values()]) fn();
+  for (const m of watcher.received) deliver(m);
+  ok(watch.label === 'Amazon Fresh', 'the first store is being watched');
+  const amazonFrame = watch.frame;
+  ok(amazonFrame !== null, 'and the other tab holds its picture');
+
+  // The person now shares a different store. The sharer names it at once,
+  // and the first picture of the new store only comes with the next tick of
+  // the frame timer — so for a moment the other tab knows the new name and
+  // still holds the old picture.
+  watcher.received.length = 0;
+  await harness.value.start('Big Bazaar', () => {});
+  for (const m of watcher.received) deliver(m);
+
+  ok(watch.label === 'Big Bazaar', 'the new store is named');
+  ok(
+    watch.frame === null,
+    "THE OLD STORE'S PICTURE IS NOT STILL THERE",
+    watch.frame ? `still held: ${watch.frame.data}` : '',
+  );
+  ok(
+    watch.frame !== amazonFrame,
+    "and what is held is not the first store's picture",
+  );
+
+  // The next tick brings the new store's picture, and that is what is used.
+  for (const fn of [...timers.values()]) fn();
+  for (const m of watcher.received) deliver(m);
+  ok(watch.frame !== null, 'the new store\'s picture arrives');
+  ok(watch.frame !== amazonFrame, 'and it is not the first store\'s picture');
+
+  harness.unmount();
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
