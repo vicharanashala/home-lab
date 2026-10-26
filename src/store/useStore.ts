@@ -29,13 +29,18 @@ import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimens
 import { convertBase, formatInUnit, subtractBase, toBaseUnit, toDisplayUnit } from '../utils/units';
 import { MEAL_SLOTS, rescaledServings, suggestedServingsForDay } from '../utils/portions';
 import { DEFAULT_CONSENTS } from '../utils/consent';
-import { saveAppState, STORAGE_KEY, IMPORT_NOT_SAVED_MESSAGE } from '../utils/appStorage';
+import { saveAppState, STORAGE_KEY, IMPORT_NOT_SAVED_MESSAGE, watchForOtherTabs, type StorageReader } from '../utils/appStorage';
 
-const loadFromStorage = (): AppState | null => {
-  if (typeof window === 'undefined') return null;
+/**
+ * The state as it is stored, or null when there is nothing to read.
+ *
+ * WHY THE RAW TEXT IS A PARAMETER: the same parser reads the state at
+ * startup and reads it again when another tab writes it. A parser that read
+ * the storage for itself could only ever be used in one of those places.
+ */
+const parseAppState = (raw: string | null): AppState | null => {
+  if (!raw) return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as AppState;
     if (!parsed.grocery || !parsed.stock || !parsed.settings) return null;
     // Forward-compatible: fill in missing settings keys.
@@ -70,6 +75,15 @@ const loadFromStorage = (): AppState | null => {
       location: it.location ?? 'fridge',
     }));
     return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const loadFromStorage = (): AppState | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return parseAppState(window.localStorage.getItem(STORAGE_KEY));
   } catch {
     return null;
   }
@@ -321,6 +335,54 @@ function setState(updater: (cur: InternalState) => InternalState): void {
   }
   listeners.forEach((l) => l());
 }
+
+/**
+ * Take the state another tab wrote, WITHOUT writing it back.
+ *
+ * WHY IT IS NOT `setState`: `setState` saves whatever it is given, and
+ * saving what another tab has just saved starts a conversation between the
+ * tabs — each one answering the other's answer, for ever. The state another
+ * tab wrote is already saved; writing it again would only make noise.
+ *
+ * WHY A WHOLE STATE AND NOT A MERGE: the whole state is what the other tab
+ * wrote, and a merge would have to decide which of two answers to the same
+ * question is the household's. The tab that wrote last is the one that was
+ * looking at it, so the whole of it is taken.
+ */
+function adoptAppState(app: AppState): void {
+  const cur = getState();
+  if (cur.app === app) return;
+  state = { ...cur, app };
+  listeners.forEach((l) => l());
+}
+
+/**
+ * Keep this tab in step with the other tabs of the app.
+ *
+ * WHY IT IS HERE AND NOT IN THE HOOK: the rule is about the tab, not about
+ * the component. A tab that is showing nothing still has to know what the
+ * other tabs wrote, or the first thing it shows is a list that was already
+ * out of date.
+ *
+ * WHY THE STORAGE IS ASKED FOR SAFELY: a browser with storage blocked
+ * throws when the app READS `window.localStorage`, so asking for it here
+ * could take the whole app down at startup. There is nowhere to watch, and
+ * the app carries on the way it did before.
+ */
+function safeLocalStorage(): StorageReader | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+watchForOtherTabs(safeLocalStorage(), (raw) => {
+  const loaded = parseAppState(raw);
+  if (!loaded) return;
+  adoptAppState(loaded);
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Toast timers (module-scoped; survives component remounts)                  */

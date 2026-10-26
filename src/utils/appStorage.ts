@@ -82,6 +82,13 @@ export interface StorageWriter {
 }
 
 /**
+ * The bit of the Storage interface a read needs.
+ */
+export interface StorageReader {
+  getItem(key: string): string | null;
+}
+
+/**
  * Write the app's state, and say whether it was written.
  *
  * WHY IT REPORTS INSTEAD OF SWALLOWING: a write that failed must not look
@@ -104,4 +111,71 @@ export function saveAppState(
   } catch {
     return false;
   }
+}
+
+/**
+ * Listen for another tab of the app writing the household's state.
+ *
+ * WHY THE APP NEEDS A LISTENER AT ALL
+ *
+ * The app's state is one localStorage key. Every tab keeps its own copy of
+ * it in memory, and writes the WHOLE copy back whenever the person changes
+ * something. So a tab that has not heard what another tab wrote writes a
+ * copy that was already out of date.
+ *
+ * Two tabs of this app are open at the same time by design: the Digital
+ * stores page holds the screen share and shows the shopping list beside it,
+ * and House Bot is opened in a tab of its own — the only way to ask the bot
+ * about the screen without ending the share. So:
+ *
+ *   House Bot offers "milk" and the person adds it
+ *   the stores page is not told, and still holds the list from before
+ *   the person ticks "bread" off in the stores page
+ *   the stores page writes its own list back
+ *   the milk is gone
+ *
+ * The milk was not deleted by anything the person did. It was deleted by a
+ * tab writing a list that was out of date before the person touched it — and
+ * it was never on the screen the person was looking at when it vanished.
+ *
+ * WHY THE BROWSER'S OWN EVENT
+ *
+ * `storage` is fired in every tab of the origin EXCEPT the one that made
+ * the change, which is exactly the set of tabs that need to hear about it.
+ * The browser will not deliver it to the writer, so the tabs cannot end up
+ * answering each other for ever.
+ *
+ * WHY THE KEY IS CHECKED
+ *
+ * The browser fires this event for every key that changes in the origin —
+ * the snapshot backups, the food trainer's examples, the end-of-day
+ * reminder's flags. Only the app's own key holds the household.
+ *
+ * WHY THE VALUE IS READ AND NOT TAKEN FROM THE EVENT
+ *
+ * Another tab may have written again by the time the event is delivered,
+ * and the value on the storage is the one that is true now.
+ *
+ * @param storage   where the state is kept; null means there is nowhere to look
+ * @param onChanged called with the raw state another tab wrote
+ * @returns how to stop listening
+ */
+export function watchForOtherTabs(
+  storage: StorageReader | null,
+  onChanged: (raw: string) => void,
+): () => void {
+  if (typeof window === 'undefined' || !storage) return () => {};
+  // WHY THE LISTENER IS ASKED FOR SAFELY: a browser with storage blocked
+  // throws when the app READS `window.localStorage`, and an environment
+  // without events at all has no `addEventListener` to ask. Neither is a
+  // reason for the app to fail to start — there is simply nowhere to watch.
+  if (typeof window.addEventListener !== 'function') return () => {};
+  const onStorage = (event: { key: string | null }) => {
+    if (event.key !== STORAGE_KEY) return;
+    const raw = storage.getItem(STORAGE_KEY);
+    if (raw === null) return;
+    onChanged(raw);
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
 }
