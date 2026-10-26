@@ -62,7 +62,22 @@ function freePort() {
 function ensureBridgeDependencies() {
   const modules = join(bridgeDir, 'node_modules');
   if (existsSync(join(modules, 'express'))) return;
-  const checkout = dirname(dirname(realpathSync(join(here, '..', 'node_modules'))));
+  // WHY ONE dirname AND NOT TWO: the checkout's node_modules is
+  // <checkout>/node_modules, so its parent is the checkout itself. Two
+  // dirnames point at the checkout's PARENT, and the bridge's dependencies
+  // are not up there.
+  //
+  // WHY THIS MATTERS WHEN THE TEST RUNS FROM AN EXPORT: the quality gate
+  // exports the index to a temporary directory and links that directory's
+  // node_modules to the real checkout's. The link resolves to the REAL
+  // checkout, so this has to follow it — otherwise the test looks for the
+  // bridge's dependencies one level above the repository, finds nothing,
+  // and fails.
+  //
+  // WHY IT WAS HIDDEN UNTIL NOW: the test only passed in the gate because a
+  // sibling test that runs earlier had already created the link in the
+  // exported directory. Run on its own, it failed.
+  const checkout = dirname(realpathSync(join(here, '..', 'node_modules')));
   const real = join(checkout, 'bridge', 'shift ', 'node_modules');
   if (!existsSync(join(real, 'express'))) {
     throw new Error(`cannot find the bridge's dependencies at ${real}`);
