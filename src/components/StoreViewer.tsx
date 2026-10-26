@@ -7,6 +7,12 @@ import { ShoppingListPanel } from './ShoppingListPanel';
 import { StoreTabs } from './StoreTabs';
 import { openTab, closeTab } from '../utils/storeTabs';
 import type { TabState } from '../utils/storeTabs';
+import {
+  markFrameLoaded,
+  isSpinnerShown,
+  NO_FRAMES_LOADED,
+} from '../utils/storeViewerFrames';
+import type { FrameState } from '../utils/storeViewerFrames';
 import { DIGITAL_STORES } from '../utils/digitalStores';
 
 /**
@@ -56,7 +62,19 @@ export function StoreViewer() {
       ? openTab({ tabs: [], activeId: '', seq: 0 }, s)
       : { tabs: [], activeId: '', seq: 0 };
   });
-  const [loading, setLoading] = useState(true);
+  // WHICH FRAMES HAVE FINISHED LOADING, PER TAB.
+  //
+  // WHY PER TAB AND NOT ONE FLAG: a frame that is not on screen is hidden
+  // rather than taken down, so it keeps the page it was showing. Switching
+  // back to a tab whose frame has ALREADY loaded therefore fires NO load
+  // event — the frame was never taken down, so the browser never loads it
+  // again — while a single flag reset on every tab change would be set true
+  // all over again and stay true for ever. The spinner then sat over a store
+  // that had finished loading, and the store looked broken.
+  //
+  // The rule itself lives in `storeViewerFrames` so it can be tested without
+  // a browser: see scripts/test-store-viewer-loading.mjs.
+  const [frames, setFrames] = useState<FrameState>(NO_FRAMES_LOADED);
   const [adding, setAdding] = useState(false);
   const { tabs, activeId } = tabState;
 
@@ -101,10 +119,6 @@ export function StoreViewer() {
       navigate(`/digital-stores/${s.id}`, { replace: true });
     }
   }, [activeTab, navigate]);
-
-  useEffect(() => {
-    setLoading(true);
-  }, [activeId]);
 
   if (!store && !activeTab) {
     return (
@@ -221,7 +235,7 @@ export function StoreViewer() {
                   would throw its page away, and coming back to it would make
                   the store load all over again. */}
               <div className="relative rounded-2xl overflow-hidden border border-sage-200 dark:border-ink-700 bg-white dark:bg-ink-800 shadow-soft">
-                {loading && activeId && (
+                {isSpinnerShown(frames, activeId) && (
                   <div className="absolute inset-0 z-10 grid place-items-center bg-white/80 dark:bg-ink-800/80 backdrop-blur-sm">
                     <Loader2 size={28} className="animate-spin text-sage-400" />
                   </div>
@@ -239,8 +253,12 @@ export function StoreViewer() {
                       title={`${s.name} inside HomeHub`}
                       loading={visible ? 'eager' : 'lazy'}
                       onLoad={() => {
-                        if (!visible) return;
-                        setLoading(false);
+                        // A frame that is not on screen counts as loaded too:
+                        // it is hidden, not taken down, so it loads whether or
+                        // not it is the one being looked at — and coming back
+                        // to it must not show a spinner over a page that is
+                        // already there.
+                        setFrames((prev) => markFrameLoaded(prev, tab.id));
                       }}
                       className={clsx(
                         'w-full border-0 bg-white dark:bg-ink-900',
