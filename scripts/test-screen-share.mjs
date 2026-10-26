@@ -232,8 +232,14 @@ function makeStream() {
  *
  * The captures it hands back are collected in `streams`, so a test can ask
  * what is still running.
+ *
+ * WHY THE VIDEO CAN BE HELD BACK: a real video does not start playing the
+ * instant it is told to, and the page can go away while it is still
+ * starting. `gate` holds the answer to "has the video started?" until the
+ * test gives it, so a test can put the page's life and the video's start on
+ * opposite sides of each other.
  */
-function installBrowser(streams) {
+function installBrowser(streams, gate) {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     writable: true,
@@ -268,7 +274,7 @@ function installBrowser(streams) {
           playsInline: false,
           videoWidth: 1200,
           videoHeight: 800,
-          play: async () => {},
+          play: () => (gate ? gate.promise : Promise.resolve()),
         };
       },
     },
@@ -299,6 +305,14 @@ function reset() {
   FakeChannel.all.clear();
   timers.clear();
 }
+
+/**
+ * Let the hook get as far as it can.
+ *
+ * The browser's answer comes back as a promise, so the hook is waiting on one
+ * when the test's next line runs. A turn of the event loop lets it arrive.
+ */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const { useScreenSharer } = await import('../src/hooks/useScreenWatch.ts');
 
@@ -492,6 +506,96 @@ console.log('\nthe person stops the share while the picker is open');
     `watching: ${harness.value.state.watching}`,
   );
   ok(timers.size === 0, 'and no frame timer is left running', `timers: ${timers.size}`);
+}
+
+console.log('\nthe page goes away while the video is still starting');
+{
+  reset();
+  const streams = [];
+  // The video does not start the instant it is told to.
+  let startVideo;
+  const gate = {
+    promise: new Promise((resolve) => {
+      startVideo = resolve;
+    }),
+  };
+  installBrowser(streams, gate);
+
+  const watcher = new FakeChannel(SCREEN_WATCH_CHANNEL);
+  const harness = mountHook(() => useScreenSharer());
+
+  const starting = harness.value.start('Amazon Fresh', () => {});
+  await settle();
+
+  // The page goes away — the person navigated, or the tab was replaced.
+  const before = watcher.received.length;
+  harness.unmount();
+
+  // And now the video starts playing — for a page that is no longer there.
+  startVideo();
+  await starting;
+
+  // Only what arrived AFTER the page went away matters. The share may well
+  // have been announced before that; it must not be announced again after.
+  const after = watcher.received.slice(before);
+  ok(
+    !after.some((m) => m.kind === 'status' && m.watching === true),
+    'THE OTHER TABS ARE NOT TOLD A SHARE IS LIVE',
+    after.length ? `they were told: ${JSON.stringify(after)}` : '',
+  );
+  ok(
+    timers.size === 0,
+    'and no frame timer is left running',
+    `timers: ${timers.size}`,
+  );
+  ok(
+    streams.every((s) => s.track.stopped),
+    'and the capture is given back',
+  );
+}
+
+console.log('\nthe person stops the share while the video is still starting');
+{
+  reset();
+  const streams = [];
+  let startVideo;
+  const gate = {
+    promise: new Promise((resolve) => {
+      startVideo = resolve;
+    }),
+  };
+  installBrowser(streams, gate);
+
+  const watcher = new FakeChannel(SCREEN_WATCH_CHANNEL);
+  const harness = mountHook(() => useScreenSharer());
+
+  const starting = harness.value.start('Amazon Fresh', () => {});
+  await settle();
+
+  // Stop means stop — and the person must not be told the share is running
+  // afterwards, because the capture it would be running on is already gone.
+  const before = watcher.received.length;
+  harness.value.stop();
+
+  startVideo();
+  await starting;
+
+  const after = watcher.received.slice(before);
+  ok(
+    !after.some((m) => m.kind === 'status' && m.watching === true),
+    'THE OTHER TABS ARE NOT TOLD A SHARE IS LIVE',
+    after.length ? `they were told: ${JSON.stringify(after)}` : '',
+  );
+  ok(
+    harness.value.state.watching === false,
+    'and the page does not start sharing',
+    `watching: ${harness.value.state.watching}`,
+  );
+  ok(
+    timers.size === 0,
+    'and no frame timer is left running',
+    `timers: ${timers.size}`,
+  );
 }
 
 console.log('\na share that moves to another store does not keep the old picture');

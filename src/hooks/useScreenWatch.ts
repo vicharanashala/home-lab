@@ -247,11 +247,28 @@ export function useScreenSharer() {
         video.srcObject = stream;
         video.muted = true;
         video.playsInline = true;
-        try {
-          await video.play();
-        } catch {
+        // WHY PLAY IS NOT WAITED FOR: the video takes a moment to start, and
+        // waiting for it here left a window in which the page could go away —
+        // or the person could press Stop — while the code after the wait was
+        // still going to run. It then carried on as if nothing had happened:
+        // it opened a channel on a page that was no longer there, left a frame
+        // timer running for ever, and told the other tabs a share was live
+        // when the capture had already been given back. The other tabs were
+        // told the share was over and then, a moment later, that it was
+        // running.
+        //
+        // WHY IT IS SAFE TO CARRY ON WITHOUT IT: the frame grab already copes
+        // with a video that has no picture yet — it finds no width and sends
+        // nothing, and the next tick of the frame timer tries again. So there
+        // is nothing here to wait for, and nothing that needs to wait for it.
+        //
+        // WHY THIS MATTERS FOR THE ATTEMPT NUMBER: the attempt is checked
+        // after the browser grants the capture, and the code from there to the
+        // end is now one unbroken run, so no answer can arrive in the middle
+        // of it. The attempt only has to be checked once.
+        void video.play().catch(() => {
           /* the frame grab will simply find no picture yet */
-        }
+        });
         videoRef.current = video;
 
         // The browser's own "Stop sharing" button ends the track, and this is
