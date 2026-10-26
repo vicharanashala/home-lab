@@ -86,6 +86,36 @@ export const STORE_VIEWER_CSP = [
 ].join('; ');
 
 /**
+ * Escape a value for use in the failure pages' markup.
+ *
+ * WHY IT IS NEEDED: the store's URL is not a fixed string. The route builds
+ * it from the request path and query —
+ *
+ *     const { host, path, url: target } = storeViewerTarget(rest, query);
+ *
+ * — so it carries whatever the caller typed, byte for byte. Interpolated
+ * raw into `href="${url}"`, a quote in the query ended the attribute and the
+ * rest of the query was parsed as markup: a <script> that runs on the app's
+ * OWN origin, where the shared secret (it ships in the publicly served
+ * bundle) and the owner's grocery list live. The store-viewer route sits
+ * outside the token gate — only /api and /uploads are behind it — so a
+ * crafted link is enough.
+ *
+ * WHY ESCAPING AND NOT VALIDATING: the URL is a real address the user may
+ * want to open, quotes and angle brackets included. Escaping keeps it one:
+ * the browser shows the caller's characters as text, and the link still
+ * points where it did.
+ */
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * The page shown when the store's edge refuses to serve us.
  *
  * BigBasket's edge refuses every request that does not come from a real
@@ -94,6 +124,8 @@ export const STORE_VIEWER_CSP = [
  * that does work.
  */
 export function storeViewerBlockedPage(storeName, url) {
+  const name = escapeHtml(storeName);
+  const link = escapeHtml(url);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -109,10 +141,10 @@ export function storeViewerBlockedPage(storeName, url) {
     padding:12px 22px;border-radius:12px;font-weight:600;font-size:14px}
 </style></head>
 <body><div class="box">
-  <h1>${storeName} will not open inside HomeHub</h1>
-  <p>${storeName}'s server only shows its pages to a real browser, so this one
+  <h1>${name} will not open inside HomeHub</h1>
+  <p>${name}'s server only shows its pages to a real browser, so this one
   is opened in a new tab instead.</p>
-  <a href="${url}" target="_blank" rel="noreferrer noopener">Open ${storeName}</a>
+  <a href="${link}" target="_blank" rel="noreferrer noopener">Open ${name}</a>
 </div></body></html>`;
 }
 
@@ -131,6 +163,8 @@ export function storeViewerBlockedPage(storeName, url) {
  * nothing, so the operator could not tell the two apart either.
  */
 export function storeViewerUnreachablePage(storeName, url) {
+  const name = escapeHtml(storeName);
+  const link = escapeHtml(url);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -146,11 +180,11 @@ export function storeViewerUnreachablePage(storeName, url) {
     padding:12px 22px;border-radius:12px;font-weight:600;font-size:14px}
 </style></head>
 <body><div class="box">
-  <h1>${storeName} could not be reached</h1>
-  <p>HomeHub could not get a page from ${storeName} just now — the request
+  <h1>${name} could not be reached</h1>
+  <p>HomeHub could not get a page from ${name} just now — the request
   never arrived. That is usually the store being down or the connection
   dropping. Try again in a moment, or open the store in a new tab.</p>
-  <a href="${url}" target="_blank" rel="noreferrer noopener">Open ${storeName}</a>
+  <a href="${link}" target="_blank" rel="noreferrer noopener">Open ${name}</a>
 </div></body></html>`;
 }
 
