@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+// The extension is written out on purpose. Node's ESM resolver will not guess
+// '.ts' for a relative path, so a test can only import this file if the
+// import says so — and the rule that lives here (a page holds one share, and
+// gives the old one back when it takes a new one) is a rule that has to be
+// testable without a browser.
 import {
   SCREEN_WATCH_CHANNEL,
   WATCH_FRAME_INTERVAL_MS,
@@ -7,7 +12,7 @@ import {
   sharerReply,
   type WatchMessage,
   type WatchState,
-} from '../utils/screenWatch';
+} from '../utils/screenWatch.ts';
 
 // The watcher's state lives with the protocol it belongs to, but the hook is
 // where the rest of the app has always imported it from.
@@ -73,23 +78,45 @@ export function useScreenSharer() {
     }
   }, []);
 
-  const stop = useCallback(() => {
+  /**
+   * Give back everything a share was holding.
+   *
+   * WHY THIS HAS TO EXIST: the browser's share belongs to this page, and the
+   * page can only hold one at a time. If a second share starts without the
+   * first being given back, the first capture keeps running — the tab stays
+   * filmed and the browser's own "you are sharing" indicator stays on, for a
+   * share the page has already forgotten about. The Stop button only knows
+   * about the share it was told about, so it cannot stop the other one.
+   *
+   * WHY IT IS CALLED AFTER THE NEW SHARE IS GRANTED AND NOT BEFORE: the
+   * picker can be refused. If the old share were given back before the
+   * answer arrived, a refusal would cost the person the share they already
+   * had and were happy with.
+   */
+  const releasePreviousShare = useCallback(() => {
     if (timerRef.current !== null) {
       window.clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    sharingRef.current = false;
-    try {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-    } catch {
-      /* already stopped */
-    }
+    const old = streamRef.current;
     streamRef.current = null;
+    if (old) {
+      try {
+        old.getTracks().forEach((t) => t.stop());
+      } catch {
+        /* already stopped */
+      }
+    }
     const v = videoRef.current;
     if (v) {
       v.srcObject = null;
       videoRef.current = null;
     }
+  }, []);
+
+  const stop = useCallback(() => {
+    sharingRef.current = false;
+    releasePreviousShare();
     labelRef.current = null;
     setState({
       watching: false,
@@ -99,7 +126,7 @@ export function useScreenSharer() {
       sentFrame: false,
     });
     post({ kind: 'status', watching: false, label: null });
-  }, [post]);
+  }, [post, releasePreviousShare]);
 
   /**
    * Ask the browser for a share, and start watching it.
@@ -135,6 +162,12 @@ export function useScreenSharer() {
           video: { frameRate: 5 },
           audio: false,
         });
+
+        // The new share is granted, so the old one can be given back now.
+        // Not before — see releasePreviousShare: a refused picker must not
+        // cost the person the share they already had.
+        releasePreviousShare();
+
         streamRef.current = stream;
         labelRef.current = label;
         sharingRef.current = true;
@@ -153,7 +186,16 @@ export function useScreenSharer() {
         // The browser's own "Stop sharing" button ends the track, and this is
         // how the app hears about it.
         stream.getVideoTracks().forEach((track) => {
-          track.addEventListener('ended', () => stop());
+          track.addEventListener('ended', () => {
+            // ONLY THE SHARE THAT IS RUNNING NOW MAY END IT.
+            //
+            // A track belongs to the share it was captured for. Once a share
+            // has been replaced, its track ending says nothing about the
+            // share that replaced it — and stopping that one would end a
+            // share the person never touched.
+            if (streamRef.current !== stream) return;
+            stop();
+          });
         });
 
         if (!channelRef.current) {
@@ -206,29 +248,15 @@ export function useScreenSharer() {
         return false;
       }
     },
-    [post, stop],
+    [post, releasePreviousShare, stop],
   );
 
   // The share is stopped when this page goes away, so the browser's own
   // "stop sharing" indicator does not keep promising something that is gone.
   useEffect(() => {
     return () => {
-      if (timerRef.current !== null) {
-        window.clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
       sharingRef.current = false;
-      try {
-        streamRef.current?.getTracks().forEach((t) => t.stop());
-      } catch {
-        /* already stopped */
-      }
-      streamRef.current = null;
-      const v = videoRef.current;
-      if (v) {
-        v.srcObject = null;
-        videoRef.current = null;
-      }
+      releasePreviousShare();
 
       // TELL THE OTHER TABS, BEFORE THE CHANNEL IS CLOSED.
       //
@@ -252,7 +280,7 @@ export function useScreenSharer() {
       }
       channelRef.current = null;
     };
-  }, [post]);
+  }, [post, releasePreviousShare]);
 
   return { state, start, stop };
 }

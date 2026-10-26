@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Globe, ChevronRight, MonitorPlay, Square, Loader2 } from 'lucide-react';
+import { Globe, ChevronRight, MonitorPlay, Square, Loader2, Bot } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { ShoppingListPanel } from '../components/ShoppingListPanel';
 import { useStore } from '../store/useStore';
@@ -36,6 +36,13 @@ import { SHARE_PICKER_HINT } from '../utils/screenWatch';
  * picker opens, and the person chooses "Just this tab" and the store they
  * just opened. If they say no, the store still opens and nothing else
  * happens.
+ *
+ * HOUSE BOT NEEDS A TAB OF ITS OWN
+ * The share belongs to this page, so this page is the share. House Bot has to
+ * be somewhere else for the share to still be running when it is asked
+ * about — and the app's only way into House Bot is the nav, which replaces
+ * this page and takes the share with it. So the page offers a way into House
+ * Bot that leaves this page alive.
  */
 export function DigitalStoresPage() {
   const { grocery } = useStore();
@@ -61,6 +68,23 @@ export function DigitalStoresPage() {
     void share.start(name, () => {
       window.open(url, '_blank', 'noopener,noreferrer');
     }).finally(() => setOpening(null));
+  };
+
+  /**
+   * Open House Bot in a tab of its own.
+   *
+   * WHY A NEW TAB AND NOT THE NAV: the browser's share belongs to this page,
+   * and this page IS the share. The only way into House Bot in the app is the
+   * nav, and the nav replaces the page — which ends the share, because the
+   * share goes with the page that asked for it. House Bot in a tab of its own
+   * leaves this page alive, and the share alive with it.
+   *
+   * WHY IT IS OFFERED HERE AND NOW: without it, the instruction to "open
+   * House Bot" sends the person to the one route that ends the share, and
+   * the app would be telling them to do the thing that breaks it.
+   */
+  const openHouseBot = () => {
+    window.open('/house-bot', '_blank');
   };
 
   return (
@@ -133,9 +157,17 @@ export function DigitalStoresPage() {
                   </p>
                   <p className="text-[11px] text-sage-600 dark:text-ink-300 mt-0.5 leading-relaxed">
                     {share.state.sentFrame
-                      ? 'House Bot can see it. Open House Bot and ask about what is on the screen. The share keeps going until you stop it.'
+                      ? 'House Bot can see it. Open House Bot in a tab of its own and ask about what is on the screen. The share keeps going until you stop it.'
                       : 'Waiting for the screen to come through. House Bot will be able to see it once the first picture arrives.'}
                   </p>
+                  <button
+                    type="button"
+                    onClick={openHouseBot}
+                    className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-sage-300 dark:border-sage-800 bg-white dark:bg-ink-800 px-2 py-1 text-[11px] font-semibold text-sage-700 dark:text-cream-100 hover:bg-sage-50 dark:hover:bg-ink-700"
+                  >
+                    <Bot size={12} />
+                    Open House Bot in a new tab
+                  </button>
                 </div>
                 <button
                   type="button"
