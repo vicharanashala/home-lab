@@ -160,6 +160,51 @@ const DESCRIBES_A_DISH =
   /^(?:needs?\b|you will need\b|contains?\b|ingredients?\b|make with\b|made with\b)/i;
 
 /**
+ * Does this text name something you can buy?
+ *
+ * THE HOUSE'S OWN CATEGORY VOCABULARY IS THE ORACLE: the kitchen already
+ * knows how to categorise "tomato", "paneer" and "ghee", and it has no idea
+ * what to do with "optional", "grated" or "for serving" — so a word the
+ * categoriser recognises is a thing to buy, and a word it does not
+ * recognise is a preparation detail.
+ */
+function namesSomethingToBuy(text: string): boolean {
+  const cleaned = text.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return false;
+  return (
+    suggestCategory(cleaned, 'other') !== 'other' ||
+    pluralAwareCategory(cleaned, 'other') !== 'other'
+  );
+}
+
+/**
+ * A note that LISTS things you can buy describes a DISH.
+ *
+ * WHY A COMMA ALONE IS NOT ENOUGH: the House Bot writes "Sugar — ½ tsp,
+ * optional" and "Fresh coconut — ½ cup, grated". The comma there separates
+ * a quantity from a preparation detail, not one ingredient from another.
+ * The rule that read any comma as a dish threw the sugar and the coconut
+ * away with the note — the exact failure the preparation-note rule exists
+ * to prevent.
+ *
+ * SO THE PARTS HAVE TO NAME SOMETHING YOU CAN BUY: a preparation detail
+ * ("optional", "grated", "for serving") names nothing you can buy, so a
+ * note made of those is a preparation note and the ingredient stays. A
+ * note that names two or more real ingredients — "paneer, tomato, onion" —
+ * is a dish listing what it is made of, and a dish is not an item.
+ *
+ * WHY TWO AND NOT ONE: one part naming an ingredient is not an
+ * enumeration, it is a note that mentions a side ("paneer, chopped"). Two
+ * parts that both name something to buy is a list, and a list in a note
+ * means the line is a dish.
+ */
+function noteListsThingsToBuy(tail: string): boolean {
+  const parts = tail.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return false;
+  return parts.filter(namesSomethingToBuy).length >= 2;
+}
+
+/**
  * Extract a clean display name from a line, stripping trailing
  * quantity/unit annotations like "(about 2 cups)" or "— 1 tbsp" so the
  * grocery item shows up as just "Onion" instead of "Onion — 1 tbsp".
@@ -190,7 +235,7 @@ function extractName(line: string): string {
   const note = s.match(PREPARATION_NOTE);
   if (note) {
     const tail = note[1].trim();
-    if (tail.includes(',') || DESCRIBES_A_DISH.test(tail)) return '';
+    if (DESCRIBES_A_DISH.test(tail) || noteListsThingsToBuy(tail)) return '';
     s = s.slice(0, note.index);
   }
   return s.trim();

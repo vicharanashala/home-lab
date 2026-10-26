@@ -119,6 +119,46 @@ console.log('\na dish is still not an item');
   ok(names.includes('Rice'), 'the plain ingredient beside it is kept', names.join(' | '));
 }
 
+console.log('\na comma in a preparation note is not a dish');
+{
+  // THE BUG: the rule that kept a dish off the list read "the note has a
+  // comma" as "the note lists ingredients". The House Bot writes the
+  // quantity and the preparation detail in one comma-separated note —
+  // "Sugar — ½ tsp, optional" — and the sugar was thrown away with the
+  // note. These three lines are what the running app actually wrote when
+  // it was asked for a grocery list; they were captured from the live
+  // reply, not written here to suit the rule.
+  const names = namesOf(
+    [
+      '- Sugar — ½ tsp, optional',
+      '- Fresh coconut — ½ cup, grated',
+      '- Lemon — optional, for serving',
+    ].join('\n'),
+  );
+  ok(names.includes('Sugar'), 'the sugar survives its "optional"', names.join(' | '));
+  ok(names.includes('Fresh coconut'), 'the coconut survives its "grated"', names.join(' | '));
+  ok(names.includes('Lemon'), 'the lemon survives its "for serving"', names.join(' | '));
+  ok(names.length === 3, 'and all three are there', names.join(' | '));
+}
+
+console.log('\na note that lists ingredients is still a dish');
+{
+  // The fix must not let dishes back onto the list: a note whose parts
+  // name two or more things you can buy is a dish listing what it is made
+  // of, whether or not the note opens with "needs".
+  const names = namesOf(
+    [
+      '- Paneer tikka - paneer, tomato, onion',
+      '- Dal - lentils, ghee, tomato',
+    ].join('\n'),
+  );
+  ok(
+    names.length === 0,
+    'a dish that enumerates its ingredients is not an item',
+    names.join(' | '),
+  );
+}
+
 console.log('\nthe three dashes are treated the same');
 {
   // Each dash is checked on its own. Checked together they would hide each
