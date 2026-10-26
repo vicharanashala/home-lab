@@ -130,17 +130,20 @@ console.log('\na page the person came back to is not the one that goes');
   const cache = createStoreViewerPageCache({ max: 2 });
   cache.set('a', 'A', 1_000);
   cache.set('b', 'B', 1_000);
-  // The owner comes back to the first page. In the bridge this is a HIT:
-  // the page is already in the cache, so the bridge reads it and never
-  // asks the store for it again. So the thing that has to remember the
-  // visit is `get`, not `set` — and a `get` that does not remember it
-  // means the page the owner just came back to is the next one to go.
-  ok(cache.get('a', 1_000) === 'A', 'the page they came back to is served from the cache');
+  // The owner comes back to the first page.
+  //
+  // WHY A get() AND NOT A set(): in the bridge a page that is already held
+  // is served straight from the cache and the route returns — it never
+  // calls set() again. So the only way the cache can learn that the person
+  // looked at the page again is by being asked for it. A test that calls
+  // set() to stand in for "came back" proves a path the bridge never takes.
+  const cameBack = cache.get('a', 1_000);
+  ok(cameBack === 'A', 'the page they came back to is served from the cache', String(cameBack));
   // And then they browse somewhere new, which is a miss and a `set`.
   cache.set('c', 'C', 1_000);
   ok(
     cache.get('a', 1_000) === 'A',
-    'the page they came back to is still there',
+    'and it is still there afterwards',
     String(cache.get('a', 1_000)),
   );
   ok(
@@ -160,33 +163,6 @@ console.log('\na page that is fetched again moves to the back');
   cache.set('c', 'C', 1_000);
   ok(cache.get('a', 1_000) === 'A again', 'the page they fetched again is still there');
   ok(cache.get('b', 1_000) === undefined, 'and the one nobody looked at again is the one that went');
-}
-
-console.log('\na page the person came back to is not the one that goes');
-{
-  const cache = createStoreViewerPageCache({ max: 2 });
-  cache.set('a', 'A', 1_000);
-  cache.set('b', 'B', 1_000);
-  // The owner comes back to the first page.
-  //
-  // WHY A get() AND NOT A set(): in the bridge a page that is already held
-  // is served straight from the cache and the route returns — it never
-  // calls set() again. So the only way the cache can learn that the person
-  // looked at the page again is by being asked for it. A test that calls
-  // set() to stand in for "came back" proves a path the bridge never takes.
-  const cameBack = cache.get('a', 1_000);
-  ok(cameBack === 'A', 'the page they came back to is served', String(cameBack));
-  // The owner then browses somewhere new.
-  cache.set('c', 'C', 1_000);
-  ok(
-    cache.get('a', 1_000) === 'A',
-    'and it is still there afterwards',
-    String(cache.get('a', 1_000)),
-  );
-  ok(
-    cache.get('b', 1_000) === undefined,
-    'and the one nobody looked at again is the one that went',
-  );
 }
 
 console.log('\nan entry that has gone stale is dropped, not merely not served');{
@@ -280,38 +256,6 @@ console.log('\nthe page the owner came back to is not the one that goes');
     storeCalls > beforeUntouched,
     'and the one nobody looked at again is the one that went',
     `${storeCalls - beforeUntouched} extra call(s)`,
-  );
-}
-
-console.log('\nthe page the owner came back to is not the one the bridge forgets');
-{
-  // Fill the cache with this test's own pages, so what is in it is known:
-  // eight pages, and nothing else.
-  for (let i = 0; i < STORE_VIEWER_PAGE_CACHE_MAX; i += 1) {
-    await realFetch(`${base}${PREFIX}/search?q=back${i}`).then((r) => r.text());
-  }
-
-  // The owner comes back to the first one. The bridge serves it from the
-  // cache — the store is NOT asked again — so this is the path that has to
-  // remember the visit.
-  const beforeComeback = storeCalls;
-  await realFetch(`${base}${PREFIX}/search?q=back0`).then((r) => r.text());
-  ok(
-    storeCalls === beforeComeback,
-    'coming back to a page does not ask the store for it again',
-    `${storeCalls - beforeComeback} extra call(s)`,
-  );
-
-  // And then the owner browses somewhere new, which is one page too many
-  // for the cache to hold — so it has to give one page up.
-  await realFetch(`${base}${PREFIX}/search?q=away0`).then((r) => r.text());
-
-  const beforeReturn = storeCalls;
-  await realFetch(`${base}${PREFIX}/search?q=back0`).then((r) => r.text());
-  ok(
-    storeCalls === beforeReturn,
-    'the page the owner came back to is still there',
-    `${storeCalls - beforeReturn} extra call(s)`,
   );
 }
 
