@@ -1837,8 +1837,14 @@ export function HouseBotPage() {
           )}
           {/* WHAT THE BOT CAN SEE.
               The person has to know, or they will ask the bot about something
-              it cannot see and conclude it is not listening. */}
-          {!attach.image && screen.watching && (
+              it cannot see and conclude it is not listening.
+
+              WHY THIS NEEDS A FRAME AND NOT JUST "watching": the share can be
+              granted and still deliver nothing — a tab that is closed, a
+              screen that has stopped coming through. The chip only appears
+              when there is actually a picture for the bot to look at, so it
+              never promises sight the bot does not have. */}
+          {!attach.image && screen.watching && screen.frame && (
             <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-lg bg-sage-50 dark:bg-sage-900/30 px-2 py-1 text-[10px] font-semibold text-sage-700 dark:text-sage-200">
               <MonitorPlay size={11} />
               I can see your {screen.label ?? 'shared'} tab

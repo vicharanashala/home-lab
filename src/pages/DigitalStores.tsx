@@ -132,8 +132,9 @@ export function DigitalStoresPage() {
                     Sharing the {share.state.label} tab
                   </p>
                   <p className="text-[11px] text-sage-600 dark:text-ink-300 mt-0.5 leading-relaxed">
-                    House Bot can see it. Open House Bot and ask about what is on
-                    the screen. The share keeps going until you stop it.
+                    {share.state.sentFrame
+                      ? 'House Bot can see it. Open House Bot and ask about what is on the screen. The share keeps going until you stop it.'
+                      : 'Waiting for the screen to come through. House Bot will be able to see it once the first picture arrives.'}
                   </p>
                 </div>
                 <button

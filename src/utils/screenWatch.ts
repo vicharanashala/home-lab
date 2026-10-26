@@ -69,6 +69,23 @@ export const WATCH_FRAME_INTERVAL_MS = 2000;
 export const WATCH_FRAME_QUALITY = 0.55;
 
 /**
+ * How long a watch may go without a frame before it is treated as over.
+ *
+ * WHY THERE IS A DEADLINE AT ALL: the two tabs cannot tell each other that
+ * one of them has gone away. The tab holding the share announces when the
+ * share stops, but a tab that is CLOSED never announces anything — the
+ * browser simply throws the message away with the tab. So the only evidence
+ * that survives a closed tab is the frames themselves, and a watch that has
+ * stopped receiving frames has stopped, whatever the last message said.
+ *
+ * WHY IT IS FOUR FRAMES AND NOT ONE: the sharer posts a frame every
+ * WATCH_FRAME_INTERVAL_MS, and a browser in the background can be slow to
+ * run its timers. One missed frame is a hiccup; four in a row is a share
+ * that has ended.
+ */
+export const WATCH_STALE_MS = WATCH_FRAME_INTERVAL_MS * 4;
+
+/**
  * Turn a canvas's data URL into the shape the app sends images in.
  *
  * WHY THE PREFIX IS STRIPPED: the image payload House Bot already sends
@@ -132,3 +149,106 @@ export function grabFrame(
  */
 export const SHARE_PICKER_HINT =
   'Choose “Just this tab” and pick the store you just opened.';
+
+/**
+ * What the watching tab knows.
+ *
+ * WHY IT LIVES HERE AND NOT IN THE HOOK: the rules for when a watch has
+ * ended are rules about the protocol, not about React, and a rule that
+ * cannot be tested without a browser is a rule that will not be.
+ */
+export interface WatchState {
+  /** Is a share running somewhere in this app. */
+  watching: boolean;
+  /** Which store it is. */
+  label: string | null;
+  /** The most recent frame. */
+  frame: WatchFrame | null;
+  /** When the watcher last heard from the sharer, in milliseconds. */
+  lastSeenAt: number | null;
+}
+
+/**
+ * Fold a message from the other tabs into what the watcher knows.
+ *
+ * WHY A STATUS MESSAGE THAT SAYS "STILL SHARING" DOES NOT RESET THE CLOCK:
+ * the frames are the evidence that the share is alive. If a status message
+ * could refresh the clock on its own, a sharer that had gone quiet could
+ * keep a watch alive by talking — and the silence is exactly the thing the
+ * clock is there to notice.
+ */
+export function applyWatchMessage(
+  state: WatchState,
+  msg: WatchMessage,
+  now: number,
+): WatchState {
+  if (msg.kind === 'frame') {
+    return { ...state, watching: true, frame: msg.frame, lastSeenAt: now };
+  }
+  if (msg.kind === 'status') {
+    return {
+      watching: msg.watching,
+      label: msg.label,
+      // A share that has stopped leaves no frame to send.
+      frame: msg.watching ? state.frame : null,
+      lastSeenAt: msg.watching ? (state.watching ? state.lastSeenAt : now) : null,
+    };
+  }
+  return state;
+}
+
+/**
+ * Whether a watch has gone quiet for long enough to call it over.
+ *
+ * WHY A WATCH THAT NEVER HEARD ANYTHING IS ALREADY OVER: a watch that says
+ * it can see a screen, but has no frame and has heard nothing from the
+ * sharer, is the false promise this whole rule exists to end.
+ */
+export function watchHasEnded(state: WatchState, now: number): boolean {
+  if (!state.watching) return false;
+  if (state.lastSeenAt === null) return true;
+  return now - state.lastSeenAt > WATCH_STALE_MS;
+}
+
+/**
+ * Fold a message in and end a watch that has gone quiet, in one step.
+ *
+ * WHY ONE FUNCTION AND NOT TWO: the two things have to happen together. A
+ * message that says the share is over clears the frame, and a silence that
+ * lasts too long has to clear it too — and a watcher that applied the
+ * message first and the deadline second would, for one tick, still be
+ * holding a frame it had just been told to forget.
+ */
+export function reduceWatch(
+  state: WatchState,
+  msg: WatchMessage | null,
+  now: number,
+): WatchState {
+  const next = msg ? applyWatchMessage(state, msg, now) : state;
+  if (!watchHasEnded(next, now)) return next;
+  return { watching: false, label: null, frame: null, lastSeenAt: null };
+}
+
+/**
+ * What a sharer answers when another tab asks whether anyone is sharing.
+ *
+ * WHY A SHARER THAT HAS STOPPED SAYS NOTHING: the share can end without the
+ * tab going away — the person taps another page, and the page unmounts with
+ * the share already over. If that sharer kept answering "yes, someone is
+ * sharing", the new page would put a frozen picture on the screen and a
+ * false promise in House Bot's message box, for a share that ended minutes
+ * ago.
+ *
+ * WHY THE ANSWER IS A LIST RATHER THAN ONE MESSAGE: the status and the
+ * frame are two separate messages, and the frame is only sent when there is
+ * one to send.
+ */
+export function sharerReply(
+  msg: WatchMessage,
+  active: boolean,
+  label: string | null,
+): WatchMessage[] {
+  if (msg.kind !== 'hello') return [];
+  if (!active) return [];
+  return [{ kind: 'status', watching: true, label }];
+}

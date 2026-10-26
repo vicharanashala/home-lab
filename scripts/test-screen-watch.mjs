@@ -16,7 +16,11 @@ import {
   SCREEN_WATCH_CHANNEL,
   WATCH_FRAME_WIDTH,
   WATCH_FRAME_INTERVAL_MS,
+  WATCH_STALE_MS,
   frameFromDataUrl,
+  reduceWatch,
+  sharerReply,
+  watchHasEnded,
 } from '../src/utils/screenWatch.ts';
 
 let passed = 0;
@@ -75,6 +79,94 @@ console.log('\nthe frames stay on the device');
     'and it names no server to send anything to',
     SCREEN_WATCH_CHANNEL,
   );
+}
+
+console.log('\na sharer that has stopped says nothing');
+{
+  ok(
+    sharerReply({ kind: 'hello' }, false, 'Amazon Fresh').length === 0,
+    'a sharer whose share is over answers a hello with nothing',
+  );
+  ok(
+    sharerReply({ kind: 'hello' }, true, 'Amazon Fresh').length === 1,
+    'a running sharer answers a hello',
+  );
+  ok(
+    sharerReply({ kind: 'hello' }, true, 'Amazon Fresh')[0]?.kind === 'status',
+    'and the answer is the status',
+  );
+  ok(
+    sharerReply({ kind: 'frame' }, true, 'Amazon Fresh').length === 0,
+    'a frame is not answered at all',
+  );
+}
+
+console.log('\na watch that has gone quiet ends');
+{
+  const start = 1000;
+  const alive = { watching: true, label: 'Amazon Fresh', frame: null, lastSeenAt: start };
+  ok(!watchHasEnded(alive, start), 'a watch that just heard something is alive');
+  ok(
+    !watchHasEnded(alive, start + WATCH_STALE_MS),
+    'and it stays alive for the whole window',
+  );
+  ok(
+    watchHasEnded(alive, start + WATCH_STALE_MS + 1),
+    'and it ends when the window has passed',
+  );
+  ok(
+    !watchHasEnded({ watching: false, label: null, frame: null, lastSeenAt: null }, start),
+    'a watch that was never running does not end',
+  );
+}
+
+console.log('\nthe watcher forgets a share that stopped');
+{
+  const now = 1000;
+  const frame = frameFromDataUrl('data:image/jpeg;base64,QUJDRA==', 900, 506);
+  const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
+
+  let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Amazon Fresh' }, now);
+  ok(state.watching, 'the share is seen');
+  ok(state.label === 'Amazon Fresh', 'and it is named');
+
+  state = reduceWatch(state, { kind: 'frame', frame }, now);
+  ok(state.frame === frame, 'the frame arrives');
+
+  state = reduceWatch(state, { kind: 'status', watching: false, label: null }, now);
+  ok(!state.watching, 'a share that stopped is not seen');
+  ok(state.frame === null, 'and its frame is forgotten');
+}
+
+console.log('\na sharer that goes away without a word');
+{
+  const now = 1000;
+  const frame = frameFromDataUrl('data:image/jpeg;base64,QUJDRA==', 900, 506);
+  const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
+
+  let state = reduceWatch(idle, { kind: 'frame', frame }, now);
+  ok(state.watching, 'the frame arrives');
+
+  // The tab holding the share is closed. The browser throws the message
+  // away with the tab, so nothing is said and nothing is heard.
+  state = reduceWatch(state, null, now + WATCH_STALE_MS + 1);
+  ok(!state.watching, 'the watch ends by itself');
+  ok(state.frame === null, 'and the frozen picture is forgotten');
+}
+
+console.log('\nHouse Bot stops believing a page that has gone away');
+{
+  const now = 1000;
+  const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
+
+  // The page that held the share is gone, and a stale status arrives saying
+  // a share is running. It is believed for now.
+  let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Amazon Fresh' }, now);
+  ok(state.watching, 'the status is taken at its word');
+
+  // But no frame ever follows it, so the promise cannot last.
+  state = reduceWatch(state, null, now + WATCH_STALE_MS + 1);
+  ok(!state.watching, 'and it stops being believed when the frames stop');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
