@@ -17,6 +17,7 @@ import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhotoAttachButton, AttachedImageChip, usePhotoAttach } from '../components/PhotoAttach';
 import { useScreenWatcher } from '../hooks/useScreenWatch';
+import { imagePayloadFor } from '../utils/screenWatch';
 import { useVoice } from '../hooks/useVoice';
 
 type Msg = {
@@ -613,12 +614,12 @@ export function HouseBotPage() {
     // WHY THE ATTACHED PHOTO WINS: a photo the person deliberately attached
     // is what they meant to show. The screen is what happened to be in front
     // of them.
-    const watched = sentImage ? null : screen.frame;
-    const sentImagePayload = sentImage
-      ? { mediaType: sentImage.mediaType, data: sentImage.data }
-      : watched
-        ? { mediaType: watched.mediaType, data: watched.data }
-        : null;
+    //
+    // WHY THE PICTURE IS MARKED: the bridge has to tell a photo of food from
+    // a frame of the store tab, and the two look identical on the wire —
+    // base64 with a media type. The kind travels with the picture so the
+    // model is told to read the screen as a screen. See imagePayloadFor.
+    const sentImagePayload = imagePayloadFor(sentImage, screen.frame);
     const userMsg: Msg = {
       from: 'me',
       text,

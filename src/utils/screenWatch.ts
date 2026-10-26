@@ -262,3 +262,65 @@ export function sharerReply(
   if (!active) return [];
   return [{ kind: 'status', watching: true, label }];
 }
+
+/**
+ * What kind of picture the app is sending.
+ *
+ * WHY THE KIND TRAVELS WITH THE PICTURE: the app sends two different
+ * pictures to House Bot — a photo of food the person took, and a frame of
+ * the store tab they are shopping in. The bridge has to answer them
+ * differently, and it cannot tell them apart on its own: both arrive in the
+ * same field, as base64 with a media type. So the app says which it is.
+ *
+ * WHY IT MATTERS: the bridge's instruction for a picture is what tells the
+ * model how to read it. A screenshot of a price list read as a photograph of
+ * food is not a slightly worse answer — it is the answer to a different
+ * question, and the person asked about the screen in front of them.
+ *
+ * WHY 'screen' AND NOT 'store': the frame is whatever tab was shared, and
+ * the name says where the picture came from, not what it shows. Which store
+ * it is is named separately, and only for the person's benefit.
+ */
+export const IMAGE_KIND_PHOTO = 'photo';
+export const IMAGE_KIND_SCREEN = 'screen';
+
+/** A picture on its way to House Bot. */
+export interface ImagePayload {
+  /** The media type of the bytes. */
+  mediaType: string;
+  /** Base64 WITHOUT the data: prefix. */
+  data: string;
+  /** Which kind of picture this is. */
+  kind: typeof IMAGE_KIND_PHOTO | typeof IMAGE_KIND_SCREEN;
+}
+
+/**
+ * The picture to send with a message, and what it is.
+ *
+ * WHY THE PHOTO WINS: a photo the person deliberately attached is what they
+ * meant to show. The screen is what happened to be in front of them.
+ *
+ * WHY THE RULE LIVES HERE AND NOT IN THE PAGE: it is a rule about the
+ * protocol between the app and the bridge, and a rule that cannot be tested
+ * without a browser is a rule that will not be.
+ */
+export function imagePayloadFor(
+  sentImage: { mediaType: string; data: string } | null | undefined,
+  watched: { mediaType: string; data: string } | null | undefined,
+): ImagePayload | null {
+  if (sentImage) {
+    return {
+      mediaType: sentImage.mediaType,
+      data: sentImage.data,
+      kind: IMAGE_KIND_PHOTO,
+    };
+  }
+  if (watched) {
+    return {
+      mediaType: watched.mediaType,
+      data: watched.data,
+      kind: IMAGE_KIND_SCREEN,
+    };
+  }
+  return null;
+}

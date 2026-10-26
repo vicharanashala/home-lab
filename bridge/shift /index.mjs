@@ -2861,9 +2861,44 @@ Output ONLY the summary text. No preamble.`;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024; // base64 length
 const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
+// ─── what kind of picture this is ────────────────────────────────────────
+//
+// The app sends two different pictures through the same field: a photo of
+// food the person took, and a frame of the store tab they are shopping in.
+// They want different answers, and the bridge cannot tell them apart on its
+// own — both arrive as base64 with a media type. So the app says which it
+// is.
+//
+// WHY THE INSTRUCTION IS THE WHOLE DIFFERENCE: the instruction that goes
+// with the picture is what tells the model how to read it. Told to judge
+// ripeness, a screenshot of a price list is not read as a price list.
+//
+// WHY A MISSING KIND MEANS "PHOTO": an older bundle is already sitting in
+// people's browser caches, and it can only ever have sent a photo. So the
+// default is the old behaviour, not a new one.
+const IMAGE_KIND_SCREEN = 'screen';
+
+const PHOTO_VISION_HINT =
+  `\n\n--- A PHOTO IS ATTACHED ---\nThe user sent an image. Look at it and answer about what you actually see. Describe the food, estimate quantities and portions, judge doneness/ripeness/freshness, and suggest what they could cook with it. Be concrete and visual. If the image is unclear or you can't identify something, say so plainly rather than guessing.\n`;
+
+const SCREEN_VISION_HINT =
+  `\n\n--- A SHARED TAB IS ON SCREEN ---\nThe user is sharing a browser tab and asking about what is on it. Read the screen itself: the page, the product, its name, the price, the quantity or size, the options and buttons. Answer the question they asked about what they are looking at — "how much is this?" is answered with the price on the screen, "what is this?" with what the page is. This is a screenshot of a screen, not a photograph of food, so do not describe it as one, do not judge the ripeness of what is on it, and do not suggest what to cook with it. If you cannot read something on the screen, say so plainly rather than guessing.\n`;
+
+/**
+ * The instruction that goes with a picture.
+ *
+ * WHY IT IS ONE FUNCTION: the same picture arrives by two routes, and two
+ * copies of this string is two chances for them to drift apart.
+ */
+function visionHintFor(image) {
+  if (!image || typeof image.data !== 'string' || !image.data) return '';
+  if (image.data.length > MAX_IMAGE_BYTES) return '';
+  return image.kind === IMAGE_KIND_SCREEN ? SCREEN_VISION_HINT : PHOTO_VISION_HINT;
+}
+
 /**
  * @param {Array<{role:string,content:any}>} messages
- * @param {{mediaType?:string,data?:string}|null|undefined} image
+ * @param {{mediaType?:string,data?:string,kind?:string}|null|undefined} image
  */
 function withImage(messages, image) {
   if (!image || typeof image.data !== 'string' || !image.data) return messages;
@@ -2875,8 +2910,13 @@ function withImage(messages, image) {
   const lastUser = [...out].reverse().find((m) => m.role === 'user');
   if (!lastUser) return messages;
   const text = typeof lastUser.content === 'string' ? lastUser.content : '';
+  // The fallback asks the model what it is looking at, so it has to name the
+  // right thing: a screenshot of a screen is not a photograph.
+  const fallback = image.kind === IMAGE_KIND_SCREEN
+    ? 'What is on the screen?'
+    : 'What do you see in this photo?';
   lastUser.content = [
-    { type: 'text', text: text || 'What do you see in this photo?' },
+    { type: 'text', text: text || fallback },
     { type: 'image', source: { type: 'base64', media_type: mediaType, data } },
   ];
   return out;
@@ -3365,12 +3405,9 @@ app.post('/api/housebot/chat', async (req, res) => {
   ].filter(Boolean).join('\n');
 
 
-  // When a photo is attached, tell House Bot it can see and how to behave.
-  const attachedImage =
-    image && typeof image.data === 'string' && image.data.length > 0 && image.data.length <= MAX_IMAGE_BYTES;
-  const visionHint = attachedImage
-    ? `\n\n--- A PHOTO IS ATTACHED ---\nThe user sent an image. Look at it and answer about what you actually see. Describe the food, estimate quantities and portions, judge doneness/ripeness/freshness, and suggest what they could cook with it. Be concrete and visual. If the image is unclear or you can't identify something, say so plainly rather than guessing.\n`
-    : '';
+  // When a picture is attached, tell House Bot it can see and how to behave.
+  // A photo and a shared screen get different instructions — see visionHintFor.
+  const visionHint = visionHintFor(image);
   const sysMsg = `${HOUSEBOT_SYSTEM_PROMPT}\n\n--- LIVE CONTEXT (${today}) ---\n${contextBlock}${visionHint}`;
 
   // Cap history to last 10 turns to fit small-model context windows.
@@ -3515,12 +3552,9 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   ].filter(Boolean).join('\n');
 
 
-  // When a photo is attached, tell House Bot it can see and how to behave.
-  const attachedImage =
-    image && typeof image.data === 'string' && image.data.length > 0 && image.data.length <= MAX_IMAGE_BYTES;
-  const visionHint = attachedImage
-    ? `\n\n--- A PHOTO IS ATTACHED ---\nThe user sent an image. Look at it and answer about what you actually see. Describe the food, estimate quantities and portions, judge doneness/ripeness/freshness, and suggest what they could cook with it. Be concrete and visual. If the image is unclear or you can't identify something, say so plainly rather than guessing.\n`
-    : '';
+  // When a picture is attached, tell House Bot it can see and how to behave.
+  // A photo and a shared screen get different instructions — see visionHintFor.
+  const visionHint = visionHintFor(image);
   const sysMsg = `${HOUSEBOT_SYSTEM_PROMPT}\n\n--- LIVE CONTEXT (${today}) ---\n${contextBlock}${visionHint}`;
 
   const hist = Array.isArray(history) ? history.slice(-10) : [];
