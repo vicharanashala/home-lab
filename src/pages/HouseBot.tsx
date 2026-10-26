@@ -817,7 +817,12 @@ export function HouseBotPage() {
                 ...m,
                 text: reply,
                 groceryRequest:
-                  looksLikeGroceryRequest(text) || looksLikeGroceryReply(reply),
+                  looksLikeGroceryRequest(text) ||
+                  // A reply that merely HAS bullets is not a shopping list.
+                  // Four dinner ideas is four bullets, and offering to put
+                  // them on the grocery list is nonsense — so the reply only
+                  // counts when it actually parses into items.
+                  (looksLikeGroceryReply(reply) && parseGroceryList(reply).length > 0),
               }
             : m,
         ),
