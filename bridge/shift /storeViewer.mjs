@@ -488,6 +488,95 @@ export const STORE_VIEWER_PAGE_TTL_MS = 60_000;
 export const STORE_VIEWER_ASSET_MAX_AGE = 3600;
 
 /**
+ * How many of the store's pages are worth keeping at once.
+ *
+ * WHY A NUMBER AND NOT "AS MANY AS FIT": the store's own page is 4.8 MB, so
+ * eight of them is about 40 MB — a floor the bridge can live with. Ten
+ * thousand of them is a process the machine kills, and this is the one
+ * process every screen of the app depends on.
+ */
+export const STORE_VIEWER_PAGE_CACHE_MAX = 8;
+
+/**
+ * A cache of the store's own pages, bounded in two ways.
+ *
+ * WHY IT IS BOUNDED AT ALL: the key is the store's WHOLE address — path and
+ * query string — so a person who searches for milk, then bread, then eggs
+ * leaves three 4.8 MB copies behind. A time-to-live on an entry only says
+ * whether it may be SERVED; it does not say the memory should be given back.
+ * Without a bound the bridge grows by megabytes every time the owner
+ * browses to somewhere new, and never gives any of it back.
+ *
+ * The two bounds:
+ *
+ *   1. An entry that has gone stale is DROPPED, not merely not served, so
+ *      the memory comes back once the page's minute is up.
+ *   2. The cache never holds more than `max` pages. The one that goes is
+ *      the one nobody has looked at for the longest, because a Map keeps
+ *      its keys in the order they were added.
+ *
+ * WHY IT IS A FUNCTION AND NOT A MODULE-LEVEL MAP: a test has to be able to
+ * make its own cache and watch what it holds, without touching the one the
+ * running bridge is using.
+ *
+ * WHY `now` CAN BE PASSED IN: a test that has to wait a real minute to see
+ * an entry go stale is a test nobody runs, and a test that does not run is a
+ * test that does not exist.
+ */
+export function createStoreViewerPageCache({
+  max = STORE_VIEWER_PAGE_CACHE_MAX,
+  ttlMs = STORE_VIEWER_PAGE_TTL_MS,
+} = {}) {
+  const pages = new Map();
+  const isStale = (entry, now) => now - entry.at >= ttlMs;
+
+  return {
+    /**
+     * The page for an address, if it is there and still fresh.
+     *
+     * A stale entry is removed on the way out: the caller is about to ask
+     * the store for it again, so holding the old copy for another minute
+     * helps nobody.
+     */
+    get(target, now = Date.now()) {
+      const entry = pages.get(target);
+      if (!entry) return undefined;
+      if (isStale(entry, now)) {
+        pages.delete(target);
+        return undefined;
+      }
+      return entry.body;
+    },
+
+    /** Remember a page, and make room for it first. */
+    set(target, body, now = Date.now()) {
+      for (const [key, entry] of pages) {
+        if (isStale(entry, now)) pages.delete(key);
+      }
+      // A page that is being set again is the one the person has just asked
+      // for, so it moves to the back. The page that goes should be the one
+      // nobody has looked at for the longest, not merely the first one that
+      // was stored — a person who comes back to a page expects it to still
+      // be there.
+      pages.delete(target);
+      // The oldest goes first: a Map keeps its keys in the order they were
+      // added, so the first key is the oldest one.
+      while (pages.size >= max) {
+        const oldest = pages.keys().next().value;
+        if (oldest === undefined) break;
+        pages.delete(oldest);
+      }
+      pages.set(target, { at: now, body });
+    },
+
+    /** How many pages are being held. */
+    get size() {
+      return pages.size;
+    },
+  };
+}
+
+/**
  * Send a body, gzipped when the browser will take it.
  *
  * WHY THIS MATTERS MORE THAN IT LOOKS: the store's own page is 4.8 MB of

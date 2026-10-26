@@ -576,6 +576,7 @@ import {
   sendStoreViewerBody,
   STORE_VIEWER_PAGE_TTL_MS,
   STORE_VIEWER_ASSET_MAX_AGE,
+  createStoreViewerPageCache,
 } from './storeViewer.mjs';
 
 /**
@@ -629,7 +630,12 @@ function setStoreViewerDocumentHeaders(res) {
 // storefront whose offers have changed is not shown stale for long. The
 // store's ASSETS are not cached here: they are content-hashed, so the
 // browser caches them itself, and the cache below is only for the page.
-const storeViewerPageCache = new Map();
+//
+// WHY THE CACHE IS NOT A PLAIN MAP HERE: a Map that is only ever added to
+// keeps every page the owner has browsed to, forever, in the one process
+// every screen of the app depends on. The cache knows how to give the
+// memory back, so it lives with the other testable parts of the viewer.
+const storeViewerPageCache = createStoreViewerPageCache();
 
 app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   const rest = String(req.path || '').slice(STORE_VIEWER_PREFIX.length + 1);
@@ -689,9 +695,9 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   // cart or its search, and caching that would be caching an order.
   const cacheable = req.method === 'GET';
   const cached = cacheable ? storeViewerPageCache.get(target) : undefined;
-  if (cached && Date.now() - cached.at < STORE_VIEWER_PAGE_TTL_MS) {
+  if (cached) {
     const dir = path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1) || '/';
-    const html = rewriteStorePage(cached.body.toString('utf8'), host, dir, prefix);
+    const html = rewriteStorePage(cached.toString('utf8'), host, dir, prefix);
     setStoreViewerDocumentHeaders(res);
     sendStoreViewerBody(req, res, Buffer.from(html, 'utf8'), {
       type: 'text/html; charset=utf-8',
@@ -752,13 +758,19 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
     //
     // The store's API answers are NOT cached: they are the cart, the
     // session, the search. Caching those would be caching an order.
+    //
+    // WHY THE METHOD DECIDES AND NOT ONLY THE CONTENT TYPE: a cart that
+    // answers with no content type at all — a 204, say — would slip past
+    // the JSON test below, and then the answer to the owner's order would
+    // sit in a cache for an hour. A POST is the store's add to cart or its
+    // search whatever it answers with, so a POST is never kept.
     const isApi = /json/i.test(type);
     sendStoreViewerBody(req, res, body, {
       type,
       status: upstream.status,
-      cacheControl: isApi
-        ? 'no-store'
-        : `private, max-age=${STORE_VIEWER_ASSET_MAX_AGE}`,
+      cacheControl: cacheable && !isApi
+        ? `private, max-age=${STORE_VIEWER_ASSET_MAX_AGE}`
+        : 'no-store',
     });
     return;
   }
@@ -791,7 +803,7 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   // does not have to ask the store for it again. The UNREWRITTEN page is what
   // is kept: the rewrite depends on where the viewer is mounted, and keeping
   // the rewritten one would bake this request's path into the cache.
-  if (cacheable) storeViewerPageCache.set(target, { at: Date.now(), body });
+  if (cacheable) storeViewerPageCache.set(target, body);
 
   const html = rewriteStorePage(body.toString('utf8'), host, dir, prefix);
 
