@@ -249,6 +249,14 @@ export function storeViewerUnreachablePage(storeName, url) {
  * So fetch, XMLHttpRequest, link clicks and the router's history changes
  * are all pointed at the viewer instead. This is the whole of what makes
  * an in-app browser work.
+ *
+ * AND THE ADDRESSES THAT GO INTO AN ELEMENT, WHICH WERE MISSING: a store's
+ * own page is built at runtime, and the addresses in it never pass through
+ * the rewriter, because the rewriter runs once, on the markup. A bundler's
+ * chunk loader is the clearest case, and the bridge's own request log shows
+ * what it costs: fifty route chunks asked for at the APP's origin, every
+ * one of them 404. The store's banner was on screen and nothing the owner
+ * clicked did anything. See scripts/test-store-viewer-runtime-urls.mjs.
  */
 export function storeViewerScript(prefix, host) {
   const origin = `https://${host}`;
@@ -264,12 +272,90 @@ export function storeViewerScript(prefix, host) {
   var HERE = window.location.origin;
   function fix(u) {
     if (typeof u !== 'string') return u;
+    // ALREADY INSIDE THE VIEWER: leave it alone.
+    //
+    // WHY THIS IS HERE: the viewer's own path starts with a slash, so the
+    // root-relative rule at the bottom would put the prefix on it a second
+    // time. The same goes for the viewer's path written out in full, which
+    // is what an element's "src" reads back as once the browser has
+    // resolved it, and the store's own code does read elements back and
+    // put the address somewhere else.
+    if (u.indexOf(PREFIX) === 0) return u;
+    if (u.indexOf(HERE) === 0 && u.slice(HERE.length).indexOf(PREFIX) === 0) return u;
     if (u.indexOf(ORIGIN) === 0) return PREFIX + u.slice(ORIGIN.length);
     if (u.indexOf(HERE) === 0) return PREFIX + u.slice(HERE.length);
     if (u.indexOf('//' + HOST) === 0) return PREFIX + u.slice(2 + HOST.length);
     if (u.charAt(0) === '/' && u.charAt(1) !== '/') return PREFIX + u;
     return u;
   }
+  // THE ADDRESSES THAT GO INTO AN ELEMENT.
+  //
+  // WHY THIS EXISTS: the stores build their own pages at runtime, and the
+  // addresses they build never pass through the rewriter, because the
+  // rewriter runs once, on the markup, and these addresses are built
+  // later, by the store's own JavaScript. A bundler's chunk loader is the
+  // clearest case:
+  //
+  //     script.setAttribute('src', '/public/proddist/pages-CartPage.abc.js');
+  //
+  // That address starts at the root, so the browser ignores the <base> tag
+  // and asks the APP's origin for it, where there is nothing. Seen in the
+  // bridge's own request log, from the running app, with BigBasket open:
+  //
+  //     GET /public/proddist/pages-CartPage.abc.js   404
+  //
+  // The store's main bundle loaded, because it is in the markup and the
+  // rewriter caught it, and the app booted, and then asked for every route
+  // it has. Every one of them 404'd at the APP's origin, with the
+  // viewer's prefix missing. The frame showed a store that could not be
+  // used in it: the banner was there, and nothing the owner clicked did
+  // anything.
+  //
+  // WHY BOTH ROUTES: a browser's url property is a view onto the
+  // attribute, and a page can use either one. A bundler that asks for its
+  // own chunks with setAttribute would not be caught by a patch on the
+  // property alone, and vice versa.
+  //
+  // WHY EACH ONE IS GUARDED: this code runs inside the store's own page,
+  // and a page is free to break a prototype, or to be running on a browser
+  // that has no such element. None of that may take the routing below
+  // down with it, because a store whose search and cart are dead is worse
+  // than a store whose route chunks are.
+  function patchUrlProperty(proto, prop) {
+    try {
+      if (!proto || !proto.prototype) return;
+      var d = Object.getOwnPropertyDescriptor(proto.prototype, prop);
+      if (!d || !d.set) return;
+      Object.defineProperty(proto.prototype, prop, {
+        get: d.get,
+        set: function (v) { d.set.call(this, fix(v)); },
+        configurable: d.configurable !== false,
+        enumerable: d.enumerable
+      });
+    } catch (e) {}
+  }
+  function patchSetAttribute() {
+    try {
+      var oset = Element.prototype.setAttribute;
+      if (!oset) return;
+      Element.prototype.setAttribute = function (name, value) {
+        if (name === 'src' || name === 'href' || name === 'data' || name === 'action') {
+          value = fix(value);
+        }
+        return oset.call(this, name, value);
+      };
+    } catch (e) {}
+  }
+  patchUrlProperty(window.HTMLScriptElement, 'src');
+  patchUrlProperty(window.HTMLLinkElement, 'href');
+  patchUrlProperty(window.HTMLImageElement, 'src');
+  patchUrlProperty(window.HTMLSourceElement, 'src');
+  patchUrlProperty(window.HTMLMediaElement, 'src');
+  patchUrlProperty(window.HTMLTrackElement, 'src');
+  patchUrlProperty(window.HTMLEmbedElement, 'src');
+  patchUrlProperty(window.HTMLObjectElement, 'data');
+  patchUrlProperty(window.HTMLFormElement, 'action');
+  patchSetAttribute();
   var of = window.fetch;
   if (of) {
     window.fetch = function (u, o) {
