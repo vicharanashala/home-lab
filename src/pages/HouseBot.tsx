@@ -576,7 +576,7 @@ export function HouseBotPage() {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, loading, progressMsgs, recipeMsgs, csvHits]);
+  }, [messages, loading, progressMsgs, recipeMsgs, csvHits, optionsHits]);
 
   // Auto-focus the textarea on mount (no need to click to begin typing).
   useEffect(() => {
