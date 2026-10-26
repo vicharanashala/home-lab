@@ -299,8 +299,27 @@ export function rewriteStorePage(html, host, dir, prefix) {
   out = out.split(`//${host}`).join(prefix);
 
   // The script and the base, before the store's own code runs.
+  //
+  // WHY THE BASE HREF IS ESCAPED: `dir` is the caller's own path, taken from
+  // the request byte for byte, and it goes into an HTML attribute. A double
+  // quote in it ended the attribute, and the rest of the path was parsed as
+  // markup:
+  //
+  //   <base href="/store-viewer/www.jiomart.com/a/"><script>alert(1)</script>/">
+  //
+  // The store viewer's own policy allows inline scripts ("script-src *
+  // 'unsafe-inline'"), so that script runs — on the app's OWN origin, the one
+  // the permanent link serves, where the shared secret and the owner's
+  // grocery list live. The two failure pages were escaped for exactly this
+  // reason; this is the same hole in the path that leads to the store's real
+  // page, and it was the one the user actually looks at.
+  //
+  // WHY ESCAPING AND NOT VALIDATING: the path is a real address the caller
+  // may want to open, quotes and angle brackets included. Escaping keeps it
+  // one — the browser decodes the entities back to the caller's characters,
+  // so the base still points where it did.
   const head =
-    `<base href="${prefix}${dir.endsWith('/') ? dir : dir + '/'}">` +
+    `<base href="${escapeHtml(prefix + (dir.endsWith('/') ? dir : dir + '/'))}">` +
     `<script>${storeViewerScript(prefix, host)}<\/script>`;
   out = out.replace(/<head([^>]*)>/i, (m, attrs) => `<head${attrs}>${head}`);
 

@@ -28,7 +28,10 @@
  *   2. the ROUTE does not either — a test of the page functions alone would
  *      pass while the route kept serving the unescaped page;
  *   3. the "open the store" link still points at the store afterwards, so the
- *      fix did not quietly break the one thing that works.
+ *      fix did not quietly break the one thing that works;
+ *   4. the page that carries the STORE'S OWN CONTENT does not run the
+ *      caller's markup either — the failure pages were escaped, and the page
+ *      the user actually looks at was not.
  *
  * Run with:  node scripts/test-store-viewer-escaping.mjs
  */
@@ -138,7 +141,7 @@ function rawRequest(port, path) {
 ensureBridgeDependencies();
 
 // ─── the two pages ──────────────────────────────────────────────────────
-const { storeViewerBlockedPage, storeViewerUnreachablePage } = await import(viewerModule);
+const { storeViewerBlockedPage, storeViewerUnreachablePage, rewriteStorePage } = await import(viewerModule);
 
 console.log('\nthe failure pages do not emit markup the caller wrote');
 
@@ -158,6 +161,51 @@ for (const [name, build] of [
   ok(fromUrl.includes('&lt;script&gt;'), `${name} shows the caller's text as text, not as markup`);
   ok(/href="https:\/\/www\.jiomart\.com\//.test(fromUrl), `${name} still links to the store`);
 }
+
+// ─── the page that carries the store's own content ─────────────────────
+//
+// WHY THIS IS A SEPARATE SECTION: the failure pages were escaped, and the
+// page the user actually looks at — the store's own page — was not.
+//
+// The path the caller asked for goes into the <base href> that every
+// relative link in the store's page is resolved against, and a quote in it
+// ended the attribute:
+//
+//   <base href="/store-viewer/www.jiomart.com/a/"><script>alert(1)</script>/">
+//
+// The store viewer's own policy allows inline scripts ("script-src *
+// 'unsafe-inline'"), so that script runs — on the app's OWN origin, the one
+// the permanent link serves, where the shared secret lives.
+console.log('\nthe page that carries the store\'s content does not run the caller\'s markup');
+
+const hostileDir = '/a/"><script>alert(1)</script>/';
+const rewritten = rewriteStorePage(
+  '<!doctype html><html><head><title>store</title></head><body>ok</body></html>',
+  'www.jiomart.com',
+  hostileDir,
+  '/store-viewer/www.jiomart.com',
+);
+
+// The viewer's own script is the ONE script the rewritten page should have.
+const scriptsInRewritten = rewritten.match(/<script[\s>]/gi) ?? [];
+
+ok(
+  !/<script>alert\(1\)<\/script>/.test(rewritten),
+  'the base tag does not let a quote break out and start a script',
+);
+ok(
+  scriptsInRewritten.length === 1,
+  'the rewritten page carries exactly one script tag — the viewer\'s own',
+  `found ${scriptsInRewritten.length}`,
+);
+ok(
+  rewritten.includes('&lt;script&gt;'),
+  'the base tag shows the caller\'s characters as text, not as markup',
+);
+ok(
+  rewritten.includes('<base href="/store-viewer/www.jiomart.com/'),
+  'the base tag still points at the store',
+);
 
 // ─── the route ──────────────────────────────────────────────────────────
 // WHY THE BRIDGE IS BOOTED: a test of the page functions alone would pass
@@ -201,6 +249,36 @@ for (const [label, path] of [
     `${label} still links to the store`,
   );
 }
+
+// The STORE'S OWN PAGE, which is the third answer the route can give.
+//
+// WHY THE PATH AND NOT THE QUERY: the query reaches the failure pages, which
+// were escaped. The path reaches the <base href> of the page that carries
+// the store's real content, which is the page the user actually looks at.
+console.log('\nthe route does not serve the caller\'s markup on the store\'s own page either');
+
+const hostilePath = '/store-viewer/www.jiomart.com/a/"><script>alert(1)</script>/b';
+const own = await rawRequest(port, hostilePath);
+const scriptsInOwnPage = own.body.match(/<script[\s>]/gi) ?? [];
+
+ok(own.status === 200, 'the store\'s own page is answered', `status=${own.status}`);
+ok(
+  !/<script>alert\(1\)<\/script>/.test(own.body),
+  'the store\'s own page does not serve a script tag the caller wrote',
+);
+ok(
+  scriptsInOwnPage.length === 1,
+  'the store\'s own page carries exactly one script tag — the viewer\'s own',
+  `found ${scriptsInOwnPage.length}`,
+);
+ok(
+  own.body.includes('&lt;script&gt;'),
+  'the store\'s own page shows the caller\'s text as text, not as markup',
+);
+ok(
+  own.body.includes('<base href="/store-viewer/www.jiomart.com/'),
+  'the store\'s own page still has a base tag pointing at the store',
+);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 rmSync(work, { recursive: true, force: true });
