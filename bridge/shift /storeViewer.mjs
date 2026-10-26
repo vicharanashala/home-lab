@@ -117,6 +117,44 @@ export function storeViewerBlockedPage(storeName, url) {
 }
 
 /**
+ * The page shown when the store could not be reached at all.
+ *
+ * WHY THIS IS NOT THE SAME PAGE AS THE REFUSAL: the two failures mean
+ * different things. A refusal means the store saw the request and said no.
+ * Being unreachable means the request never arrived — a DNS failure, a TLS
+ * error, or the route's 30-second timeout.
+ *
+ * WHY IT MATTERED: both answers used to be the refusal page, which told the
+ * user that the store's server "only shows its pages to a real browser". For
+ * a store that was simply down, that is a made-up diagnosis — nobody refused
+ * anything. The user was told the wrong reason, and the bridge logged
+ * nothing, so the operator could not tell the two apart either.
+ */
+export function storeViewerUnreachablePage(storeName, url) {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:#faf9f5;color:#2f3d33}
+  .box{max-width:420px;margin:24px;padding:28px;border-radius:20px;background:#fff;
+    border:1px solid #e6e4dc;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.06)}
+  h1{font-size:19px;margin:0 0 10px}
+  p{margin:0 0 20px;color:#5c6b60;font-size:14px}
+  a{display:inline-block;background:#3f6b4d;color:#fff;text-decoration:none;
+    padding:12px 22px;border-radius:12px;font-weight:600;font-size:14px}
+</style></head>
+<body><div class="box">
+  <h1>${storeName} could not be reached</h1>
+  <p>HomeHub could not get a page from ${storeName} just now — the request
+  never arrived. That is usually the store being down or the connection
+  dropping. Try again in a moment, or open the store in a new tab.</p>
+  <a href="${url}" target="_blank" rel="noreferrer noopener">Open ${storeName}</a>
+</div></body></html>`;
+}
+
+/**
  * The script that keeps the store's OWN requests inside the viewer.
  *
  * Rewriting the HTML is not enough. The store builds some of its addresses

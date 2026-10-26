@@ -454,6 +454,7 @@ import {
   STORE_VIEWER_PREFIX,
   rewriteStorePage,
   storeViewerBlockedPage,
+  storeViewerUnreachablePage,
   storeViewerPrefix,
   storeViewerTarget,
 } from './storeViewer.mjs';
@@ -540,10 +541,16 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
       redirect: 'follow',
       signal: AbortSignal.timeout(30000),
     });
-  } catch {
+  } catch (err) {
+    // WHY IT IS LOGGED: this is the branch that says the store could not be
+    // reached — a DNS failure, a TLS error, or the 30-second timeout above.
+    // Nothing else in the bridge swallows an error, and an operator looking at
+    // a blank frame has no other way to learn that the request never
+    // arrived.
+    console.error(`[store-viewer] could not reach ${target}:`, err?.message || err);
     res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
-    res.send(storeViewerBlockedPage(host, target));
+    res.send(storeViewerUnreachablePage(host, target));
     return;
   }
 
