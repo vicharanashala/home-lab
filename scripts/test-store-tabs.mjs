@@ -8,7 +8,7 @@
  *
  * Run with:  node scripts/test-store-tabs.mjs
  */
-import { openTab, closeTab } from '../src/utils/storeTabs.ts';
+import { openTab, closeTab, syncRouteToTab } from '../src/utils/storeTabs.ts';
 
 let passed = 0;
 let failed = 0;
@@ -54,6 +54,49 @@ console.log('\nopening the same store twice on purpose');
   ok(s.tabs.length === 2, 'a second tab is opened', `${s.tabs.length} tabs`);
   ok(s.tabs[0].id !== s.tabs[1].id, 'the two tabs have different ids');
   ok(s.activeId === s.tabs[1].id, 'the new tab is the one showing');
+}
+
+console.log('\nthe route catching up with the tab strip');
+{
+  // The case that broke: the owner opens the same store twice, so the strip
+  // holds two Amazon tabs, and the address can only name the STORE.
+  let s = openTab(empty, AMAZON);
+  s = openTab(s, AMAZON, { alwaysNew: true });
+  s = openTab(s, JIO, { alwaysNew: true });
+  const secondAmazon = s.tabs[1].id;
+
+  // The owner taps the second Amazon tab.
+  s = { ...s, activeId: secondAmazon };
+  // The address follows the tab it just showed.
+  const routeStore = s.tabs.find((t) => t.id === s.activeId).storeId;
+  ok(routeStore === 'amazon-fresh', 'the address names the store of the tab picked');
+
+  // The address reaches the component, which brings the strip in line.
+  const after = syncRouteToTab(s, AMAZON);
+  ok(
+    after.activeId === secondAmazon,
+    'the tab the owner tapped is still the one showing',
+    after.tabs.find((t) => t.id === after.activeId)?.id,
+  );
+  ok(after.tabs.length === 3, 'and no tab was opened or thrown away', `${after.tabs.length} tabs`);
+}
+
+console.log('\nthe route naming a store the strip is not showing');
+{
+  // The owner followed a link to a store, so that store's tab has to open.
+  let s = openTab(empty, JIO);
+  const after = syncRouteToTab(s, AMAZON);
+  ok(after.tabs.length === 2, 'the store the route named is opened', `${after.tabs.length} tabs`);
+  ok(after.activeId === after.tabs[1].id, 'and it is the tab on screen');
+}
+
+console.log('\nthe route naming a store that is already open but behind another');
+{
+  let s = openTab(empty, AMAZON);
+  s = openTab(s, JIO);
+  const after = syncRouteToTab(s, AMAZON);
+  ok(after.tabs.length === 2, 'no tab was opened twice', `${after.tabs.length} tabs`);
+  ok(after.activeId === after.tabs[0].id, 'the open tab of that store comes forward');
 }
 
 console.log('\nclosing a tab');

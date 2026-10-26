@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { TopBar } from './TopBar';
 import { ShoppingListPanel } from './ShoppingListPanel';
 import { StoreTabs } from './StoreTabs';
-import { openTab, closeTab } from '../utils/storeTabs';
+import { openTab, closeTab, syncRouteToTab } from '../utils/storeTabs';
 import type { TabState } from '../utils/storeTabs';
 import {
   markFrameLoaded,
@@ -82,10 +82,19 @@ export function StoreViewer() {
   // during the render for the same reason as above: adjusting state while
   // rendering is how a component responds to a changed prop without
   // showing a stale one first.
+  //
+  // WHY syncRouteToTab AND NOT openTab: the route names a STORE and the
+  // strip holds TABS, and a store can be open twice — the "+" button opens
+  // the same store again so the owner can compare two searches on it. The
+  // address can only name one of the two, so opening the store here would
+  // bring the FIRST of them forward and throw away the tab the owner had
+  // just picked: they tapped the second Amazon tab and the viewer showed
+  // the first. syncRouteToTab leaves the tab on screen alone when it is
+  // already showing the store the route names.
   const [routeStoreId, setRouteStoreId] = useState(storeId);
   if (storeId !== routeStoreId) {
     setRouteStoreId(storeId);
-    if (store) setTabState((prev) => openTab(prev, store));
+    if (store) setTabState((prev) => syncRouteToTab(prev, store));
   }
 
   /** Open a store in a tab, or bring its existing tab to the front. */

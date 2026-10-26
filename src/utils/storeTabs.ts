@@ -64,6 +64,38 @@ export function openTab(
 }
 
 /**
+ * Bring the tab strip in line with the address bar.
+ *
+ * WHY THIS EXISTS: the address bar says which STORE is showing and the tab
+ * strip says which TAB is showing, and a store can be open twice — the "+"
+ * button exists for exactly that, so the owner can hold two searches on the
+ * same store side by side. The address can only name one of them, so when
+ * the route caught up with the tab the owner had just picked, the
+ * reconciliation brought the FIRST tab of that store forward and threw the
+ * choice away:
+ *
+ *   the owner taps the second Amazon tab  ->  the viewer shows the first
+ *
+ * Nothing looked broken — the tab was still in the strip, the address was
+ * still right, and the store still loaded. The second tab was simply
+ * unreachable once the route had been to another store and back.
+ *
+ * SO THE TAB ON SCREEN WINS: if the tab that is showing is already showing
+ * the store the route names, the strip is already in line and nothing is
+ * touched. Only when the route names a store the strip is NOT showing is the
+ * strip moved — which is the case where the owner arrived at a store by
+ * following a link, and that store's tab is opened or brought forward.
+ */
+export function syncRouteToTab(
+  state: TabState,
+  store: { id: string; name: string; emoji: string },
+): TabState {
+  const showing = state.tabs.find((t) => t.id === state.activeId);
+  if (showing && showing.storeId === store.id) return state;
+  return openTab(state, store);
+}
+
+/**
  * Close a tab.
  *
  * The tab to its LEFT takes over, which is what a browser does. The last tab
