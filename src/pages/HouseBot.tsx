@@ -446,6 +446,49 @@ function formatTime(ts: number): string {
   return `${hh}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
+/**
+ * Render a bot reply as light markdown.
+ *
+ * The model writes `**bold**` and appends the id of the recipe it is
+ * pointing at in backticks — `**Palak paneer** (`recipe-palak-paneer`)`.
+ * The bubble rendered the text verbatim, so the user read the asterisks and
+ * the internal id as if they were part of the answer. The id is machine
+ * plumbing for the client; it is dropped here, the bold is rendered, and
+ * any other inline code stays as a small chip.
+ */
+function renderRichText(text: string): React.ReactNode[] {
+  const cleaned = text.replace(/\s*\(`[a-z0-9][a-z0-9_-]*`\)/gi, '');
+  const parts = cleaned.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g);
+  return parts.map((part, i) => {
+    if (!part) return null;
+    if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={i} style={{ color: '#f8fafc', fontWeight: 700 }}>
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (part.length > 2 && part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={i}
+          style={{
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: '0.88em',
+            background: 'rgba(148,163,184,0.16)',
+            padding: '1px 6px',
+            borderRadius: 6,
+            color: '#cbd5e1',
+          }}
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
 export function HouseBotPage() {
   // Pull live data so House Bot grounds answers in the user's actual state.
   // `store` itself is kept because the agent actions need the whole API, not
@@ -565,6 +608,16 @@ export function HouseBotPage() {
     setInput('');
     attach.clear();
     setLoading(true);
+
+    // Any option panel still on screen belongs to the PREVIOUS turn. Left
+    // in place it stacks up underneath the newest messages and reads as if
+    // it were this turn's answer — which is exactly what the chat looked
+    // like after a few prompts: one set of recipe buttons, then another
+    // set, then another, all trailing the latest reply.
+    setOptionsHits([]);
+    setRecipeMsgs([]);
+    setCsvHits([]);
+    setProgressMsgs([]);
 
     // Reset textarea height after sending.
     requestAnimationFrame(() => {
@@ -1230,7 +1283,7 @@ export function HouseBotPage() {
                         }}
                       />
                     )}
-                    {m.text}
+                    {!mine ? renderRichText(m.text) : m.text}
                   </div>
                 </div>
                 {!mine && m.groceryRequest && (() => {
@@ -1758,7 +1811,7 @@ export function HouseBotPage() {
           {attach.image && (
             <AttachedImageChip image={attach.image} onClear={attach.clear} />
           )}
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-2 flex-1 min-w-0">
             <PhotoAttachButton attach={attach} disabled={loading} />
             <textarea
               ref={textareaRef}

@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Globe,
   Check,
   ShoppingCart,
-  ExternalLink,
   Search,
   CircleCheck,
+  ChevronRight,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { TopBar } from '../components/TopBar';
@@ -26,6 +27,7 @@ import { DIGITAL_STORES, DIGITAL_STORE_KIND_LABEL } from '../utils/digitalStores
  */
 export function DigitalStoresPage() {
   const { grocery, toggleGroceryPurchased } = useStore();
+  const navigate = useNavigate();
 
   const toBuy = useMemo(() => grocery.filter((g) => !g.purchased), [grocery]);
   const bought = useMemo(() => grocery.filter((g) => g.purchased), [grocery]);
@@ -43,11 +45,10 @@ export function DigitalStoresPage() {
             <ul className="space-y-2">
               {DIGITAL_STORES.map((s) => (
                 <li key={s.id}>
-                  <a
-                    href={s.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="card p-4 flex items-center gap-3 active:scale-[0.99] transition-transform hover:shadow-soft"
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/digital-stores/${s.id}`)}
+                    className="card p-4 flex items-center gap-3 w-full text-left active:scale-[0.99] transition-transform hover:shadow-soft"
                   >
                     <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-sage-100 dark:bg-sage-900/40 text-xl shrink-0">
                       {s.emoji}
@@ -68,17 +69,18 @@ export function DigitalStoresPage() {
                       aria-hidden="true"
                     >
                       <Globe size={13} />
-                      <ExternalLink size={11} />
+                      <ChevronRight size={14} />
                     </span>
-                  </a>
+                  </button>
                 </li>
               ))}
             </ul>
 
             <p className="text-[11px] text-sage-500 dark:text-ink-400 leading-relaxed">
-              Every store opens in a new tab. Delivery times, minimum orders and
-              membership passes change often, so each store’s own site is the
-              place to read the current details.
+              Tap a store to open it inside HomeHub, with your list beside you.
+              Delivery times, minimum orders and membership passes change often,
+              so each store’s own site is the place to read the current
+              details.
             </p>
           </section>
 

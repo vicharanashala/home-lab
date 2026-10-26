@@ -147,6 +147,13 @@ function extractName(line: string): string {
   // Strip trailing "— quantity" / "- quantity" / ", quantity".
   s = s.replace(/\s*[—\-:]\s*(?:\d.*|a pinch|a handful|to taste|as needed|as required)\s*$/i, '');
   s = s.replace(/\s*,\s*(?:\d.*|a pinch|a handful|to taste|as needed|as required)\s*$/i, '');
+  // A bullet that names a thing and then EXPLAINS it — "**Kadhai paneer** —
+  // needs paneer, tomato, onion" — is a dish with a description, not an
+  // ingredient. Putting "Kadhai paneer — needs paneer, tomato, onion" on
+  // the shopping list is worse than putting nothing there, so such a line
+  // is not an item. The dash must be surrounded by spaces, so a real name
+  // like "Semi-dried tomatoes" survives.
+  if (/\s+[—–-]\s+/.test(s)) return '';
   return s.trim();
 }
 
