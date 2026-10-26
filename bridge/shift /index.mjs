@@ -577,6 +577,9 @@ import {
   STORE_VIEWER_PAGE_TTL_MS,
   STORE_VIEWER_ASSET_MAX_AGE,
   createStoreViewerPageCache,
+  fetchStoreWithRetry,
+  isStoreViewerDocumentRequest,
+  storeViewerFailureReason,
 } from './storeViewer.mjs';
 
 /**
@@ -708,7 +711,13 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
 
   let upstream;
   try {
-    upstream = await fetch(target, {
+    // WHY THE STORE IS ASKED TWICE ON A GET: the store's own page asks for
+    // every route chunk at once, and its edge times out some of those
+    // connections — measured against the running app, four of fifty-eight
+    // requests came back ETIMEDOUT while the store was up and the other
+    // fifty-four were fine. One connection in a burst is not the store
+    // being down, and the second attempt gets a fresh one.
+    upstream = await fetchStoreWithRetry(target, {
       headers,
       method: req.method,
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : rawBody,
@@ -730,8 +739,37 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
     // The store's PATH is enough to say which page did not load.
     console.error(
       `[store-viewer] could not reach https://${host}${path}:`,
-      err?.message || err,
+      storeViewerFailureReason(err),
     );
+
+    // A SUBRESOURCE IS NOT A PAGE, AND MUST NOT BE ANSWERED WITH ONE.
+    //
+    // WHY: the friendly page below is for the store's PAGE — the thing the
+    // owner reads inside the frame. A frame that answers with an error
+    // status shows the browser's own error page instead, which is why the
+    // page is answered with a 200.
+    //
+    // But the store's scripts, styles and images are not read, they are
+    // parsed. Answering one of them with an HTML document and a 200 gave
+    // the browser a script it could not parse: the store's route was dead,
+    // the banner was on the screen, and nothing the owner clicked did
+    // anything. And the request log recorded it as a 200, so the operator's
+    // log said everything was fine for a request that had failed.
+    //
+    // So a request for a subresource is answered with the failure itself,
+    // and the request log says what happened.
+    if (!isStoreViewerDocumentRequest(req.get('sec-fetch-dest'))) {
+      // WHY THE CORS HEADER IS HERE ON A FAILURE TOO: the store's page runs
+      // in a sandbox, so its own origin is opaque and its fetches to this
+      // one are cross-origin. Without the header the browser reports a CORS
+      // error instead of the status, and the store's own code cannot tell a
+      // failed request from a request it was not allowed to make.
+      res.status(502).set('cache-control', 'no-store');
+      res.set('access-control-allow-origin', '*');
+      res.end();
+      return;
+    }
+
     res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
     // A failure page is not cached: the store can come back, and a cached
@@ -787,6 +825,18 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
       `[store-viewer] https://${host}${path} was refused by the store:`,
       upstream.status,
     );
+    // THE SAME RULE AS THE UNREACHABLE BRANCH ABOVE: the page is for the
+    // owner reading the frame, and a subresource is not a page. A chunk the
+    // store refused with a page of its own is answered with the refusal,
+    // so the browser knows the chunk is missing instead of being handed
+    // something it cannot parse.
+    if (!isStoreViewerDocumentRequest(req.get('sec-fetch-dest'))) {
+      // The same CORS reason as the unreachable branch above.
+      res.status(upstream.status).set('cache-control', 'no-store');
+      res.set('access-control-allow-origin', '*');
+      res.end();
+      return;
+    }
     res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
     // Not cached, for the same reason as the unreachable page above: the

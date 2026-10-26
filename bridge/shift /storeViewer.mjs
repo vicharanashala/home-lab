@@ -641,3 +641,80 @@ export function storeViewerTarget(rest, query) {
   const path = slash === -1 ? '/' : rest.slice(slash);
   return { host, path, url: `https://${host}${path}${query ? '?' + query : ''}` };
 }
+
+/**
+ * Ask the store for a page, and ask again once if the connection failed.
+ *
+ * WHY IT ASKS AGAIN: the store's own page asks for every route chunk at
+ * once — fifty-odd requests in the same moment, while the page is already
+ * on screen. The store's edge times out some of those connections.
+ * Measured against the running app: four of fifty-eight chunk requests
+ * came back ETIMEDOUT while the other fifty-four were fine, and the store
+ * was up the whole time.
+ *
+ * So a timeout there is not the store being down. It is one connection in
+ * a burst that did not make it, and the second attempt gets a fresh one.
+ * That is the difference between a store whose route works and one where
+ * the banner is on the screen and nothing the owner clicks does anything.
+ *
+ * WHY ONLY A GET OR A HEAD: a POST is the store's add to cart, and asking
+ * twice would ask twice — the owner's paneer would be in the basket twice.
+ *
+ * WHY THE TIMEOUT IS SHARED: the caller builds one AbortSignal for the
+ * request, so the thirty-second budget is thirty seconds for the whole
+ * thing. The second attempt has what is left of it, not thirty more.
+ */
+export async function fetchStoreWithRetry(target, init) {
+  const method = String(init?.method || 'GET').toUpperCase();
+  const attempts = method === 'GET' || method === 'HEAD' ? 2 : 1;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(target, init);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Is this request for the store's PAGE, or for something the browser
+ * PARSES?
+ *
+ * WHY THE QUESTION IS ASKED: when the connection to the store fails, the
+ * bridge answers with its "could not be reached" PAGE — an HTML document,
+ * with a 200 — so that the owner, reading the frame, is told what happened
+ * instead of being shown the browser's own error page.
+ *
+ * But the store's page is not the only thing that comes through here. Its
+ * scripts, styles and images are separate requests, and the browser
+ * PARSES them: handed a chunk of HTML, a script fails to parse and the
+ * store's route is dead, with nothing on the screen to show for it.
+ *
+ * The browser already says which is which. "sec-fetch-dest" is what the
+ * request is FOR: an "iframe" is the store's page, and a "script", a
+ * "style", an "image" or an "empty" (a fetch) is a subresource.
+ *
+ * WHY A REQUEST THAT SAYS NOTHING IS TREATED AS A PAGE: that is what the
+ * bridge did before, and it is the safer answer — the owner sees the
+ * friendly page rather than the browser's error page. A client that does
+ * not say what it wants is not a browser asking for a script.
+ */
+export function isStoreViewerDocumentRequest(secFetchDest) {
+  const dest = String(secFetchDest || '').trim().toLowerCase();
+  if (!dest) return true;
+  return dest === 'iframe' || dest === 'frame' || dest === 'document';
+}
+
+/**
+ * What the bridge says about a store it could not reach.
+ *
+ * WHY THE CAUSE CODE AND NOT THE MESSAGE: a failed fetch's message is
+ * "fetch failed", which says nothing at all. The cause carries the part
+ * that matters — ETIMEDOUT, ECONNRESET, ENOTFOUND — and those are the
+ * difference between "the store was slow" and "the store is gone".
+ */
+export function storeViewerFailureReason(err) {
+  return err?.cause?.code || err?.code || err?.message || String(err);
+}
