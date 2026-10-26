@@ -517,6 +517,47 @@ function uploadsStatic() {
   });
 }
 
+// ─── request log ───────────────────────────────────────────────────────
+// Method, path, status and duration only — never the body, since bodies here
+// carry photos and the user's kitchen data.
+//
+// req.path, NOT req.originalUrl: the original URL carries the query string,
+// and a client that puts the shared secret in `?token=` would have it
+// written verbatim into /tmp/hh_bridge.log — a world-readable file.
+//
+// WHY IT IS REGISTERED HERE, ABOVE EVERY ROUTE: Express runs middleware in
+// the order it was registered, and a route that answers a request without
+// calling next() ends the chain — so a route registered ABOVE this logger is
+// never logged at all.
+//
+// The store viewer was registered above it, and the whole route family
+// vanished from the operator's log: a store that refused us, a store that
+// could not be reached, a store that loaded and then misbehaved — none of it
+// left a line, because the route answered before the logger was reached.
+// Two branches logged by hand, which is how the gap stayed invisible for so
+// long: the request log looked whole, because everything else was in it.
+//
+// Two of the store viewer's failures DO log by hand (see the route below),
+// and they stay: they say what the store answered, which the request log
+// cannot. This line says that the request happened at all.
+//
+// WHY IT IS NOT ABOVE THE CORS MIDDLEWARE: a preflight is answered and
+// ended by that middleware, so a logger above it would record every
+// preflight — the store viewer's own preflights included — as a request that
+// never reached a route. Below it, a preflight is not logged, as before.
+//
+// WHY THE UPLOADS ARE STILL NOT IN IT: the uploads mount sits above this
+// too, and an image served from disk is not worth a line each.
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - started;
+    const flag = res.statusCode >= 500 ? ' !!' : res.statusCode >= 400 ? ' !' : '';
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} ${ms}ms${flag}`);
+  });
+  next();
+});
+
 // ─── the in-app store viewer ──────────────────────────────────────────
 //
 // The rewriting, and the script that keeps the store's own requests inside
@@ -766,23 +807,6 @@ app.use('/api', (req, res, next) => {
     });
   }
   res.setHeader('X-RateLimit-Remaining', String(Math.max(0, RATE_BUCKETS[kind].max - (rateState.get(key)?.count || 0))));
-  next();
-});
-
-// ─── request log ───────────────────────────────────────────────────────
-// Method, path, status and duration only — never the body, since bodies here
-// carry photos and the user's kitchen data.
-//
-// req.path, NOT req.originalUrl: the original URL carries the query string,
-// and a client that puts the shared secret in `?token=` would have it
-// written verbatim into /tmp/hh_bridge.log — a world-readable file.
-app.use((req, res, next) => {
-  const started = Date.now();
-  res.on('finish', () => {
-    const ms = Date.now() - started;
-    const flag = res.statusCode >= 500 ? ' !!' : res.statusCode >= 400 ? ' !' : '';
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} ${ms}ms${flag}`);
-  });
   next();
 });
 
