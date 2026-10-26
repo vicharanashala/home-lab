@@ -196,6 +196,14 @@ export function useScreenSharer() {
           ? { ...s, error: null, asking: true }
           : { watching: false, label, error: null, asking: true, sentFrame: false },
       );
+      // The capture the browser granted, if it granted one.
+      //
+      // WHY IT IS HELD HERE AND NOT ONLY IN THE REF: the share can fail AFTER
+      // the browser has granted the capture, and a granted capture keeps
+      // filming until something stops its track. The ref only holds a capture
+      // once the share has started, so a failure in between would leave a
+      // capture running that nothing in the app holds.
+      let granted: MediaStream | null = null;
       try {
         // Opened first, and not awaited: the picker has to be able to see
         // the tab it is asking about.
@@ -216,6 +224,7 @@ export function useScreenSharer() {
           video: { frameRate: 5 },
           audio: false,
         });
+        granted = stream;
 
         // THE ANSWER CAME LATE, AND THE PAGE HAS MOVED ON.
         //
@@ -323,6 +332,36 @@ export function useScreenSharer() {
         post({ kind: 'status', watching: true, label });
         return true;
       } catch (err) {
+        // WHY THE GRANTED CAPTURE IS GIVEN BACK HERE
+        //
+        // The browser granted the capture and will keep filming until
+        // something stops its track. The share did not start, so nothing is
+        // holding the capture — and the page is about to say the share
+        // failed. A page that says the share failed while the browser keeps
+        // filming leaves the person with a capture that nothing in the app
+        // can stop: the Stop button is only drawn while the page says it is
+        // sharing. This is the orphan the attempt number exists to prevent,
+        // reached by a different road.
+        //
+        // WHY THE RUNNING SHARE IS TOLD APART FROM THIS ONE: the share that
+        // was running before the attempt is still the person's, and a failed
+        // attempt must not take it away from them — the same rule a refused
+        // picker follows. Identity is what tells the two apart: only the
+        // capture the page is holding AS the running share is torn down
+        // here, and the attempt's own capture is given back on its own.
+        const isTheRunningShare = granted !== null && streamRef.current === granted;
+        if (isTheRunningShare) {
+          // The share that was running before was given back when this
+          // capture was registered, so there is nothing left to keep: the
+          // page stops saying it is sharing, and the other tabs are told.
+          endCurrentShare();
+        } else if (granted) {
+          try {
+            granted.getTracks().forEach((t) => t.stop());
+          } catch {
+            /* already stopped */
+          }
+        }
         // WHY A REFUSAL ON AN ABANDONED ATTEMPT IS NOT REPORTED: the page
         // has already said what it is doing — it went away, or the person
         // pressed stop — and this refusal is not news to anyone.

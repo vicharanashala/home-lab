@@ -28,6 +28,7 @@
  *   - does a capture that has been replaced stop the share that replaced it?
  *   - does the page tell the other tabs when the share is over?
  *   - does a capture granted after the page has gone away get given back?
+ *   - does a capture the browser granted get given back when the share fails?
  *
  * WHY A FAKE REACT INSTEAD OF A BROWSER: the rule is about what the page
  * holds on to, and what it holds on to is decided by the hook. A fake
@@ -648,6 +649,86 @@ console.log('\na share that moves to another store does not keep the old picture
   ok(watch.frame !== amazonFrame, 'and it is not the first store\'s picture');
 
   harness.unmount();
+}
+
+console.log('\na capture the browser granted is given back when the share cannot start');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+  // A browser with no BroadcastChannel: the share cannot announce itself, and
+  // it fails AFTER the browser has granted the capture.
+  Object.defineProperty(globalThis, 'BroadcastChannel', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+  const harness = mountHook(() => useScreenSharer());
+
+  const started = await harness.value.start('Amazon Fresh', () => {});
+  ok(started === false, 'the share did not start');
+  ok(streams.length === 1, 'but the browser had granted a capture');
+  ok(
+    streams[0].track.stopped === true,
+    'AND THE CAPTURE IS GIVEN BACK — it is not left filming',
+    `track.stopped = ${streams[0].track.stopped}`,
+  );
+  ok(
+    harness.value.state.watching === false,
+    'and the page is not saying it is sharing',
+    `watching = ${harness.value.state.watching}`,
+  );
+  ok(
+    timers.size === 0,
+    'and no frame timer is left running',
+    `timers: ${timers.size}`,
+  );
+
+  harness.unmount();
+}
+
+console.log('\na share that fails after the capture is registered is taken down');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+  const watcher = new FakeChannel(SCREEN_WATCH_CHANNEL);
+  // A browser whose timers cannot be started. The share fails after the
+  // capture has been granted AND registered, which is the point where the
+  // page is holding a capture it has to give back.
+  const working = globalThis.window;
+  globalThis.window = {
+    ...working,
+    setInterval() {
+      throw new Error('the page cannot run a timer');
+    },
+  };
+  const harness = mountHook(() => useScreenSharer());
+
+  const started = await harness.value.start('Amazon Fresh', () => {});
+  ok(started === false, 'the share did not start');
+  ok(
+    streams[0].track.stopped === true,
+    'and the capture it had registered is given back',
+    `track.stopped = ${streams[0].track.stopped}`,
+  );
+  ok(
+    harness.value.state.watching === false,
+    'and the page is not saying it is sharing',
+    `watching = ${harness.value.state.watching}`,
+  );
+
+  // What the other tab makes of it. The same rule House Bot uses.
+  let watch = { watching: false, label: null, frame: null, lastSeenAt: null };
+  for (const m of watcher.received) watch = reduceWatch(watch, m, Date.now());
+  ok(
+    watch.watching === false,
+    'AND THE OTHER TAB IS NOT TOLD A SHARE IS RUNNING',
+    `watching = ${watch.watching}`,
+  );
+
+  harness.unmount();
+  globalThis.window = working;
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
