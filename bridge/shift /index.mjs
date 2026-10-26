@@ -641,7 +641,17 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
     // Nothing else in the bridge swallows an error, and an operator looking at
     // a blank frame has no other way to learn that the request never
     // arrived.
-    console.error(`[store-viewer] could not reach ${target}:`, err?.message || err);
+    //
+    // WHY THE ADDRESS IS THE ONE WITHOUT ITS QUERY STRING: the query is the
+    // caller's, byte for byte, and it is never logged. A client that puts the
+    // shared secret in "?token=" would have it written verbatim into
+    // /tmp/hh_bridge.log — a world-readable file — and the request log
+    // further down already refuses to log the query for exactly that reason.
+    // The store's PATH is enough to say which page did not load.
+    console.error(
+      `[store-viewer] could not reach https://${host}${path}:`,
+      err?.message || err,
+    );
     res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
     res.send(storeViewerUnreachablePage(host, target));
@@ -665,6 +675,16 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
 
   // The edge refused us. Say so in the frame rather than showing nothing.
   if (upstream.status === 403 || upstream.status === 429 || upstream.status >= 500) {
+    // WHY IT IS LOGGED: this is the OTHER way a frame comes back blank, and
+    // it was silent — the operator saw a refusal in the frame and nothing at
+    // all in the bridge log to say what refused it or which store.
+    //
+    // WHY IT IS NOT THE WHOLE ADDRESS: the same rule as the unreachable
+    // branch above. The caller's query string never reaches the log.
+    console.error(
+      `[store-viewer] https://${host}${path} was refused by the store:`,
+      upstream.status,
+    );
     res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
     res.send(storeViewerBlockedPage(host, target));
