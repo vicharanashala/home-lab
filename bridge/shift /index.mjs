@@ -659,8 +659,10 @@ async function readState(p, fallback) {
  * would otherwise become an unhandled rejection and leave the request
  * hanging with no response.
  */
-const asyncRoute = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
+function asyncRoute(fn) {
+  return (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
+}
 
 /**
  * Store an uploaded image on disk.
