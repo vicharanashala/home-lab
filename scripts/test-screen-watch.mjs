@@ -169,5 +169,32 @@ console.log('\nHouse Bot stops believing a page that has gone away');
   ok(!state.watching, 'and it stops being believed when the frames stop');
 }
 
+console.log('\na watch that comes back to life knows the store again');
+{
+  const now = 1000;
+  const frame = frameFromDataUrl('data:image/jpeg;base64,QUJDRA==', 900, 506);
+  const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
+
+  let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Amazon Fresh' }, now);
+  state = reduceWatch(state, { kind: 'frame', frame }, now);
+  ok(state.label === 'Amazon Fresh', 'the store is named while it is being watched');
+
+  // The frames stop for longer than the deadline. This is what a browser
+  // that throttles a background tab's timers looks like from here, and it is
+  // not the same thing as the share being over.
+  state = reduceWatch(state, null, now + WATCH_STALE_MS + 1);
+  ok(!state.watching, 'the watch ends by itself');
+  ok(state.frame === null, 'and the frozen picture is forgotten');
+
+  // And then they come back — the share was alive all along.
+  state = reduceWatch(state, { kind: 'frame', frame }, now + WATCH_STALE_MS + 2);
+  ok(state.watching, 'the watch is alive again');
+  ok(
+    state.label === 'Amazon Fresh',
+    'and it still knows which store it is watching',
+    String(state.label),
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

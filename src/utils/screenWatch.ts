@@ -226,7 +226,17 @@ export function reduceWatch(
 ): WatchState {
   const next = msg ? applyWatchMessage(state, msg, now) : state;
   if (!watchHasEnded(next, now)) return next;
-  return { watching: false, label: null, frame: null, lastSeenAt: null };
+  // WHY THE NAME SURVIVES THE ENDING: the name of the store is not part of
+  // the promise. The FRAME is the promise, and the frame is what goes. A
+  // watch that has gone quiet has not necessarily been abandoned — a browser
+  // that throttles a background tab's timers, or a frame that was merely
+  // late, both look the same from here. So the name is kept, and a watch
+  // that comes back to life knows which store it is watching again instead
+  // of saying it can see "a shared tab".
+  //
+  // WHY IT IS NOT LEAKED TO THE OTHER TABS: nothing here leaves the device,
+  // and the name is only ever shown while a frame is on screen beside it.
+  return { watching: false, label: next.label, frame: null, lastSeenAt: null };
 }
 
 /**
