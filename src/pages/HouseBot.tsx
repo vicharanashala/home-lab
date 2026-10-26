@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
+import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart, Mic, MicOff, Volume2, VolumeX, MonitorPlay } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { STARTER_RECIPES } from '../data/recipes';
 import { INDIAN_RECIPES } from '../data/indianRecipes';
@@ -16,6 +16,7 @@ import { applyAgentActions } from '../utils/agentActions';
 import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhotoAttachButton, AttachedImageChip, usePhotoAttach } from '../components/PhotoAttach';
+import { useScreenWatcher } from '../hooks/useScreenWatch';
 import { useVoice } from '../hooks/useVoice';
 
 type Msg = {
@@ -513,6 +514,9 @@ export function HouseBotPage() {
   const [webMode, setWebMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attach = usePhotoAttach();
+  // The tab being shared, if any. It lives in another tab — the Digital
+  // stores page asked the browser for it — and arrives here as frames.
+  const screen = useScreenWatcher();
   const voice = useVoice();
   // Whether replies are read aloud. Off by default: people don't always want
   // a kitchen that talks back.
@@ -598,6 +602,23 @@ export function HouseBotPage() {
     // Snapshot the attachment before clearing it, so the request body and the
     // bubble both still have it after the chip is reset.
     const sentImage = attach.image;
+
+    // WHAT THE PERSON IS LOOKING AT.
+    //
+    // If a tab is being shared — the store they opened from the Digital
+    // stores page — the frame of it goes out with the message, so the model
+    // can answer "what is this?" and "how much is it?" about the screen in
+    // front of them.
+    //
+    // WHY THE ATTACHED PHOTO WINS: a photo the person deliberately attached
+    // is what they meant to show. The screen is what happened to be in front
+    // of them.
+    const watched = sentImage ? null : screen.frame;
+    const sentImagePayload = sentImage
+      ? { mediaType: sentImage.mediaType, data: sentImage.data }
+      : watched
+        ? { mediaType: watched.mediaType, data: watched.data }
+        : null;
     const userMsg: Msg = {
       from: 'me',
       text,
@@ -754,9 +775,7 @@ export function HouseBotPage() {
         message: text,
         history,
         context,
-        ...(sentImage
-          ? { image: { mediaType: sentImage.mediaType, data: sentImage.data } }
-          : {}),
+        ...(sentImagePayload ? { image: sentImagePayload } : {}),
       }),
         signal: ctl.signal,
       });
@@ -1815,6 +1834,15 @@ export function HouseBotPage() {
         >
           {attach.image && (
             <AttachedImageChip image={attach.image} onClear={attach.clear} />
+          )}
+          {/* WHAT THE BOT CAN SEE.
+              The person has to know, or they will ask the bot about something
+              it cannot see and conclude it is not listening. */}
+          {!attach.image && screen.watching && (
+            <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-lg bg-sage-50 dark:bg-sage-900/30 px-2 py-1 text-[10px] font-semibold text-sage-700 dark:text-sage-200">
+              <MonitorPlay size={11} />
+              I can see your {screen.label ?? 'shared'} tab
+            </span>
           )}
           <div className="flex items-end gap-2 flex-1 min-w-0">
             <PhotoAttachButton attach={attach} disabled={loading} />
