@@ -275,6 +275,22 @@ app.use((req, res, next) => {
   }
   next();
 });
+// The store viewer proxies the store's OWN requests — the add-to-cart, the
+// search — and those carry a body. The body has to reach the store as the
+// bytes the browser sent: a parser that turns it into an object would have
+// the store receive "[object Object]" instead, and the store would answer
+// with an error the user cannot read.
+//
+// So the viewer's path is read as raw bytes HERE, before the JSON parser
+// below gets to it. body-parser remembers that it has read a body, so the
+// JSON parser leaves this one alone.
+//
+// WHY THE PATH IS THE VIEWER'S OWN PREFIX: the raw parser and the route
+// have to agree on the path, and the route is the one further down. The
+// prefix itself is declared in storeViewer.mjs, next to the rewriting it
+// belongs to, and an import is hoisted — so it is already bound here.
+app.use(`${STORE_VIEWER_PREFIX}/*`, express.raw({ type: '*/*', limit: '4mb' }));
+
 app.use(express.json({ limit: '4mb' }));
 
 // ─── security headers ─────────────────────────────────────────────────
@@ -428,107 +444,19 @@ function uploadsStatic() {
 
 // ─── the in-app store viewer ──────────────────────────────────────────
 //
-// WHY THIS EXISTS: every one of these stores refuses to be framed. Amazon
-// and BigBasket both send "X-Frame-Options: SAMEORIGIN", and Jio Mart's
-// edge protection leaves a frame empty. An iframe aimed straight at them
-// shows a blank rectangle.
-//
-// So the page is fetched HERE and served from the app's own origin, where
-// the app is allowed to frame it. What the user sees is the real store,
-// inside HomeHub.
-//
-// WHY IT IS NOT UNDER /api: everything under /api is behind the shared
-// secret, and an iframe cannot put a header on its navigation. It also
-// matters that the store's own pages call "/api/..." on their own origin,
-// and the app's /api is a different thing entirely — the two must not meet.
-//
-// ONLY THESE THREE HOSTS ARE SERVED. A proxy that will fetch any address
-// is an open proxy, and this one is reachable by anything on the tailnet.
-// The list is the allowlist, and a host that is not on it is refused.
-const STORE_VIEWER_PREFIX = '/store-viewer';
-const STORE_VIEWER_HOSTS = new Set([
-  'www.jiomart.com',
-  'www.amazon.in',
-  'www.bigbasket.com',
-]);
-
-/**
- * The headers a browser sends, which is what the grocery sites' edges look
- * for. Without them the same fetch that works in Chrome is refused with a
- * 403 by the edge in front of it.
- */
-const STORE_VIEWER_HEADERS = {
-  'user-agent':
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  accept:
-    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-  'accept-language': 'en-IN,en;q=0.9',
-  'upgrade-insecure-requests': '1',
-  'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"macOS"',
-  'sec-fetch-dest': 'document',
-  'sec-fetch-mode': 'navigate',
-  'sec-fetch-site': 'none',
-  'sec-fetch-user': '?1',
-  'cache-control': 'no-cache',
-  pragma: 'no-cache',
-};
-
-/**
- * The policy the proxied page is served under.
- *
- * It has to be permissive — the store's own scripts, styles, fonts and
- * images come from its domain and from a dozen CDNs — and it has to let the
- * app frame it, which the app's own policy does not.
- *
- * The app's page has "frame-ancestors 'none'", so without "frame-ancestors
- * 'self'" here the frame would be refused by the browser for the same
- * reason the store refused it.
- */
-const STORE_VIEWER_CSP = [
-  "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'",
-  "frame-ancestors 'self'",
-  "img-src * data: blob:",
-  "style-src * 'unsafe-inline'",
-  "script-src * 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
-  "connect-src *",
-  "font-src * data:",
-  "media-src * blob:",
-  "form-action *",
-  "base-uri 'self'",
-].join('; ');
-
-/**
- * The page shown when the store's edge refuses to serve us.
- *
- * BigBasket's edge refuses every request that does not come from a real
- * browser (its TLS fingerprint says Node, so it says no). Rather than
- * showing an empty frame, the app is told plainly and given the one thing
- * that does work.
- */
-function storeViewerBlockedPage(storeName, url) {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    background:#faf9f5;color:#2f3d33}
-  .box{max-width:420px;margin:24px;padding:28px;border-radius:20px;background:#fff;
-    border:1px solid #e6e4dc;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.06)}
-  h1{font-size:19px;margin:0 0 10px}
-  p{margin:0 0 20px;color:#5c6b60;font-size:14px}
-  a{display:inline-block;background:#3f6b4d;color:#fff;text-decoration:none;
-    padding:12px 22px;border-radius:12px;font-weight:600;font-size:14px}
-</style></head>
-<body><div class="box">
-  <h1>${storeName} will not open inside HomeHub</h1>
-  <p>${storeName}'s server only shows its pages to a real browser, so this one
-  is opened in a new tab instead.</p>
-  <a href="${url}" target="_blank" rel="noreferrer noopener">Open ${storeName}</a>
-</div></body></html>`;
-}
+// The rewriting, and the script that keeps the store's own requests inside
+// the viewer, live in storeViewer.mjs where they can be tested without a
+// network. See that file for why the viewer exists at all.
+import {
+  STORE_VIEWER_HOSTS,
+  STORE_VIEWER_HEADERS,
+  STORE_VIEWER_CSP,
+  STORE_VIEWER_PREFIX,
+  rewriteStorePage,
+  storeViewerBlockedPage,
+  storeViewerPrefix,
+  storeViewerTarget,
+} from './storeViewer.mjs';
 
 /**
  * The headers a store-viewer DOCUMENT is served with.
@@ -542,7 +470,7 @@ function storeViewerBlockedPage(storeName, url) {
  *
  * WHY BOTH HEADERS HAVE TO AGREE: a browser enforces "X-Frame-Options" AND
  * the CSP "frame-ancestors" directive, and the strictest of the two wins.
- * The policy above already says "frame-ancestors 'self'", but that does NOT
+ * The policy below already says "frame-ancestors 'self'", but that does NOT
  * rescue a document whose X-Frame-Options says DENY — the frame is refused
  * and the user is shown the browser's own error page instead of the store.
  *
@@ -560,128 +488,31 @@ function setStoreViewerDocumentHeaders(res) {
   });
 }
 
-/**
- * The script that keeps the store's OWN requests inside the viewer.
- *
- * Rewriting the HTML is not enough. The store builds its addresses at
- * runtime — the app's bundle asks for "/api/service/..." — and a URL like
- * that starts at the root, so it ignores the <base> tag and would go to
- * the APP's /api instead of the store's. The page then renders the store's
- * own "we couldn't find the page".
- *
- * So fetch, XMLHttpRequest, link clicks and the router's history changes
- * are all pointed at the viewer instead. This is the whole of what makes
- * an in-app browser work.
- */
-function storeViewerScript(prefix, host) {
-  const origin = `https://${host}`;
-  return `(function(){
-  var PREFIX = ${JSON.stringify(prefix)};
-  var ORIGIN = ${JSON.stringify(origin)};
-  var HOST = ${JSON.stringify(host)};
-  // WHERE THIS PAGE IS SERVED FROM. The store builds some of its addresses
-  // out of window.location.origin — which, inside the viewer, is the APP's
-  // origin, not the store's. Those addresses have to be caught too, and
-  // comparing them against location.origin here catches every one of them
-  // without the server having to know what the app is called.
-  var HERE = window.location.origin;
-  function fix(u) {
-    if (typeof u !== 'string') return u;
-    if (u.indexOf(ORIGIN) === 0) return PREFIX + u.slice(ORIGIN.length);
-    if (u.indexOf(HERE) === 0) return PREFIX + u.slice(HERE.length);
-    if (u.indexOf('//' + HOST) === 0) return PREFIX + u.slice(2 + HOST.length);
-    if (u.charAt(0) === '/' && u.charAt(1) !== '/') return PREFIX + u;
-    return u;
-  }
-  var of = window.fetch;
-  if (of) {
-    window.fetch = function (u, o) {
-      if (u && typeof u === 'object' && u.url) {
-        try { u = new Request(fix(u.url), u); } catch (e) {}
-      }
-      return of.call(this, fix(u), o);
-    };
-  }
-  var oo = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (m, u) {
-    var a = Array.prototype.slice.call(arguments);
-    a[1] = fix(u);
-    return oo.apply(this, a);
-  };
-  document.addEventListener('click', function (e) {
-    var t = e.target;
-    var a = t && t.closest ? t.closest('a[href]') : null;
-    if (!a) return;
-    var href = a.getAttribute('href');
-    if (!href || href.charAt(0) === '#') return;
-    var fixed = fix(href);
-    if (fixed !== href) { e.preventDefault(); location.href = fixed; }
-  }, true);
-  var ops = history.pushState, ors = history.replaceState;
-  history.pushState = function (s, t, u) { return ops.call(this, s, t, fix(u)); };
-  history.replaceState = function (s, t, u) { return ors.call(this, s, t, fix(u)); };
-})();`;
-}
-
-/**
- * Rewrite a store's page so that every link stays inside the viewer.
- *
- * The address of the page the browser is showing is
- *   /store-viewer/<host>/<path>
- * so a link written as "/foo" has to become
- *   /store-viewer/<host>/foo
- * or the browser would ask this server for "/foo" and get nothing.
- *
- * The <base> tag does the same job for the links written as "foo" — the
- * ones relative to the page — and is what keeps them pointing at the store
- * instead of at this server.
- */
-function rewriteStorePage(html, host, dir, prefix) {
-  const origin = `https://${host}`;
-
-  // Absolute and protocol-relative addresses for this same store.
-  let out = html.split(origin).join(prefix);
-  out = out.split(`//${host}`).join(prefix);
-
-  // Root-relative addresses: "/foo" -> "<prefix>/foo".
-  out = out.replace(
-    /((?:href|src|action|data-src|data-href|poster)\s*=\s*["'])\/(?!\/)/gi,
-    (m, lead) => `${lead}${prefix}/`,
-  );
-
-  // Root-relative addresses inside stylesheets: url(/foo).
-  out = out.replace(/url\(\s*(["']?)\/(?!\/)/gi, (m, q) => `url(${q}${prefix}/`);
-
-  // The script and the base, before the store's own code runs.
-  const head =
-    `<base href="${prefix}${dir.endsWith('/') ? dir : dir + '/'}">` +
-    `<script>${storeViewerScript(prefix, host)}<\/script>`;
-  out = out.replace(/<head([^>]*)>/i, (m, attrs) => `<head${attrs}>${head}`);
-
-  return out;
-}
-
-app.get(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
-  // "/store-viewer/www.amazon.in/fresh" -> host, path
+// WHY IT IS NOT A GET-ONLY ROUTE: the store's own page makes POST calls —
+// the add-to-cart, the search — and the script in storeViewer.mjs points
+// them at the viewer. A GET-only route answered them with "Cannot POST
+// /store-viewer/...", which the browser shows as a broken request and the
+// user reads as the cart simply not working.
+//
+// WHY OPTIONS STILL NEVER REACHES HERE: the CORS middleware above answers
+// a preflight and ends the response.
+app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   const rest = String(req.path || '').slice(STORE_VIEWER_PREFIX.length + 1);
-  const slash = rest.indexOf('/');
-  const host = (slash === -1 ? rest : rest.slice(0, slash)).toLowerCase();
-  const path = slash === -1 ? '/' : rest.slice(slash);
+  const query = req.url.includes('?') ? String(req.url.split('?')[1] || '') : '';
+  const { host, path, url: target } = storeViewerTarget(rest, query);
 
   if (!STORE_VIEWER_HOSTS.has(host)) {
     res.status(403).json({ error: 'not_allowed', host });
     return;
   }
 
-  const query = req.url.includes('?') ? '?' + String(req.url.split('?')[1] || '') : '';
-  const target = `https://${host}${path}${query}`;
-  const prefix = `${STORE_VIEWER_PREFIX}/${host}`;
+  const prefix = storeViewerPrefix(host);
 
   // The store's own headers — its Authorization bearer and its signature
   // headers — have to travel with the request, or the store answers the
   // API calls with a refusal.
   const headers = { ...STORE_VIEWER_HEADERS };
-  for (const name of ['authorization', 'cookie', 'x-currency-code', 'accept-language']) {
+  for (const name of ['authorization', 'cookie', 'content-type', 'x-currency-code']) {
     const v = req.get(name);
     if (v && !headers[name]) headers[name] = v;
   }
@@ -692,18 +523,27 @@ app.get(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
     }
   }
 
+  // The body the browser sent, as the bytes it sent them.
+  //
+  // WHY IT IS NOT req.body AS IT STANDS: the raw parser above gives a
+  // Buffer, which is what the store has to receive. A request with no body
+  // has none, and body-parser leaves an empty OBJECT behind in that case —
+  // and an object handed to fetch is sent as the text "[object Object]".
+  const rawBody = Buffer.isBuffer(req.body) ? req.body : undefined;
+
   let upstream;
   try {
     upstream = await fetch(target, {
       headers,
       method: req.method,
-      body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : rawBody,
       redirect: 'follow',
       signal: AbortSignal.timeout(30000),
     });
   } catch {
+    res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
-    res.status(200).type('html').send(storeViewerBlockedPage(host, target));
+    res.send(storeViewerBlockedPage(host, target));
     return;
   }
 
@@ -724,16 +564,19 @@ app.get(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
 
   // The edge refused us. Say so in the frame rather than showing nothing.
   if (upstream.status === 403 || upstream.status === 429 || upstream.status >= 500) {
+    res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
-    res.status(200).type('html').send(storeViewerBlockedPage(host, target));
+    res.send(storeViewerBlockedPage(host, target));
     return;
   }
 
   const dir = path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1) || '/';
   const html = rewriteStorePage(body.toString('utf8'), host, dir, prefix);
 
+  res.status(200).type('html');
   setStoreViewerDocumentHeaders(res);
-  res.status(200).type('html').set({ 'access-control-allow-origin': '*' }).send(html);
+  res.set('access-control-allow-origin', '*');
+  res.send(html);
 }));
 
 // ─── rate limiting ─────────────────────────────────────────────────────
