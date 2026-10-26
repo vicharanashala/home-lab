@@ -345,6 +345,64 @@ console.log('\na capture that has been replaced does not stop the share that rep
   harness.unmount();
 }
 
+console.log('\na refused second share does not orphan the first one');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+  // The picker refuses the SECOND request, which is what happens when the
+  // person opens the store and then declines to share it.
+  let calls = 0;
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    calls += 1;
+    if (calls === 2) {
+      const err = new Error('the person said no');
+      err.name = 'NotAllowedError';
+      throw err;
+    }
+    const stream = makeStream();
+    streams.push(stream);
+    return stream;
+  };
+
+  const watcher = new FakeChannel(SCREEN_WATCH_CHANNEL);
+  const harness = mountHook(() => useScreenSharer());
+
+  await harness.value.start('Amazon Fresh', () => {});
+  ok(harness.value.state.watching === true, 'the first share is running');
+
+  await harness.value.start('Big Bazaar', () => {});
+
+  // The capture must survive the refusal — the hook only gives a share back
+  // when a NEW one has been granted.
+  ok(
+    streams.length === 1 && streams[0].track.stopped === false,
+    'the first capture is still running',
+  );
+
+  // But the PAGE has to know about it. If the page says the share is over,
+  // the "Sharing the X tab" panel — which holds the only Stop button in the
+  // app — disappears, and the page prints "Screen sharing was not allowed"
+  // while the browser is still filming.
+  ok(
+    harness.value.state.watching === true,
+    'THE PAGE STILL SAYS IT IS SHARING',
+    `watching: ${harness.value.state.watching}`,
+  );
+  ok(
+    harness.value.state.label === 'Amazon Fresh',
+    'and it is still the store it is actually sharing',
+    `label: ${harness.value.state.label}`,
+  );
+  ok(timers.size === 1, 'the frame timer is still running', `timers: ${timers.size}`);
+  ok(
+    watcher.received.some((m) => m.kind === 'status' && m.watching === true),
+    'the other tabs are still told a share is live',
+  );
+
+  harness.unmount();
+}
+
 console.log('\nthe other tabs are told when the share is over');
 {
   reset();

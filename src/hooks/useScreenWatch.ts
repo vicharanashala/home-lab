@@ -141,7 +141,17 @@ export function useScreenSharer() {
    */
   const start = useCallback(
     async (label: string, openTab: () => void) => {
-      setState({ watching: false, label, error: null, asking: true, sentFrame: false });
+      // WHY THE RUNNING SHARE IS NOT CLEARED HERE: the picker can be refused,
+      // and a refusal must not cost the person the share they already had.
+      // So while the picker is open the page keeps saying what it is
+      // sharing — and keeps its Stop button — and only the "asking" flag
+      // changes. The share that IS running is given back further down, once
+      // the new one has actually been granted.
+      setState((s) =>
+        sharingRef.current
+          ? { ...s, error: null, asking: true }
+          : { watching: false, label, error: null, asking: true, sentFrame: false },
+      );
       try {
         // Opened first, and not awaited: the picker has to be able to see
         // the tab it is asking about.
@@ -244,7 +254,17 @@ export function useScreenSharer() {
             : name === 'NotFoundError'
               ? 'There was no screen to share.'
               : 'The screen could not be shared.';
-        setState({ watching: false, label, error: message, asking: false, sentFrame: false });
+        // WHY A REFUSAL DOES NOT CLEAR THE RUNNING SHARE: the capture is
+        // still filming. The hook only gives a share back when a NEW one has
+        // been granted, so a refused picker leaves the old capture alone. If
+        // the page said the share was over here it would be telling the truth
+        // about the attempt and lying about the capture — and the Stop button,
+        // the only way to end a share from inside the app, would go with it.
+        setState((s) =>
+          sharingRef.current
+            ? { ...s, error: message, asking: false }
+            : { watching: false, label, error: message, asking: false, sentFrame: false },
+        );
         return false;
       }
     },
