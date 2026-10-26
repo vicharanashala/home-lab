@@ -815,7 +815,21 @@ async function callOverwatch(args) {
       const ok = code === 0 && parsed && parsed.ok !== false;
       resolve({
         ok, stdout, stderr, ms, code,
-        parsed: ok ? parsed : null,
+        // WHY THE PARSED ANSWER IS KEPT WHEN THE CALL FAILED: the CLI says
+        // what went wrong in JSON on its stdout — "Unknown agent id", a
+        // provider that refused, an answer it could not build — and this used
+        // to throw that away whenever the exit code was not zero.
+        //
+        // So the bridge threw away the one sentence that named the problem and
+        // reported the failure as a wall of stderr instead. The stderr is the
+        // CLI's own noise ("[openclaw] The CLI command failed.", a debug hint,
+        // a help line) and it does not say what is actually wrong in a form a
+        // person can act on. The JSON says it exactly, in one line.
+        //
+        // WHY `ok` IS STILL THE ANSWER TO "DID IT WORK": `parsed` is kept so
+        // the error can be read, not so a failure can be mistaken for a
+        // reply. Every route that acts on the agent's answer asks `ok` first.
+        parsed,
       });
     });
     proc.on('error', (err) => {
@@ -825,6 +839,29 @@ async function callOverwatch(args) {
       });
     });
   });
+}
+
+/**
+ * What the CLI said went wrong, in the CLI's own words.
+ *
+ * WHY THE CLI'S WORDS AND NOT THE BRIDGE'S: the openclaw CLI answers a
+ * failure in JSON — {"ok": false, "error": {"type": "cli_error", "message":
+ * "Unknown agent id \"overwatch\". Use \"openclaw agents list\" to see
+ * configured agents."}} — and that one line is the whole diagnosis. The
+ * stderr beside it is the CLI's own noise, and it is what the bridge used to
+ * show instead.
+ *
+ * WHY IT IS A FUNCTION AND NOT AN INLINE `&&` CHAIN: the chain was already
+ * written, at the place that needed it, and it could never fire — the parsed
+ * answer was discarded on every failure, so the chain always fell through to
+ * the stderr. A rule that cannot run is a rule that needs a home and a test.
+ *
+ * @param {object} status what callOverwatch resolved with
+ * @returns {string|null} the CLI's message, or null when it did not give one
+ */
+function agentErrorMessage(status) {
+  const message = status?.parsed?.error?.message;
+  return typeof message === 'string' && message.trim() ? message : null;
 }
 
 /** Best-effort sniff of PNG/JPEG width×height from a raw buffer.
@@ -901,10 +938,17 @@ app.get('/api/overwatch/status', async (_req, res) => {
     '--json',
   ]);
   res.json({
+    // WHAT "reachable" MEANS HERE: the CLI is there. It is not a claim that
+    // the agent answered — `code` says that. A CLI that is installed and
+    // runs can still be asked about an agent that is not configured, and
+    // that is a different thing from a CLI that is not installed at all.
     reachable: status.code !== -1,
     code: status.code,
     ms: status.ms,
-    providerError: (status.parsed && status.parsed.error && status.parsed.error.message) || null,
+    // WHY THIS IS NOT ALWAYS NULL: the CLI names what went wrong in its JSON
+    // answer, and this used to throw that answer away on every failure — so
+    // this field was null exactly when it was needed.
+    providerError: agentErrorMessage(status),
     stderrTail: status.stderr.slice(-200),
   });
 });
@@ -928,10 +972,14 @@ app.post('/api/overwatch', async (req, res) => {
     '--json',
   ]);
 
-  if (!status.parsed) {
+  if (!status.ok) {
     return res.status(502).json({
       error: 'overwatch_unavailable',
-      message: (status.parsed && status.parsed.error && status.parsed.error.message) || status.stderr,
+      // THE CLI'S OWN MESSAGE FIRST: it says what went wrong in one line
+      // ("Unknown agent id \"overwatch\""), and the stderr behind it is the
+      // CLI's own noise. The stderr is still there for the failures the CLI
+      // did not describe in JSON — a crash, a spawn error.
+      message: agentErrorMessage(status) || status.stderr,
       code: status.code,
       ms: status.ms,
     });
@@ -970,7 +1018,10 @@ app.post('/api/overwatch/image', upload.single('image'), asyncRoute(async (req, 
     '--json',
   ]);
 
-  const text = extractAgentText(status.parsed);
+  // THE CLI'S OWN MESSAGE FOR A FAILED CALL: the agent's answer is empty when
+  // there was none, and without this the route could only say "nothing came
+  // back" — which is not what happened.
+  const text = extractAgentText(status.parsed) || agentErrorMessage(status) || '';
   const { prediction, rawReply, parsedOk } = parseAgentReply(text);
   res.json({
     ok: status.code === 0,
@@ -1010,7 +1061,11 @@ app.post('/api/overwatch/chat', asyncRoute(async (req, res) => {
     '--json',
   ]);
 
-  const replyText = extractAgentText(status.parsed) || status.stderr || '(no reply)';
+  // THE CLI'S OWN MESSAGE BEFORE THE STDERR: a failed call used to be filed
+  // in the chat history as the CLI's stderr blob — six lines of noise about
+  // a command that failed — and the one line that said what was actually
+  // wrong was thrown away on the way.
+  const replyText = extractAgentText(status.parsed) || agentErrorMessage(status) || status.stderr || '(no reply)';
 
   // Serialised read-modify-write, and the array is trimmed before it is
   // written so the file cannot grow without bound.
