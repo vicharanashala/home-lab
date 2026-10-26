@@ -206,112 +206,149 @@ async function promptFor(image, message = 'the price please') {
 // the media type — so a short base64 string is enough to exercise the path.
 const PIXEL = 'QUJDRA==';
 
-console.log('\nthe bridge tells a shared screen apart from a photo');
-if (!deps) {
-  // Not a failure: there is no bridge to run. It says so out loud, because a
-  // check that quietly does not run is worse than one that is missing.
-  console.log('  SKIP the bridge is not installed here — its dependencies could not be found');
-} else if (!bridgeUp) {
-  ok(false, 'the bridge copy starts', bridgeErr.slice(0, 300));
-} else {
-  const screen = await promptFor({ mediaType: 'image/jpeg', data: PIXEL, kind: 'screen' });
-  ok(screen.status === 200, 'a screen frame is accepted', `status ${screen.status}`);
-  ok(
-    !screen.sys.includes('A PHOTO IS ATTACHED'),
-    'a screen frame is not announced as a photo',
-    screen.sys.includes('A PHOTO IS ATTACHED') ? 'the photo announcement is still there' : '',
-  );
-  ok(
-    !screen.sys.includes('Describe the food') &&
-      !screen.sys.includes('estimate quantities and portions'),
-    'a screen frame is not sent to be read as a photograph of food',
-    screen.sys.includes('Describe the food') ? 'the food instruction is still there' : '',
-  );
-  ok(
-    screen.sys.includes('Read the screen itself'),
-    'a screen frame is told to be read as a screen',
-  );
-  ok(
-    /screen/i.test(screen.sys),
-    'a screen frame is announced as a screen',
-    screen.sys.slice(-260).replace(/\n/g, ' '),
-  );
-
-  const photo = await promptFor({ mediaType: 'image/jpeg', data: PIXEL, kind: 'photo' });
-  ok(
-    photo.sys.includes('A PHOTO IS ATTACHED'),
-    'a photo still gets the old food instruction',
-  );
-  ok(
-    photo.sys.includes('Describe the food') &&
-      photo.sys.includes('estimate quantities and portions'),
-    'and the food instruction is not quietly weakened',
-  );
-
-  const unmarked = await promptFor({ mediaType: 'image/jpeg', data: PIXEL });
-  ok(
-    unmarked.sys.includes('A PHOTO IS ATTACHED'),
-    'a picture with no mark still gets the old behaviour',
-    'an older bundle in a browser cache sends no mark',
-  );
-
-  // The picture must still reach the model — marked, unmarked, either way.
-  const marked = screen.user;
-  ok(
-    Array.isArray(marked) &&
-      marked.some((b) => b.type === 'image' && b.source?.data === PIXEL),
-    'the picture itself still reaches the model',
-  );
-  ok(
-    Array.isArray(marked) &&
-      marked.some((b) => b.type === 'text' && !/photo/i.test(String(b.text || ''))),
-    'and the model is not asked about a photo when the picture is a screen',
-    Array.isArray(marked) ? String(marked[0]?.text || '') : 'no user content',
-  );
+/**
+ * Stop the bridge copy, and wait until it really is gone.
+ *
+ * WHY IT WAITS FOR THE EXIT: `kill` only asks. A bridge that is still
+ * winding down when the work directory is removed goes on running with a
+ * directory that is no longer there, holding a port that nothing asked it
+ * to hold.
+ *
+ * WHY SIGKILL IS THE BACKSTOP: a child that ignores SIGTERM would live for
+ * ever, and a leaked bridge is a server with no owner — one that answers on
+ * a port of its own, on an address the tailnet can reach, with the shared
+ * secret switched off.
+ */
+async function stopBridge() {
+  if (!bridge) return;
+  // Already gone: a child that exited has a code, and one killed by a signal
+  // has a signal.
+  if (bridge.exitCode !== null || bridge.signalCode !== null) return;
+  const exited = new Promise((resolve) => bridge.once('exit', resolve));
+  bridge.kill('SIGTERM');
+  const stopped = await Promise.race([exited.then(() => true), sleep(2000).then(() => false)]);
+  if (stopped) return;
+  bridge.kill('SIGKILL');
+  await Promise.race([exited, sleep(2000)]);
 }
 
-console.log('\nthe app marks the picture it is sending');
-{
-  const mod = await import('../src/utils/screenWatch.ts');
-  const frame = { mediaType: 'image/jpeg', data: PIXEL };
-  const photo = { mediaType: 'image/jpeg', data: PIXEL };
-
-  // The rule lives in the protocol module, so it can be asked without a
-  // browser. If the rule is not there at all, that is a failure to report —
-  // not a crash to hide behind.
-  if (typeof mod.imagePayloadFor !== 'function') {
-    ok(false, 'the app has a rule for marking the picture it sends');
+// WHY THE TEST IS WRAPPED: the bridge copy is started above, and the
+// cleanup that stops it is below. Between the two there are imports,
+// fetches and assertions, and any of them can throw — and a throw is
+// exactly when the test is least likely to be watched. A throw that
+// skips the cleanup leaves a bridge copy running on a port of its own.
+//
+// WHY THE ERROR IS NOT CAUGHT: it has to reach the person who ran the
+// test. The finally block cleans up and the error carries on out, so a
+// broken test is still a broken test — it just no longer leaves a server
+// behind.
+try {
+  console.log('\nthe bridge tells a shared screen apart from a photo');
+  if (!deps) {
+    // Not a failure: there is no bridge to run. It says so out loud, because a
+    // check that quietly does not run is worse than one that is missing.
+    console.log('  SKIP the bridge is not installed here — its dependencies could not be found');
+  } else if (!bridgeUp) {
+    ok(false, 'the bridge copy starts', bridgeErr.slice(0, 300));
   } else {
+    const screen = await promptFor({ mediaType: 'image/jpeg', data: PIXEL, kind: 'screen' });
+    ok(screen.status === 200, 'a screen frame is accepted', `status ${screen.status}`);
     ok(
-      mod.imagePayloadFor(null, frame)?.kind === mod.IMAGE_KIND_SCREEN,
-      'a shared screen is marked as a screen',
-      String(mod.imagePayloadFor(null, frame)?.kind),
+      !screen.sys.includes('A PHOTO IS ATTACHED'),
+      'a screen frame is not announced as a photo',
+      screen.sys.includes('A PHOTO IS ATTACHED') ? 'the photo announcement is still there' : '',
     );
     ok(
-      mod.imagePayloadFor(photo, null)?.kind === mod.IMAGE_KIND_PHOTO,
-      'an attached photo is marked as a photo',
-      String(mod.imagePayloadFor(photo, null)?.kind),
+      !screen.sys.includes('Describe the food') &&
+        !screen.sys.includes('estimate quantities and portions'),
+      'a screen frame is not sent to be read as a photograph of food',
+      screen.sys.includes('Describe the food') ? 'the food instruction is still there' : '',
     );
     ok(
-      mod.imagePayloadFor(photo, frame)?.kind === mod.IMAGE_KIND_PHOTO,
-      'the attached photo wins over the screen',
+      screen.sys.includes('Read the screen itself'),
+      'a screen frame is told to be read as a screen',
     );
     ok(
-      mod.imagePayloadFor(null, null) === null,
-      'nothing attached means nothing sent',
+      /screen/i.test(screen.sys),
+      'a screen frame is announced as a screen',
+      screen.sys.slice(-260).replace(/\n/g, ' '),
+    );
+
+    const photo = await promptFor({ mediaType: 'image/jpeg', data: PIXEL, kind: 'photo' });
+    ok(
+      photo.sys.includes('A PHOTO IS ATTACHED'),
+      'a photo still gets the old food instruction',
     );
     ok(
-      mod.imagePayloadFor(null, frame)?.data === PIXEL &&
-        mod.imagePayloadFor(photo, null)?.data === PIXEL,
-      'the picture itself is carried through',
+      photo.sys.includes('Describe the food') &&
+        photo.sys.includes('estimate quantities and portions'),
+      'and the food instruction is not quietly weakened',
+    );
+
+    const unmarked = await promptFor({ mediaType: 'image/jpeg', data: PIXEL });
+    ok(
+      unmarked.sys.includes('A PHOTO IS ATTACHED'),
+      'a picture with no mark still gets the old behaviour',
+      'an older bundle in a browser cache sends no mark',
+    );
+
+    // The picture must still reach the model — marked, unmarked, either way.
+    const marked = screen.user;
+    ok(
+      Array.isArray(marked) &&
+        marked.some((b) => b.type === 'image' && b.source?.data === PIXEL),
+      'the picture itself still reaches the model',
+    );
+    ok(
+      Array.isArray(marked) &&
+        marked.some((b) => b.type === 'text' && !/photo/i.test(String(b.text || ''))),
+      'and the model is not asked about a photo when the picture is a screen',
+      Array.isArray(marked) ? String(marked[0]?.text || '') : 'no user content',
     );
   }
-}
 
-bridge?.kill('SIGTERM');
-model.close();
-await sleep(200);
-rmSync(work, { recursive: true, force: true });
+  console.log('\nthe app marks the picture it is sending');
+  {
+    const mod = await import('../src/utils/screenWatch.ts');
+    const frame = { mediaType: 'image/jpeg', data: PIXEL };
+    const photo = { mediaType: 'image/jpeg', data: PIXEL };
+
+    // The rule lives in the protocol module, so it can be asked without a
+    // browser. If the rule is not there at all, that is a failure to report —
+    // not a crash to hide behind.
+    if (typeof mod.imagePayloadFor !== 'function') {
+      ok(false, 'the app has a rule for marking the picture it sends');
+    } else {
+      ok(
+        mod.imagePayloadFor(null, frame)?.kind === mod.IMAGE_KIND_SCREEN,
+        'a shared screen is marked as a screen',
+        String(mod.imagePayloadFor(null, frame)?.kind),
+      );
+      ok(
+        mod.imagePayloadFor(photo, null)?.kind === mod.IMAGE_KIND_PHOTO,
+        'an attached photo is marked as a photo',
+        String(mod.imagePayloadFor(photo, null)?.kind),
+      );
+      ok(
+        mod.imagePayloadFor(photo, frame)?.kind === mod.IMAGE_KIND_PHOTO,
+        'the attached photo wins over the screen',
+      );
+      ok(
+        mod.imagePayloadFor(null, null) === null,
+        'nothing attached means nothing sent',
+      );
+      ok(
+        mod.imagePayloadFor(null, frame)?.data === PIXEL &&
+          mod.imagePayloadFor(photo, null)?.data === PIXEL,
+        'the picture itself is carried through',
+      );
+    }
+  }
+} finally {
+  await stopBridge();
+  model.close();
+  rmSync(work, { recursive: true, force: true });
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
