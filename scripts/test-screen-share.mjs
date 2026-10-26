@@ -27,6 +27,7 @@
  *   - is only one frame timer running?
  *   - does a capture that has been replaced stop the share that replaced it?
  *   - does the page tell the other tabs when the share is over?
+ *   - does a capture granted after the page has gone away get given back?
  *
  * WHY A FAKE REACT INSTEAD OF A BROWSER: the rule is about what the page
  * holds on to, and what it holds on to is decided by the hook. A fake
@@ -423,6 +424,74 @@ console.log('\nthe other tabs are told when the share is over');
     'and told when the page goes away',
   );
   ok(streams[0].track.stopped === true, 'and the capture is given back');
+}
+
+console.log('\nthe page goes away while the picker is open');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  // The picker is a question the app cannot rush, so the answer can arrive
+  // after the page has moved on. Hold the answer until the page is gone.
+  let answer;
+  navigator.mediaDevices.getDisplayMedia = () =>
+    new Promise((resolve) => {
+      answer = resolve;
+    });
+
+  const harness = mountHook(() => useScreenSharer());
+  const starting = harness.value.start('Amazon Fresh', () => {});
+
+  // The page goes away — the person navigated, or the tab was replaced.
+  harness.unmount();
+
+  // And now the person answers the picker.
+  const granted = makeStream();
+  streams.push(granted);
+  answer(granted);
+  await starting;
+
+  // A capture the browser has granted is filming until something stops its
+  // track. The page that would have let the person stop it is gone, so the
+  // capture has to be given back here — otherwise the browser keeps filming
+  // and keeps its own "you are sharing" indicator on, for a share nobody is
+  // watching and nothing in the app can stop.
+  ok(granted.track.stopped === true, 'THE GRANTED CAPTURE IS GIVEN BACK');
+  ok(timers.size === 0, 'and no frame timer is left running', `timers: ${timers.size}`);
+}
+
+console.log('\nthe person stops the share while the picker is open');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  let answer;
+  navigator.mediaDevices.getDisplayMedia = () =>
+    new Promise((resolve) => {
+      answer = resolve;
+    });
+
+  const harness = mountHook(() => useScreenSharer());
+  const starting = harness.value.start('Amazon Fresh', () => {});
+
+  // The person presses Stop before the picker is answered. Stop means stop:
+  // a picker they are still looking at is a question the page has answered.
+  harness.value.stop();
+
+  const granted = makeStream();
+  streams.push(granted);
+  answer(granted);
+  await starting;
+
+  ok(granted.track.stopped === true, 'the late capture is given back');
+  ok(
+    harness.value.state.watching === false,
+    'and the page does not start sharing',
+    `watching: ${harness.value.state.watching}`,
+  );
+  ok(timers.size === 0, 'and no frame timer is left running', `timers: ${timers.size}`);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

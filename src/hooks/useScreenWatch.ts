@@ -69,6 +69,21 @@ export function useScreenSharer() {
    * share ends, not a frame later.
    */
   const sharingRef = useRef(false);
+  /**
+   * Which start attempt the page is still waiting for.
+   *
+   * WHY THE ATTEMPT IS NUMBERED: the browser's picker is a question the app
+   * cannot rush, and the answer can arrive after the page has moved on.
+   * Between asking and being answered, the page can go away, or the person
+   * can press Stop, or another store can be asked for. A capture granted
+   * after any of those is filming with nothing left to stop it — the
+   * browser's own "you are sharing" indicator stays on, and the page that
+   * would have let the person stop it is gone.
+   *
+   * So every attempt carries a number, and the number is what says whether
+   * the answer is still wanted.
+   */
+  const attemptRef = useRef(0);
 
   const post = useCallback((msg: WatchMessage) => {
     try {
@@ -114,7 +129,15 @@ export function useScreenSharer() {
     }
   }, []);
 
-  const stop = useCallback(() => {
+  /**
+   * End the share that is running.
+   *
+   * WHY THE PICKER IS NOT RETIRED HERE: the browser's own "Stop sharing"
+   * button ends the capture it belongs to, and says nothing about a picker
+   * the person is still answering for another store. That answer is still
+   * their answer, so the share they asked for still starts.
+   */
+  const endCurrentShare = useCallback(() => {
     sharingRef.current = false;
     releasePreviousShare();
     labelRef.current = null;
@@ -129,6 +152,18 @@ export function useScreenSharer() {
   }, [post, releasePreviousShare]);
 
   /**
+   * The page's Stop button: end the share, and give up on the picker.
+   *
+   * WHY THE PICKER IS GIVEN UP ON HERE AND NOT IN endCurrentShare: this is
+   * the person saying "stop", and a picker they are still looking at is a
+   * question the page has already answered.
+   */
+  const stop = useCallback(() => {
+    attemptRef.current += 1;
+    endCurrentShare();
+  }, [endCurrentShare]);
+
+  /**
    * Ask the browser for a share, and start watching it.
    *
    * WHY THE TAB IS OPENED FIRST: the browser's picker lists the tabs that
@@ -141,6 +176,15 @@ export function useScreenSharer() {
    */
   const start = useCallback(
     async (label: string, openTab: () => void) => {
+      // WHICH ATTEMPT THIS IS.
+      //
+      // WHY IT IS TAKEN FIRST: the picker is asked for here, and the answer
+      // comes later — so the number has to be claimed before the question is
+      // asked, not after the answer arrives. Every later attempt retires the
+      // one before it, and so does the page's Stop button and the page going
+      // away.
+      const attempt = attemptRef.current + 1;
+      attemptRef.current = attempt;
       // WHY THE RUNNING SHARE IS NOT CLEARED HERE: the picker can be refused,
       // and a refusal must not cost the person the share they already had.
       // So while the picker is open the page keeps saying what it is
@@ -173,6 +217,23 @@ export function useScreenSharer() {
           audio: false,
         });
 
+        // THE ANSWER CAME LATE, AND THE PAGE HAS MOVED ON.
+        //
+        // The browser has granted the capture and will keep filming until
+        // something stops its track. But the attempt that asked for it is
+        // over: the page went away, or the person pressed Stop, or another
+        // store was asked for in the meantime. A capture granted now is
+        // filming with nothing left to stop it, so it is given straight back
+        // — and no share is started for an answer nobody is waiting for.
+        if (attemptRef.current !== attempt) {
+          try {
+            stream.getTracks().forEach((t) => t.stop());
+          } catch {
+            /* already stopped */
+          }
+          return false;
+        }
+
         // The new share is granted, so the old one can be given back now.
         // Not before — see releasePreviousShare: a refused picker must not
         // cost the person the share they already had.
@@ -204,7 +265,7 @@ export function useScreenSharer() {
             // share that replaced it — and stopping that one would end a
             // share the person never touched.
             if (streamRef.current !== stream) return;
-            stop();
+            endCurrentShare();
           });
         });
 
@@ -245,6 +306,10 @@ export function useScreenSharer() {
         post({ kind: 'status', watching: true, label });
         return true;
       } catch (err) {
+        // WHY A REFUSAL ON AN ABANDONED ATTEMPT IS NOT REPORTED: the page
+        // has already said what it is doing — it went away, or the person
+        // pressed stop — and this refusal is not news to anyone.
+        if (attemptRef.current !== attempt) return false;
         // The person said no, or the browser refused. That is a normal
         // outcome, not a failure to report loudly.
         const name = (err as { name?: string })?.name;
@@ -268,13 +333,18 @@ export function useScreenSharer() {
         return false;
       }
     },
-    [post, releasePreviousShare, stop],
+    [endCurrentShare, post, releasePreviousShare],
   );
 
   // The share is stopped when this page goes away, so the browser's own
   // "stop sharing" indicator does not keep promising something that is gone.
   useEffect(() => {
     return () => {
+      // WHY THE PICKER IS GIVEN UP ON HERE: the page is going away, so it is
+      // no longer waiting for an answer. If the person grants the picker
+      // after this, the browser hands a capture to a page that is not there
+      // — and nothing on the page can stop it.
+      attemptRef.current += 1;
       sharingRef.current = false;
       releasePreviousShare();
 
