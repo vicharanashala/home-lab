@@ -71,8 +71,57 @@ export const STORE_VIEWER_HEADERS = {
  * The app's page has "frame-ancestors 'none'", so without "frame-ancestors
  * 'self'" here the frame would be refused by the browser for the same
  * reason the store refused it.
+ *
+ * WHY THE SANDBOX DIRECTIVE, WHICH IS THE ONE THAT MATTERS
+ *
+ * The store's page is served from the APP'S OWN ORIGIN — that is the whole
+ * trick of the viewer, because the store refuses to be framed and the app's
+ * origin will frame anything. But "served from the app's origin" also means
+ * the store's JavaScript runs WITH the app's origin, and the app's origin
+ * holds the owner's grocery list (window.localStorage) and the shared secret
+ * that spends the owner's paid API credits (the bundle it is fetched from
+ * carries it).
+ *
+ * So without the sandbox directive, opening a grocery store inside HomeHub
+ * handed the owner's list and their secret to every script the store serves —
+ * its own and its advertisers'. Measured in Chrome against the running app:
+ * a script inside the store's frame read the app's localStorage back out,
+ * and the frame's origin was the app's origin.
+ *
+ * This is the same trap the bridge already closes for uploads, and it closes
+ * it the same way: the uploads route serves images under "default-src
+ * 'none'; sandbox" for exactly this reason ("active content on the app's own
+ * origin ... would inherit the app's localStorage and its authenticated API
+ * access"). The store viewer was the one place that served a THIRD PARTY's
+ * active content at the app's origin without it.
+ *
+ * THE FLAGS, AND WHY EACH ONE IS HERE
+ *
+ *   allow-scripts                    the store's pages are JavaScript-driven;
+ *                                    without it the frame is a dead page.
+ *   allow-forms                      the store's search and sign-in forms
+ *                                    POST through the viewer, and a sandboxed
+ *                                    form cannot submit without this.
+ *   allow-popups                     the store opens its own tabs.
+ *   allow-popups-to-escape-sandbox   ...and that tab must not be sandboxed
+ *                                    too, or a payment or sign-in flow that
+ *                                    opens a window breaks. This is the
+ *                                    "Open the store" button's own path.
+ *   allow-downloads                  an invoice or a receipt.
+ *
+ * WHY THERE IS NO allow-same-origin: that one flag puts the app's origin
+ * back and undoes the whole thing. Measured side by side in Chrome: with it,
+ * the store's document read the app's localStorage exactly as before.
+ *
+ * WHY THE APP CAN STILL FRAME IT: the sandbox is applied to the document,
+ * and "frame-ancestors 'self'" is matched against the URL's origin, so the
+ * frame is still allowed — measured in Chrome, the framed page still runs.
+ * The store's own requests keep working too: the viewer answers with
+ * "access-control-allow-origin: *", which is what lets the store's scripts
+ * and module scripts load, and its XHRs still return.
  */
 export const STORE_VIEWER_CSP = [
+  "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads",
   "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'",
   "frame-ancestors 'self'",
   "img-src * data: blob:",
