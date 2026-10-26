@@ -2,15 +2,14 @@
  * Tests for the digital store directory.
  *
  * The list is the whole feature, so what matters is that every entry is a
- * real store with a real address, that nothing is listed twice, and that the
- * kinds the filters offer are the kinds the stores actually use.
+ * real store with a real address, and that nothing known to be dead has
+ * crept back in.
  *
  * Run with:  node scripts/test-digital-stores.mjs
  */
 import {
   DIGITAL_STORES,
-  DIGITAL_STORE_KINDS,
-  digitalStoresOfKind,
+  DIGITAL_STORE_KIND_LABEL,
 } from '../src/utils/digitalStores.ts';
 
 let passed = 0;
@@ -46,26 +45,17 @@ ok(dupes.length === 0, 'no duplicate names', dupes.join(', '));
 const ids = DIGITAL_STORES.map((s) => s.id);
 ok(new Set(ids).size === ids.length, 'no duplicate ids');
 
-console.log('\nthe filters cover every store');
-for (const kind of DIGITAL_STORE_KINDS) {
-  if (kind.id === 'all') continue;
-  const inKind = digitalStoresOfKind(kind.id);
-  ok(inKind.length > 0, `the "${kind.label}" filter has stores in it`, `${inKind.length}`);
+console.log('\nevery store can be marked with a kind');
+for (const s of DIGITAL_STORES) {
+  ok(
+    typeof DIGITAL_STORE_KIND_LABEL[s.kind] === 'string' && !!DIGITAL_STORE_KIND_LABEL[s.kind],
+    `${s.name} has a badge`,
+    DIGITAL_STORE_KIND_LABEL[s.kind],
+  );
 }
-ok(
-  DIGITAL_STORE_KINDS.filter((k) => k.id !== 'all').length ===
-    new Set(DIGITAL_STORES.map((s) => s.kind)).size,
-  'the filters and the stores agree about the kinds',
-);
-ok(digitalStoresOfKind('all').length === DIGITAL_STORES.length, '"all" returns every store');
-
-console.log('\nthe kinds the filters offer are the kinds the stores use');
-const knownKinds = new Set(DIGITAL_STORE_KINDS.map((k) => k.id));
-const unknown = DIGITAL_STORES.filter((s) => !knownKinds.has(s.kind)).map((s) => s.name);
-ok(unknown.length === 0, 'every store has a kind the filter offers', unknown.join(', '));
 
 console.log('\nevery address is one that was opened and seen to work');
-// WHY THIS LIST IS HERE AND NOT A NETWORK CHECK: the addresses are checked
+// WHY THIS LIST IS HERE AND NOT A NETWORK CHECK: the addresses were checked
 // by hand, in a real browser, because most of these sites refuse curl and a
 // 403 from curl says nothing about whether the address is right. This list
 // is the record of that check.
@@ -79,23 +69,12 @@ console.log('\nevery address is one that was opened and seen to work');
 // A store whose domain is bought by a squatter is worse than no store at
 // all: the person trusts the list and ends up somewhere else.
 const VERIFIED = [
-  'https://blinkit.com',
-  'https://www.zepto.com',
-  'https://www.swiggy.com/instamart',
-  'https://www.instamart.com',
-  'https://www.bigbasket.com',
-  'https://www.amazon.in/fresh',
   'https://www.jiomart.com',
-  'https://www.dmart.in',
-  'https://www.mtrfoods.com',
-  'https://www.spencers.in',
-  'https://www.freshtohome.com',
+  'https://www.amazon.in/fresh',
+  'https://www.bigbasket.com',
 ];
 for (const url of VERIFIED) {
-  ok(
-    DIGITAL_STORES.some((s) => s.url === url),
-    `${url} is in the list`,
-  );
+  ok(DIGITAL_STORES.some((s) => s.url === url), `${url} is in the list`);
 }
 ok(
   DIGITAL_STORES.length === VERIFIED.length,
@@ -110,10 +89,7 @@ for (const dead of [
   'https://www.reliancesmart.in',
   'https://www.flipkart.com/grocery',
 ]) {
-  ok(
-    !DIGITAL_STORES.some((s) => s.url === dead),
-    `${dead} is not in the list`,
-  );
+  ok(!DIGITAL_STORES.some((s) => s.url === dead), `${dead} is not in the list`);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

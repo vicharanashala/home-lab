@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
   Globe,
   Check,
@@ -10,12 +10,7 @@ import {
 import clsx from 'clsx';
 import { TopBar } from '../components/TopBar';
 import { useStore } from '../store/useStore';
-import {
-  DIGITAL_STORE_KINDS,
-  DIGITAL_STORES,
-  digitalStoresOfKind,
-  type DigitalStoreKind,
-} from '../utils/digitalStores';
+import { DIGITAL_STORES, DIGITAL_STORE_KIND_LABEL } from '../utils/digitalStores';
 
 /**
  * The online stores you can order from, with the shopping list beside them.
@@ -31,9 +26,6 @@ import {
  */
 export function DigitalStoresPage() {
   const { grocery, toggleGroceryPurchased } = useStore();
-  const [kind, setKind] = useState<DigitalStoreKind | 'all'>('all');
-
-  const stores = useMemo(() => digitalStoresOfKind(kind), [kind]);
 
   const toBuy = useMemo(() => grocery.filter((g) => !g.purchased), [grocery]);
   const bought = useMemo(() => grocery.filter((g) => g.purchased), [grocery]);
@@ -48,27 +40,8 @@ export function DigitalStoresPage() {
         <div className="grid gap-4 lg:grid-cols-[1fr_320px] lg:items-start">
           {/* ── the stores ─────────────────────────────────────────── */}
           <section className="space-y-3">
-            <div className="flex flex-wrap gap-1.5">
-              {DIGITAL_STORE_KINDS.map((k) => (
-                <button
-                  key={k.id}
-                  type="button"
-                  onClick={() => setKind(k.id)}
-                  aria-pressed={kind === k.id}
-                  className={clsx(
-                    'rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                    kind === k.id
-                      ? 'border-sage-600 bg-sage-600 text-white'
-                      : 'border-sage-200 dark:border-ink-700 bg-white dark:bg-ink-800 text-sage-600 dark:text-ink-300 hover:bg-sage-50 dark:hover:bg-ink-700',
-                  )}
-                >
-                  {k.label}
-                </button>
-              ))}
-            </div>
-
             <ul className="space-y-2">
-              {stores.map((s) => (
+              {DIGITAL_STORES.map((s) => (
                 <li key={s.id}>
                   <a
                     href={s.url}
@@ -85,6 +58,9 @@ export function DigitalStoresPage() {
                       </span>
                       <span className="block text-[11px] text-sage-500 dark:text-ink-300 mt-0.5 truncate">
                         {s.note}
+                      </span>
+                      <span className="block text-[10px] text-sage-400 dark:text-ink-500 mt-1">
+                        {DIGITAL_STORE_KIND_LABEL[s.kind]}
                       </span>
                     </span>
                     <span

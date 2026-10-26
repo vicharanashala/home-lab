@@ -34,57 +34,14 @@ export interface DigitalStore {
   emoji: string;
 }
 
-export const DIGITAL_STORE_KINDS: {
-  id: DigitalStoreKind | 'all';
-  label: string;
-}[] = [
-  { id: 'all', label: 'All' },
-  { id: 'quick', label: '⚡ Quick' },
-  { id: 'weekly', label: '🧺 Weekly' },
-  { id: 'staples', label: '🏷️ Staples' },
-  { id: 'premium', label: '🥬 Premium' },
-  { id: 'marketplace', label: '🛒 Everything' },
-];
 
 export const DIGITAL_STORES: DigitalStore[] = [
   {
-    id: 'blinkit',
-    name: 'Blinkit',
-    note: 'Quick delivery from nearby dark stores',
-    kind: 'quick',
-    url: 'https://blinkit.com',
-    emoji: '⚡',
-  },
-  {
-    id: 'zepto',
-    name: 'Zepto',
-    note: 'Quick delivery, order as you shop',
-    kind: 'quick',
-    url: 'https://www.zepto.com',
-    emoji: '⚡',
-  },
-  {
-    id: 'swiggy-instamart',
-    name: 'Swiggy Instamart',
-    note: 'Quick delivery, also inside the Swiggy app',
-    kind: 'quick',
-    url: 'https://www.swiggy.com/instamart',
-    emoji: '⚡',
-  },
-  {
-    id: 'tata-instamart',
-    name: 'Tata Instamart',
-    note: 'Tata’s quick delivery, and its weekly shop',
-    kind: 'quick',
-    url: 'https://www.instamart.com',
-    emoji: '⚡',
-  },
-  {
-    id: 'bigbasket',
-    name: 'BigBasket',
-    note: 'The full weekly shop, with a monthly pass',
+    id: 'jiomart',
+    name: 'Jio Mart',
+    note: 'Reliance’s online grocery and general store',
     kind: 'weekly',
-    url: 'https://www.bigbasket.com',
+    url: 'https://www.jiomart.com',
     emoji: '🧺',
   },
   {
@@ -96,50 +53,20 @@ export const DIGITAL_STORES: DigitalStore[] = [
     emoji: '🛒',
   },
   {
-    id: 'jiomart',
-    name: 'Jio Mart',
-    note: 'Reliance’s online grocery and general store',
+    id: 'bigbasket',
+    name: 'BigBasket',
+    note: 'The full weekly shop, with a monthly pass',
     kind: 'weekly',
-    url: 'https://www.jiomart.com',
+    url: 'https://www.bigbasket.com',
     emoji: '🧺',
-  },
-  {
-    id: 'dmart-ready',
-    name: 'DMart Ready',
-    note: 'Everyday staples at DMart prices',
-    kind: 'staples',
-    url: 'https://www.dmart.in',
-    emoji: '🏷️',
-  },
-  {
-    id: 'mtr-foods',
-    name: 'MTR Foods',
-    note: 'Authentic Indian food, ready to eat',
-    kind: 'premium',
-    url: 'https://www.mtrfoods.com',
-    emoji: '🥬',
-  },
-  {
-    id: 'spencers',
-    name: 'Spencer’s',
-    note: 'Gourmet, imported and fresh produce',
-    kind: 'premium',
-    url: 'https://www.spencers.in',
-    emoji: '🥬',
-  },
-  {
-    id: 'freshtohome',
-    name: 'FreshToHome',
-    note: 'Fish, chicken and mutton, cut and cleaned',
-    kind: 'marketplace',
-    url: 'https://www.freshtohome.com',
-    emoji: '🛒',
   },
 ];
 
-/** The stores of one kind, or all of them. */
-export function digitalStoresOfKind(kind: DigitalStoreKind | 'all'): DigitalStore[] {
-  return kind === 'all'
-    ? DIGITAL_STORES
-    : DIGITAL_STORES.filter((s) => s.kind === kind);
-}
+/** The badge a store is marked with, so the kind says something on screen. */
+export const DIGITAL_STORE_KIND_LABEL: Record<DigitalStoreKind, string> = {
+  quick: '⚡ Quick delivery',
+  weekly: '🧺 Weekly shop',
+  staples: '🏷️ Everyday staples',
+  premium: '🥬 Gourmet & imported',
+  marketplace: '🛒 Everything',
+};
