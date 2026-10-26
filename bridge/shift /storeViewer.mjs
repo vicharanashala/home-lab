@@ -513,7 +513,8 @@ export const STORE_VIEWER_PAGE_CACHE_MAX = 8;
  *      the memory comes back once the page's minute is up.
  *   2. The cache never holds more than `max` pages. The one that goes is
  *      the one nobody has looked at for the longest, because a Map keeps
- *      its keys in the order they were added.
+ *      its keys in the order they were last touched — and a page that is
+ *      served is touched again.
  *
  * WHY IT IS A FUNCTION AND NOT A MODULE-LEVEL MAP: a test has to be able to
  * make its own cache and watch what it holds, without touching the one the
@@ -545,6 +546,20 @@ export function createStoreViewerPageCache({
         pages.delete(target);
         return undefined;
       }
+      // A page that is SERVED is a page the person has just looked at, so it
+      // moves to the back of the Map. Without this the cache evicts by the
+      // order pages were FETCHED, and the page the owner came back to is
+      // the first one to go — which is the one case the bound is supposed
+      // to spare. The bridge returns a cached page straight from here and
+      // never calls set() again, so this is the only place the recency of
+      // a page can be refreshed.
+      //
+      // WHY `at` IS NOT TOUCHED: the minute is the store's freshness, and it
+      // counts from when the page was FETCHED. A page that keeps being
+      // served must still go stale and be fetched again, or the owner would
+      // see an hour-old storefront and never know.
+      pages.delete(target);
+      pages.set(target, entry);
       return entry.body;
     },
 
@@ -559,8 +574,9 @@ export function createStoreViewerPageCache({
       // was stored — a person who comes back to a page expects it to still
       // be there.
       pages.delete(target);
-      // The oldest goes first: a Map keeps its keys in the order they were
-      // added, so the first key is the oldest one.
+      // The one nobody has looked at for the longest goes first: a Map keeps
+      // its keys in the order they were last touched, so the first key is
+      // the one that has been left alone the longest.
       while (pages.size >= max) {
         const oldest = pages.keys().next().value;
         if (oldest === undefined) break;
