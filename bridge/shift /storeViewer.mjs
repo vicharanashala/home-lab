@@ -14,6 +14,7 @@
  * script that keeps the store's own requests inside the viewer — so they
  * live here where they can be tested without a network.
  */
+import { gzipSync } from 'node:zlib';
 
 /**
  * Where the viewer is mounted.
@@ -464,6 +465,64 @@ export function rewriteStorePage(html, host, dir, prefix) {
 /** The address the browser is showing, for a store's page. */
 export function storeViewerPrefix(host) {
   return `${STORE_VIEWER_PREFIX}/${host}`;
+}
+
+/**
+ * How long a store's page is worth keeping.
+ *
+ * The store's own page changes — the offers on it change every hour — so it
+ * is not kept for long. But "not long" is not "not at all": a person who
+ * opens the same store twice in a minute wants the second one to be there
+ * at once, and the store's server is the slow part of the journey.
+ */
+export const STORE_VIEWER_PAGE_TTL_MS = 60_000;
+
+/**
+ * How long the store's own assets are worth keeping.
+ *
+ * The scripts and styles are content-hashed, so the same name always means
+ * the same file. An hour is enough to make the second visit instant and
+ * short enough that a store that changes its artwork is not stuck with the
+ * old one.
+ */
+export const STORE_VIEWER_ASSET_MAX_AGE = 3600;
+
+/**
+ * Send a body, gzipped when the browser will take it.
+ *
+ * WHY THIS MATTERS MORE THAN IT LOOKS: the store's own page is 4.8 MB of
+ * HTML, and it was being sent as 4.8 MB. Gzipped it is a fraction of that,
+ * and on a phone on a slow connection that one page was most of the wait.
+ *
+ * @returns how it was sent, so a caller can log or assert on it
+ */
+export function sendStoreViewerBody(
+  req,
+  res,
+  body,
+  { type, cacheControl, status = 200 } = {},
+) {
+  const headers = {
+    'content-type': type,
+    'cache-control': cacheControl,
+    'access-control-allow-origin': '*',
+    // The encoding depends on what the browser asked for, so a shared cache
+    // must not hand the gzipped copy to one that did not.
+    vary: 'accept-encoding',
+  };
+  const wantsGzip = /\bgzip\b/i.test(String(req.get('accept-encoding') || ''));
+  if (wantsGzip && body.length > 1024) {
+    const gz = gzipSync(body, { level: 6 });
+    headers['content-encoding'] = 'gzip';
+    headers['content-length'] = String(gz.length);
+    res.writeHead(status, headers);
+    res.end(gz);
+    return { gzipped: true, bytes: gz.length };
+  }
+  headers['content-length'] = String(body.length);
+  res.writeHead(status, headers);
+  res.end(body);
+  return { gzipped: false, bytes: body.length };
 }
 
 /**

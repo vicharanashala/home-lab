@@ -573,6 +573,9 @@ import {
   storeViewerUnreachablePage,
   storeViewerPrefix,
   storeViewerTarget,
+  sendStoreViewerBody,
+  STORE_VIEWER_PAGE_TTL_MS,
+  STORE_VIEWER_ASSET_MAX_AGE,
 } from './storeViewer.mjs';
 
 /**
@@ -601,8 +604,10 @@ function setStoreViewerDocumentHeaders(res) {
   res.set({
     'X-Frame-Options': 'SAMEORIGIN',
     'content-security-policy': STORE_VIEWER_CSP,
-    'cache-control': 'no-store',
   });
+  // The cache-control of the store's page is set where it is sent, because
+  // the page and the store's assets do not want the same answer: the page
+  // changes, the assets do not.
 }
 
 // WHY IT IS NOT A GET-ONLY ROUTE: the store's own page makes POST calls —
@@ -613,6 +618,19 @@ function setStoreViewerDocumentHeaders(res) {
 //
 // WHY OPTIONS STILL NEVER REACHES HERE: the CORS middleware above answers
 // a preflight and ends the response.
+// A SHORT CACHE OF THE STORE'S OWN PAGE.
+//
+// The store is the slow part of the journey: the page is 4.8 MB and the
+// store's server is what it is. A person who opens the same store twice in
+// a minute — which is what tapping between tabs does — should not pay for
+// the second one.
+//
+// A minute is long enough to make that instant and short enough that a
+// storefront whose offers have changed is not shown stale for long. The
+// store's ASSETS are not cached here: they are content-hashed, so the
+// browser caches them itself, and the cache below is only for the page.
+const storeViewerPageCache = new Map();
+
 app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   const rest = String(req.path || '').slice(STORE_VIEWER_PREFIX.length + 1);
   // The query string is everything after the FIRST "?".
@@ -667,6 +685,21 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   // and an object handed to fetch is sent as the text "[object Object]".
   const rawBody = Buffer.isBuffer(req.body) ? req.body : undefined;
 
+  // Only a GET of the page itself is cached. A POST is the store's add to
+  // cart or its search, and caching that would be caching an order.
+  const cacheable = req.method === 'GET';
+  const cached = cacheable ? storeViewerPageCache.get(target) : undefined;
+  if (cached && Date.now() - cached.at < STORE_VIEWER_PAGE_TTL_MS) {
+    const dir = path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1) || '/';
+    const html = rewriteStorePage(cached.body.toString('utf8'), host, dir, prefix);
+    setStoreViewerDocumentHeaders(res);
+    sendStoreViewerBody(req, res, Buffer.from(html, 'utf8'), {
+      type: 'text/html; charset=utf-8',
+      cacheControl: `private, max-age=${Math.round(STORE_VIEWER_PAGE_TTL_MS / 1000)}`,
+    });
+    return;
+  }
+
   let upstream;
   try {
     upstream = await fetch(target, {
@@ -695,6 +728,10 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
     );
     res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
+    // A failure page is not cached: the store can come back, and a cached
+    // "could not be reached" would keep saying so long after it stopped
+    // being true.
+    res.set('cache-control', 'no-store');
     res.send(storeViewerUnreachablePage(host, target));
     return;
   }
@@ -705,12 +742,24 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   if (!/text\/html/i.test(type)) {
     // Styles, scripts, images, fonts, and the store's API answers: pass
     // them through as they are.
-    res.writeHead(upstream.status, {
-      'content-type': type,
-      'cache-control': 'no-store',
-      'access-control-allow-origin': '*',
+    //
+    // WHY THEY ARE NOW CACHED, AND WHY THEY WERE NOT BEFORE: everything was
+    // "no-store", so every visit fetched every script, style and image from
+    // the store again, through this server, one at a time. The store's
+    // bundles are content-hashed, so the same name always means the same
+    // file and the browser can keep it. An hour is short enough that a store
+    // that changes its artwork is not stuck with the old one.
+    //
+    // The store's API answers are NOT cached: they are the cart, the
+    // session, the search. Caching those would be caching an order.
+    const isApi = /json/i.test(type);
+    sendStoreViewerBody(req, res, body, {
+      type,
+      status: upstream.status,
+      cacheControl: isApi
+        ? 'no-store'
+        : `private, max-age=${STORE_VIEWER_ASSET_MAX_AGE}`,
     });
-    res.end(body);
     return;
   }
 
@@ -728,17 +777,33 @@ app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
     );
     res.status(200).type('html');
     setStoreViewerDocumentHeaders(res);
+    // Not cached, for the same reason as the unreachable page above: the
+    // store's edge can start letting us through, and a cached refusal would
+    // hide that.
+    res.set('cache-control', 'no-store');
     res.send(storeViewerBlockedPage(host, target));
     return;
   }
 
   const dir = path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1) || '/';
+
+  // Remember the store's own page, before it is rewritten, so the next visit
+  // does not have to ask the store for it again. The UNREWRITTEN page is what
+  // is kept: the rewrite depends on where the viewer is mounted, and keeping
+  // the rewritten one would bake this request's path into the cache.
+  if (cacheable) storeViewerPageCache.set(target, { at: Date.now(), body });
+
   const html = rewriteStorePage(body.toString('utf8'), host, dir, prefix);
 
-  res.status(200).type('html');
   setStoreViewerDocumentHeaders(res);
-  res.set('access-control-allow-origin', '*');
-  res.send(html);
+  sendStoreViewerBody(req, res, Buffer.from(html, 'utf8'), {
+    type: 'text/html; charset=utf-8',
+    // A POST is the store's add to cart or its search, and the answer to
+    // that is never a page to keep. Only a GET of the page is.
+    cacheControl: cacheable
+      ? `private, max-age=${Math.round(STORE_VIEWER_PAGE_TTL_MS / 1000)}`
+      : 'no-store',
+  });
 }));
 
 // ─── rate limiting ─────────────────────────────────────────────────────
