@@ -136,6 +136,30 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
 }
 
 /**
+ * A preparation note written after a dash: "Onion - sliced".
+ *
+ * WHY IT IS ITS OWN PATTERN: the dash comes in three shapes — an em dash
+ * "—", an en dash "–" and a hyphen "-" — and the catalogue writes all three,
+ * so all three have to be recognised here.
+ *
+ * WHY THE DASH HAS TO BE SURROUNDED BY SPACES: a name that merely contains
+ * a hyphen is a name — "Semi-dried tomatoes", "Cashew-nut powder" — and must
+ * survive untouched.
+ */
+const PREPARATION_NOTE = /\s+[—–-]\s+(.*)$/;
+
+/**
+ * A note that says the line needs other things describes a DISH.
+ *
+ * "Kadhai paneer — needs paneer, tomato, onion" is a dish and what it is
+ * made of, not an ingredient. "Green peas — with pod" is an ingredient and
+ * how to prepare it. The difference is whether the note names OTHER things
+ * to buy: a dish lists them, a preparation note does not.
+ */
+const DESCRIBES_A_DISH =
+  /^(?:needs?\b|you will need\b|contains?\b|ingredients?\b|make with\b|made with\b)/i;
+
+/**
  * Extract a clean display name from a line, stripping trailing
  * quantity/unit annotations like "(about 2 cups)" or "— 1 tbsp" so the
  * grocery item shows up as just "Onion" instead of "Onion — 1 tbsp".
@@ -147,13 +171,28 @@ function extractName(line: string): string {
   // Strip trailing "— quantity" / "- quantity" / ", quantity".
   s = s.replace(/\s*[—\-:]\s*(?:\d.*|a pinch|a handful|to taste|as needed|as required)\s*$/i, '');
   s = s.replace(/\s*,\s*(?:\d.*|a pinch|a handful|to taste|as needed|as required)\s*$/i, '');
-  // A bullet that names a thing and then EXPLAINS it — "**Kadhai paneer** —
-  // needs paneer, tomato, onion" — is a dish with a description, not an
-  // ingredient. Putting "Kadhai paneer — needs paneer, tomato, onion" on
-  // the shopping list is worse than putting nothing there, so such a line
-  // is not an item. The dash must be surrounded by spaces, so a real name
-  // like "Semi-dried tomatoes" survives.
-  if (/\s+[—–-]\s+/.test(s)) return '';
+
+  // A note after a dash is not part of the name.
+  //
+  // WHY THE NOTE IS STRIPPED AND THE LINE KEPT: the catalogue writes
+  // 16,420 of its 70,093 ingredient strings in this shape — "Onion - sliced",
+  // "Fresh coconut - grated", "Sunflower Oil - for cooking" — and the House
+  // Bot is fed those strings verbatim in its RECIPES context block, so it
+  // writes its grocery list in the same shape. A rule that dropped every
+  // line with a dash in it threw the onion away with the note: the shopping
+  // list came back short, and the name that DID survive ("Onion - sliced")
+  // matched no stock item called "Onion", because matching is exact.
+  //
+  // WHY A DISH IS STILL NOT AN ITEM: a bullet that names a dish and then
+  // says what it is made of is not something to buy. So a note that lists
+  // other things to buy — it enumerates them, or it says the line needs
+  // them — means the line is a dish, and the line is not an item.
+  const note = s.match(PREPARATION_NOTE);
+  if (note) {
+    const tail = note[1].trim();
+    if (tail.includes(',') || DESCRIBES_A_DISH.test(tail)) return '';
+    s = s.slice(0, note.index);
+  }
   return s.trim();
 }
 
