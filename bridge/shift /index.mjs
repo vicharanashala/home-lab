@@ -243,6 +243,21 @@ const app = express();
 // NO Access-Control-Allow-Origin header, so the browser refuses to hand the
 // response to the caller's JavaScript. A same-origin request carries no
 // Origin header at all and simply passes through untouched.
+/**
+ * Is this request for the store viewer?
+ *
+ * WHY A HELPER RATHER THAN AN INLINE TEST: the store viewer is the ONE path
+ * a sandboxed document is allowed to preflight (see the CORS middleware
+ * below), and that middleware runs before any route, so it has to be able to
+ * ask the question on its own.
+ */
+function isStoreViewerPath(path) {
+  return (
+    path === STORE_VIEWER_PREFIX ||
+    path.startsWith(`${STORE_VIEWER_PREFIX}/`)
+  );
+}
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
@@ -256,6 +271,66 @@ app.use((req, res, next) => {
   }
 
   if (!ALLOWED_ORIGINS.has(origin)) {
+    // THE SANDBOXED STORE PAGE, WHICH IS THE ONE EXCEPTION
+    //
+    // The store viewer puts the store's page in a CSP sandbox without
+    // "allow-same-origin", so the document holding it has an OPAQUE origin
+    // and the browser serialises that origin as the string "null". A request
+    // from an opaque document is CROSS-ORIGIN to the app even when it points
+    // at the app's own address — so the store's own API calls (the search,
+    // the add-to-cart, which carry "content-type: application/json" or an
+    // "Authorization" header) are no longer simple requests, and the browser
+    // sends a PREFLIGHT for them before the POST.
+    //
+    // This middleware is what answers preflights, so it has to answer that
+    // one. Without it the browser never sends the POST, and the store's
+    // search and cart are dead while the page still LOOKS fine — scripts and
+    // stylesheets are simple GETs and never get a preflight at all, so the
+    // store's page renders with its own assets and simply cannot talk to
+    // the store any more.
+    //
+    // WHY THE EXEMPTION IS THIS NARROW: "null" is what every sandboxed page
+    // on the internet sends, and the allowlist exists precisely to keep
+    // those pages out of the app's API. So the exemption covers the store
+    // viewer's own path and nothing else — not the app's own routes, and not
+    // a hostile origin. The store viewer is already restricted to three
+    // hosts (STORE_VIEWER_HOSTS) and already sits outside the shared-secret
+    // gate, so answering its preflight opens nothing that a simple GET from
+    // the very same document could not already reach.
+    //
+    // WHY THE HEADERS ARE ECHOED RATHER THAN LISTED: a preflight says which
+    // headers the request is about to carry, and the answer has to cover
+    // them or the browser refuses the request. The three stores do not send
+    // the same headers — Jio Mart sends "X-XSRF-TOKEN", the others send
+    // their own — and a list written today would silently break a store the
+    // day it adds one. Echoing what the browser asked for restores exactly
+    // what the store's page could send before the sandbox: before it, the
+    // document shared the app's origin, so no preflight was sent and every
+    // header went through unchallenged.
+    //
+    // Echoing does NOT let a caller widen what reaches the store: the route
+    // below forwards a fixed set of headers upstream, and the preflight
+    // grants nothing about the app's own API.
+    if (origin === 'null' && req.method === 'OPTIONS' && isStoreViewerPath(req.path)) {
+      const wantedHeaders = req.headers['access-control-request-headers'];
+      const wantedMethod = req.headers['access-control-request-method'];
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader(
+        'Access-Control-Allow-Methods',
+        typeof wantedMethod === 'string' && wantedMethod
+          ? wantedMethod
+          : 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      );
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        typeof wantedHeaders === 'string' && wantedHeaders
+          ? wantedHeaders
+          : 'content-type,authorization',
+      );
+      res.setHeader('Access-Control-Max-Age', '86400');
+      return res.status(204).end();
+    }
+
     // Unknown origin: no CORS allow header. The request still runs (the
     // response is simply unreadable by the other page), but a preflight is
     // refused outright so the browser stops before the real request.
