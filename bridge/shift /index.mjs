@@ -574,7 +574,26 @@ function setStoreViewerDocumentHeaders(res) {
 // a preflight and ends the response.
 app.all(`${STORE_VIEWER_PREFIX}/*`, asyncRoute(async (req, res) => {
   const rest = String(req.path || '').slice(STORE_VIEWER_PREFIX.length + 1);
-  const query = req.url.includes('?') ? String(req.url.split('?')[1] || '') : '';
+  // The query string is everything after the FIRST "?".
+  //
+  // WHY THE FIRST AND NOT THE PIECE BETWEEN THE FIRST AND THE SECOND: a "?"
+  // is an ordinary character inside a query string — it is only a separator
+  // the first time — so taking the text between the first "?" and the second
+  // one threw away everything after the second, silently:
+  //
+  //     /store-viewer/www.jiomart.com/search?k=milk?x=1
+  //         ->  https://www.jiomart.com/search?k=milk
+  //
+  // Nothing said so. The store opened, the page rendered, and the store was
+  // simply looking at a different address than the one that was asked for.
+  //
+  // WHY A REDIRECT PARAMETER IS THE SHAPE THAT MATTERS: it carries a whole
+  // address in it, and that address very often carries a query of its own.
+  //
+  // WHY AN ENCODED "?" IS NOT A SEPARATOR: the raw request line carries it
+  // as "%3F", so it is never mistaken for one.
+  const queryAt = req.url.indexOf('?');
+  const query = queryAt === -1 ? '' : req.url.slice(queryAt + 1);
   const { host, path, url: target } = storeViewerTarget(rest, query);
 
   if (!STORE_VIEWER_HOSTS.has(host)) {
