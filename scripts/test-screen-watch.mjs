@@ -280,5 +280,59 @@ console.log("\na picture from another store is not taken");
   ok(old.frame === amazonFrame, 'a picture without a store on it is still taken');
 }
 
+console.log("\na picture from another store does not keep a watch alive");
+{
+  const now = 1000;
+  const amazonFrame = frameFromDataUrl('data:image/jpeg;base64,QU1BWk9O', 900, 506);
+  const bazaarFrame = frameFromDataUrl('data:image/jpeg;base64,QklHQkFaQVJU', 900, 506);
+  const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
+
+  // The watcher is watching Big Bazaar, and Big Bazaar's picture is in its
+  // hand.
+  let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Big Bazaar' }, now);
+  state = reduceWatch(state, { kind: 'frame', frame: bazaarFrame, label: 'Big Bazaar' }, now + 10);
+  ok(state.frame === bazaarFrame, 'the watcher is holding Big Bazaar');
+
+  // Big Bazaar's tab is closed abruptly. The browser gives no status
+  // message when a tab goes away, so the watcher never hears that the share
+  // ended — the clock is the only thing that can notice it.
+  //
+  // Amazon Fresh's tab is still sharing, and its picture arrives every two
+  // seconds. That picture is another store's, so it is dropped — and it says
+  // nothing about whether Big Bazaar is still being shared.
+  const closedAt = now + 20;
+  let t = closedAt;
+  while (t <= closedAt + WATCH_STALE_MS * 3) {
+    state = reduceWatch(state, { kind: 'frame', frame: amazonFrame, label: 'Amazon Fresh' }, t);
+    t += 2000;
+  }
+
+  ok(
+    state.watching === false,
+    'THE WATCH OF THE CLOSED SHARE ENDS',
+    `still watching: ${state.label}`,
+  );
+  ok(state.frame === null, 'and the frozen picture of it is gone', state.frame ? 'still held' : '');
+
+  // The other store's picture must not have ended the watch EARLY either —
+  // the watch belongs to Big Bazaar, and only Big Bazaar ending can end it.
+  const fresh = reduceWatch(idle, { kind: 'status', watching: true, label: 'Big Bazaar' }, now);
+  const withPicture = reduceWatch(
+    fresh,
+    { kind: 'frame', frame: bazaarFrame, label: 'Big Bazaar' },
+    now + 10,
+  );
+  const justAfter = reduceWatch(
+    withPicture,
+    { kind: 'frame', frame: amazonFrame, label: 'Amazon Fresh' },
+    now + 20,
+  );
+  ok(
+    justAfter.watching === true && justAfter.frame === bazaarFrame,
+    'the watch of a live share survives another store sharing beside it',
+    `watching: ${justAfter.watching}, frame: ${justAfter.frame ? 'held' : 'none'}`,
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

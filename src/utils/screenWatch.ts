@@ -224,7 +224,28 @@ export function applyWatchMessage(
       watching: true,
       label: state.label === null ? frameLabel : state.label,
       frame: sameStore ? msg.frame : state.frame,
-      lastSeenAt: now,
+      // WHY ONLY THE STORE BEING WATCHED MAY TICK THE CLOCK: the clock is
+      // the answer to "is the share I am watching still running", and a
+      // frame from ANOTHER store says nothing about that share — it says
+      // some other share is running.
+      //
+      // So when the frame above is dropped, the clock must not move
+      // either. It used to, and the effect was a share that had ended
+      // staying alive for as long as another store kept sharing:
+      //
+      //   the Big Bazaar tab is closed abruptly — the browser gives no
+      //   status message, so the watcher never hears that the share ended
+      //   the Amazon Fresh tab is still sharing, and its picture arrives
+      //     every two seconds
+      //   the clock is refreshed by Amazon's pictures, so the watch of Big
+      //     Bazaar never goes quiet
+      //
+      // The watcher then held a frozen picture of a share that had ended,
+      // and said it could see Big Bazaar, for as long as the other store
+      // carried on. A picture that was dropped is a picture that said
+      // nothing about this watch, so it cannot be the evidence that keeps
+      // this watch alive.
+      lastSeenAt: sameStore ? now : state.lastSeenAt,
     };
   }
   if (msg.kind === 'status') {
