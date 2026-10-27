@@ -2749,6 +2749,77 @@ function scrubSafe(raw) {
   return t.length > 160 ? `${t.slice(0, 160)}…` : t;
 }
 
+/**
+ * What the model API said went wrong, in its own words.
+ *
+ * WHY THE PROVIDER'S WORDS AND NOT ITS ENVELOPE: the model API answers a
+ * failed call with a JSON envelope — an error type, a message, and a request
+ * id — and only the message is written for a person. The type is the
+ * provider's vocabulary, and the request id is a handle for the provider's
+ * support desk, not for the person standing at the fridge.
+ *
+ * WHY IT IS PARSED AND NOT PASSED THROUGH: the whole envelope used to reach
+ * the browser. House Bot's chat bubble said
+ *
+ *   ⚠️ Network error: {"type":"error","error":{"type":"invalid_request_error",
+ *   "message":"invalid param: decode base64 data url ... (2013)"},
+ *   "request_id":"072f4c66dc415b3f97d0be28cc18618c"}
+ *
+ * which is the provider's paperwork, not an answer. The one sentence inside
+ * it — the part that says what actually went wrong — was buried in the
+ * middle of it.
+ *
+ * @param {object} status what the model call resolved with
+ * @returns {string|null} what the model said, or null when it said nothing
+ */
+function modelErrorMessage(status) {
+  const body = typeof status?.error === 'string' ? status.error : '';
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body);
+    const message = parsed?.error?.message;
+    return typeof message === 'string' && message.trim() ? message.trim() : null;
+  } catch {
+    // Not the provider's envelope — it is a bridge-side message ("fetch
+    // failed"), which is already a sentence. The caller decides.
+    return null;
+  }
+}
+
+/**
+ * What the caller is told when the model could not answer.
+ *
+ * WHY THE WHOLE BODY IS LOGGED AND NOT SENT: the provider's body is where a
+ * failure is diagnosed from, and the log is where it belongs. It used to be
+ * the other way round on the streaming route — the body went to the browser
+ * and the server kept nothing at all, so a House Bot that failed left no
+ * trace on the machine that has to explain it.
+ *
+ * WHY THE PERSON IS TOLD IN ONE SENTENCE: the browser is not where the
+ * provider's envelope belongs, and the app shows this text in the chat
+ * bubble, where the person reads it.
+ *
+ * WHY THE FALLBACK NAMES THE STATUS: a model that failed without saying
+ * why has still told us one thing — that it did not answer, and with what
+ * status code. "HTTP 400" is a fact; "the model is broken" would be a
+ * guess.
+ *
+ * @param {object} status what the model call resolved with
+ * @returns {string} something a person can act on
+ */
+function modelFailureMessage(status) {
+  const body = typeof status?.error === 'string' ? status.error : '';
+  // The log keeps the whole body. publicError prints it and hands back a
+  // scrubbed copy; only the printing matters here.
+  publicError(body, status?.status);
+  const said = modelErrorMessage(status);
+  if (said) return said;
+  // A body that is not the provider's envelope is a bridge-side message,
+  // and it is already a sentence a person can read.
+  if (body && !body.trim().startsWith('{')) return scrubSafe(body);
+  return `the model could not answer (HTTP ${status?.status ?? 'error'})`;
+}
+
 function appendMemory(summary) {
   const arr = readMemory();
   arr.push({ ts: Date.now(), summary });
@@ -3576,7 +3647,11 @@ app.post('/api/housebot/chat', async (req, res) => {
     return res.status(502).json({
       error: 'housebot_unavailable',
       model: HOUSEBOT_MODEL,
-      detail: publicError(r.error, r.status),
+      // WHY THE MODEL'S OWN SENTENCE: the provider's whole JSON envelope
+      // used to be sent to the browser, request id and all. The envelope
+      // is the provider's paperwork; the sentence inside it is the
+      // diagnosis. The whole body still goes to the log.
+      detail: modelFailureMessage(r),
     });
   }
 
@@ -3742,7 +3817,13 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   const { text, actions } = splitActions(raw);
 
   if (!r.ok) {
-    send({ type: 'error', error: r.error || `HTTP ${r.status}` });
+    // WHY THE MODEL'S OWN SENTENCE: this text is shown in the chat bubble,
+    // so it is a sentence for the person — not the provider's JSON envelope
+    // with its error type and its request id. The whole body still goes to
+    // the log, which is where a failure is diagnosed from; before this, the
+    // streaming route sent the body to the browser and logged nothing, so
+    // a House Bot that failed left no trace on the machine.
+    send({ type: 'error', error: modelFailureMessage(r) });
   } else {
     for (const action of actions) send({ type: 'action', action });
     send({
@@ -3801,9 +3882,11 @@ app.post('/api/housebot/summarize', async (req, res) => {
   });
 
   if (!r.ok) {
+    // The same model call and the same failure as the chat routes, so the
+    // same sentence: one failure is reported the same way everywhere.
     return res
       .status(502)
-      .json({ error: 'summary_failed', detail: publicError(r.error, r.status) });
+      .json({ error: 'summary_failed', detail: modelFailureMessage(r) });
   }
 
   const summary = (r.content || '').trim();
