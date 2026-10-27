@@ -3002,14 +3002,48 @@ const SCREEN_VISION_HINT =
   `\n\n--- A SHARED TAB IS ON SCREEN ---\nThe user is sharing a browser tab and asking about what is on it. Read the screen itself: the page, the product, its name, the price, the quantity or size, the options and buttons. Answer the question they asked about what they are looking at — "how much is this?" is answered with the price on the screen, "what is this?" with what the page is. This is a screenshot of a screen, not a photograph of food, so do not describe it as one, do not judge the ripeness of what is on it, and do not suggest what to cook with it. If you cannot read something on the screen, say so plainly rather than guessing.\n`;
 
 /**
+ * The bytes of a picture, without the `data:` prefix.
+ *
+ * WHY THE PREFIX IS STRIPPED: the prefix says what the bytes are, it is not
+ * the bytes. It is also not the app's habit — the app sends base64 on its
+ * own — but the bridge accepts it, so it has to be measured correctly.
+ *
+ * WHY IT IS ONE FUNCTION AND NOT A LINE IN EACH PLACE: the picture is
+ * measured twice, once to decide whether it goes to the model and once to
+ * decide which instruction goes with it, and the two answers have to be the
+ * same. When they were not — one measuring the raw string and the other the
+ * payload — a picture sent with a prefix could reach the model with NO
+ * INSTRUCTION AT ALL: the guard for the instruction gave up because the raw
+ * string was over the limit, while the guard for the picture let it through
+ * because the payload was not. A shared screen with no instruction is the
+ * exact defect the instruction exists to prevent — a price list read as a
+ * photograph of food.
+ */
+function imagePayload(image) {
+  if (!image || typeof image.data !== 'string' || !image.data) return '';
+  return image.data.replace(/^data:[^;]+;base64,/, '');
+}
+
+/**
+ * Whether a picture will be sent to the model.
+ *
+ * WHY ONE RULE FOR BOTH PLACES: the picture is sent if this says yes, and
+ * the instruction that says how to read it is sent if this says yes. Two
+ * rules that answer the same question can answer it differently.
+ */
+function imageIsSent(image) {
+  const data = imagePayload(image);
+  return Boolean(data) && data.length <= MAX_IMAGE_BYTES;
+}
+
+/**
  * The instruction that goes with a picture.
  *
  * WHY IT IS ONE FUNCTION: the same picture arrives by two routes, and two
  * copies of this string is two chances for them to drift apart.
  */
 function visionHintFor(image) {
-  if (!image || typeof image.data !== 'string' || !image.data) return '';
-  if (image.data.length > MAX_IMAGE_BYTES) return '';
+  if (!imageIsSent(image)) return '';
   return image.kind === IMAGE_KIND_SCREEN ? SCREEN_VISION_HINT : PHOTO_VISION_HINT;
 }
 
@@ -3018,10 +3052,9 @@ function visionHintFor(image) {
  * @param {{mediaType?:string,data?:string,kind?:string}|null|undefined} image
  */
 function withImage(messages, image) {
-  if (!image || typeof image.data !== 'string' || !image.data) return messages;
+  if (!imageIsSent(image)) return messages;
   const mediaType = ALLOWED_IMAGE_MIME.has(image.mediaType) ? image.mediaType : 'image/jpeg';
-  const data = image.data.replace(/^data:[^;]+;base64,/, '');
-  if (!data || data.length > MAX_IMAGE_BYTES) return messages;
+  const data = imagePayload(image);
 
   const out = messages.map((m) => ({ ...m }));
   const lastUser = [...out].reverse().find((m) => m.role === 'user');

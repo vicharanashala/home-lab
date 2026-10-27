@@ -305,6 +305,44 @@ try {
       'and the model is not asked about a photo when the picture is a screen',
       Array.isArray(marked) ? String(marked[0]?.text || '') : 'no user content',
     );
+
+    // A PICTURE SENT AS A DATA URL
+    //
+    // WHY THIS CASE IS ITS OWN: the bridge strips a `data:` prefix before it
+    // measures a picture, because the prefix is metadata about the picture
+    // and not part of it. The two places that measure the picture had to
+    // strip it the same way.
+    //
+    // They did not. One measured the raw string and the other measured the
+    // payload, so a picture sent with a prefix could reach the model with NO
+    // INSTRUCTION AT ALL: the guard for the instruction gave up (the raw
+    // string was over the limit) while the guard for the picture let it
+    // through (the payload was not). A shared screen with no instruction is
+    // the exact defect this file exists for — a price list read as a
+    // photograph of food.
+    const DATA_URL_PREFIX = 'data:image/jpeg;base64,';
+    const atTheLimit = 'A'.repeat(3 * 1024 * 1024);
+    const asDataUrl = await promptFor({
+      mediaType: 'image/jpeg',
+      data: DATA_URL_PREFIX + atTheLimit,
+      kind: 'screen',
+    });
+    ok(
+      asDataUrl.sys.includes('Read the screen itself'),
+      'a screen frame sent as a data url is still told to be read as a screen',
+      asDataUrl.sys.slice(-260).replace(/\n/g, ' '),
+    );
+    ok(
+      !asDataUrl.sys.includes('A PHOTO IS ATTACHED'),
+      'and is not announced as a photo',
+      asDataUrl.sys.includes('A PHOTO IS ATTACHED') ? 'the photo announcement is there' : '',
+    );
+    ok(
+      Array.isArray(asDataUrl.user) &&
+        asDataUrl.user.some((b) => b.type === 'image' && b.source?.data === atTheLimit),
+      'and the picture itself still reaches the model',
+      Array.isArray(asDataUrl.user) ? 'the user message is not a picture' : 'no user content',
+    );
   }
 
   console.log('\nthe app marks the picture it is sending');
