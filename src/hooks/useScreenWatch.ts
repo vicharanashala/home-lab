@@ -311,7 +311,14 @@ export function useScreenSharer() {
           const frame = grabFrame(v);
           if (frame) {
             setState((s) => (s.sentFrame ? s : { ...s, sentFrame: true }));
-            post({ kind: 'frame', frame });
+            // WHY THE PICTURE NAMES ITS STORE: the watcher shows a picture
+            // beside the name of a store, and those two have to agree. The
+            // name arrives in a status message and the picture in a frame
+            // message, and two tabs of this app can share at once — the
+            // stores page opened twice — so their pictures cross on the
+            // channel. A picture that says which store it is of cannot be
+            // shown under another store's name.
+            post({ kind: 'frame', frame, label: labelRef.current });
           }
         };
 
@@ -324,7 +331,11 @@ export function useScreenSharer() {
             // page is not re-rendered every two seconds for a flag that has
             // already been set.
             setState((s) => (s.sentFrame ? s : { ...s, sentFrame: true }));
-            post({ kind: 'frame', frame });
+            // WHY THE PICTURE NAMES ITS STORE: see the reply path above —
+            // the name and the picture are two facts and they have to
+            // arrive together, or the watcher can be left holding one
+            // shop's page under another shop's name.
+            post({ kind: 'frame', frame, label: labelRef.current });
           }
         }, WATCH_FRAME_INTERVAL_MS);
 

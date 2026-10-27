@@ -651,6 +651,56 @@ console.log('\na share that moves to another store does not keep the old picture
   harness.unmount();
 }
 
+console.log("\ntwo tabs sharing at once do not show one store under the other's name");
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+  // The watcher is a plain fold of what the other tabs said — the same rule
+  // House Bot uses.
+  const watcher = new FakeChannel(SCREEN_WATCH_CHANNEL);
+  let watch = { watching: false, label: null, frame: null, lastSeenAt: null };
+  const deliver = (m) => {
+    watch = reduceWatch(watch, m, Date.now());
+  };
+
+  // Two tabs of this app share at the same time: the stores page opened
+  // twice, one tab sharing Amazon Fresh and the other Big Bazaar. Each tab
+  // holds its own share, and each picture says which store it is of.
+  const amazon = mountHook(() => useScreenSharer());
+  const bazaar = mountHook(() => useScreenSharer());
+
+  await amazon.value.start('Amazon Fresh', () => {});
+  await bazaar.value.start('Big Bazaar', () => {});
+  for (const m of watcher.received.splice(0)) deliver(m);
+  ok(watch.label === 'Big Bazaar', 'the watcher is watching the second store');
+
+  // Now the FIRST tab's picture arrives — a picture of Amazon Fresh, while
+  // the watcher is watching Big Bazaar. The two tabs' pictures cross on the
+  // channel, because they are both on the same one.
+  const ids = [...timers.keys()];
+  timers.get(ids[0])();
+  for (const m of watcher.received.splice(0)) deliver(m);
+  ok(
+    watch.frame === null,
+    "THE OTHER TAB'S PICTURE IS NOT TAKEN",
+    watch.frame ? `still held: ${watch.frame.data}` : '',
+  );
+  ok(
+    watch.label === 'Big Bazaar',
+    'and the store being watched is still named',
+    String(watch.label),
+  );
+
+  // The second tab's own picture arrives, and that is the one used.
+  timers.get(ids[1])();
+  for (const m of watcher.received.splice(0)) deliver(m);
+  ok(watch.frame !== null, 'the store being watched has its picture');
+
+  amazon.unmount();
+  bazaar.unmount();
+}
+
 console.log('\na capture the browser granted is given back when the share cannot start');
 {
   reset();

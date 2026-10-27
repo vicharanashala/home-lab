@@ -36,9 +36,16 @@ export interface WatchFrame {
   height: number;
 }
 
-/** What goes over the channel. */
+/**
+ * What goes over the channel.
+ *
+ * WHY A FRAME NAMES ITS STORE: the name of a store and the picture of it
+ * are two facts, and if they travel apart they can be told apart. A frame
+ * says which store it is a picture of, so the watcher can never hold one
+ * shop's page under another shop's name.
+ */
 export type WatchMessage =
-  | { kind: 'frame'; frame: WatchFrame }
+  | { kind: 'frame'; frame: WatchFrame; label: string | null }
   | { kind: 'status'; watching: boolean; label: string | null }
   | { kind: 'hello' };
 
@@ -183,7 +190,42 @@ export function applyWatchMessage(
   now: number,
 ): WatchState {
   if (msg.kind === 'frame') {
-    return { ...state, watching: true, frame: msg.frame, lastSeenAt: now };
+    // WHICH STORE THE PICTURE BELONGS TO
+    //
+    // WHY THE PICTURE SAYS WHICH STORE IT IS: a frame is a picture of ONE
+    // store, and the name shown beside it has to be that store's name. The
+    // name and the picture arrive as two separate messages — a status names
+    // the store, a frame carries the picture — and two tabs of this app can
+    // share at the same time: the stores page opened twice, one tab sharing
+    // Amazon Fresh and the other Big Bazaar. Their pictures cross on the
+    // channel, and the name the watcher is holding can be one store's while
+    // the picture in its hand is another's.
+    //
+    // WHY A PICTURE OF ANOTHER STORE IS DROPPED RATHER THAN SWAPPED IN: the
+    // watcher is watching one store. Putting another shop's page under this
+    // shop's name is the answer to the wrong question — "how much is this?"
+    // answered with a different shop's price — and a picture with no name
+    // beside it is better than a wrongly named one. The next picture from
+    // the store being watched replaces it a second later.
+    //
+    // WHY A WATCHER THAT IS WATCHING NOTHING ADOPTS THE PICTURE'S STORE: it
+    // has no store to be wrong about, and the picture is the only evidence
+    // there is.
+    //
+    // WHY A PICTURE THAT SAYS NOTHING IS TAKEN AS IT WAS: a tab that was
+    // open before this was updated posts a frame without a store on it, and
+    // it is still a real frame. A picture that does not name a store cannot
+    // be wrong about one.
+    const frameLabel = typeof msg.label === 'string' ? msg.label : null;
+    const sameStore =
+      frameLabel === null || state.label === null || frameLabel === state.label;
+    return {
+      ...state,
+      watching: true,
+      label: state.label === null ? frameLabel : state.label,
+      frame: sameStore ? msg.frame : state.frame,
+      lastSeenAt: now,
+    };
   }
   if (msg.kind === 'status') {
     // WHY A FRAME IS DROPPED WHEN THE STORE CHANGES: a frame belongs to the

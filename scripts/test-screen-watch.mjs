@@ -130,7 +130,7 @@ console.log('\nthe watcher forgets a share that stopped');
   ok(state.watching, 'the share is seen');
   ok(state.label === 'Amazon Fresh', 'and it is named');
 
-  state = reduceWatch(state, { kind: 'frame', frame }, now);
+  state = reduceWatch(state, { kind: 'frame', frame, label: 'Amazon Fresh' }, now);
   ok(state.frame === frame, 'the frame arrives');
 
   state = reduceWatch(state, { kind: 'status', watching: false, label: null }, now);
@@ -144,7 +144,7 @@ console.log('\na sharer that goes away without a word');
   const frame = frameFromDataUrl('data:image/jpeg;base64,QUJDRA==', 900, 506);
   const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
 
-  let state = reduceWatch(idle, { kind: 'frame', frame }, now);
+  let state = reduceWatch(idle, { kind: 'frame', frame, label: 'Amazon Fresh' }, now);
   ok(state.watching, 'the frame arrives');
 
   // The tab holding the share is closed. The browser throws the message
@@ -176,7 +176,7 @@ console.log('\na watch that comes back to life knows the store again');
   const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
 
   let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Amazon Fresh' }, now);
-  state = reduceWatch(state, { kind: 'frame', frame }, now);
+  state = reduceWatch(state, { kind: 'frame', frame, label: 'Amazon Fresh' }, now);
   ok(state.label === 'Amazon Fresh', 'the store is named while it is being watched');
 
   // The frames stop for longer than the deadline. This is what a browser
@@ -187,7 +187,7 @@ console.log('\na watch that comes back to life knows the store again');
   ok(state.frame === null, 'and the frozen picture is forgotten');
 
   // And then they come back — the share was alive all along.
-  state = reduceWatch(state, { kind: 'frame', frame }, now + WATCH_STALE_MS + 2);
+  state = reduceWatch(state, { kind: 'frame', frame, label: 'Amazon Fresh' }, now + WATCH_STALE_MS + 2);
   ok(state.watching, 'the watch is alive again');
   ok(
     state.label === 'Amazon Fresh',
@@ -203,7 +203,7 @@ console.log('\na share that moves to another store does not keep the old picture
   const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
 
   let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Amazon Fresh' }, now);
-  state = reduceWatch(state, { kind: 'frame', frame: amazonFrame }, now);
+  state = reduceWatch(state, { kind: 'frame', frame: amazonFrame, label: 'Amazon Fresh' }, now);
   ok(state.frame === amazonFrame, 'the first store is being watched');
 
   // The person now shares a different store. The sharer names it at once, and
@@ -218,7 +218,7 @@ console.log('\na share that moves to another store does not keep the old picture
 
   // And the new store's picture is used when it arrives.
   const bazaarFrame = frameFromDataUrl('data:image/jpeg;base64,QklHQkFaQVJU', 900, 506);
-  state = reduceWatch(state, { kind: 'frame', frame: bazaarFrame }, now + 20);
+  state = reduceWatch(state, { kind: 'frame', frame: bazaarFrame, label: 'Big Bazaar' }, now + 20);
   ok(state.frame === bazaarFrame, 'and the new store\'s picture is used');
 
   // A status that names the SAME store keeps the picture: the sharer answers
@@ -229,6 +229,55 @@ console.log('\na share that moves to another store does not keep the old picture
     'a status for the same store keeps the picture',
     state.frame ? '' : 'the picture was thrown away',
   );
+}
+
+console.log("\na picture from another store is not taken");
+{
+  const now = 1000;
+  const amazonFrame = frameFromDataUrl('data:image/jpeg;base64,QU1BWk9O', 900, 506);
+  const bazaarFrame = frameFromDataUrl('data:image/jpeg;base64,QklHQkFaQVJU', 900, 506);
+  const idle = { watching: false, label: null, frame: null, lastSeenAt: null };
+
+  // Two tabs of this app share at the same time — the stores page opened
+  // twice, one tab sharing Amazon Fresh and the other Big Bazaar. Their
+  // pictures cross on the channel, and the name the watcher is holding can
+  // be one store's while the picture in its hand is another's.
+  let state = reduceWatch(idle, { kind: 'status', watching: true, label: 'Amazon Fresh' }, now);
+  state = reduceWatch(state, { kind: 'status', watching: true, label: 'Big Bazaar' }, now + 10);
+  ok(state.label === 'Big Bazaar', 'the watcher is watching the second store');
+
+  // The first store's picture arrives. It is a real picture — and it is not
+  // the picture of the store being watched.
+  state = reduceWatch(state, { kind: 'frame', frame: amazonFrame, label: 'Amazon Fresh' }, now + 20);
+  ok(
+    state.frame === null,
+    "THE OTHER STORE'S PICTURE IS NOT TAKEN",
+    state.frame ? `still held: ${state.frame.data}` : '',
+  );
+  ok(
+    state.label === 'Big Bazaar',
+    'and the store being watched is still named',
+    String(state.label),
+  );
+
+  // The store being watched sends its own picture, and that is the one used.
+  state = reduceWatch(state, { kind: 'frame', frame: bazaarFrame, label: 'Big Bazaar' }, now + 30);
+  ok(state.frame === bazaarFrame, 'and the store being watched has its picture');
+
+  // A watcher that is watching nothing takes the picture it is offered, and
+  // learns which store it is of.
+  const fresh = reduceWatch(
+    idle,
+    { kind: 'frame', frame: amazonFrame, label: 'Amazon Fresh' },
+    now,
+  );
+  ok(fresh.frame === amazonFrame, 'a watcher with no store takes the picture');
+  ok(fresh.label === 'Amazon Fresh', 'and learns which store it is of', String(fresh.label));
+
+  // A picture that names no store — a tab that was open before this was
+  // updated — is still a picture, and is taken as it was.
+  const old = reduceWatch(idle, { kind: 'frame', frame: amazonFrame }, now);
+  ok(old.frame === amazonFrame, 'a picture without a store on it is still taken');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
