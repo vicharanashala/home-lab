@@ -812,7 +812,26 @@ async function callOverwatch(args) {
       const ms = Date.now() - t0;
       let parsed = null;
       try { parsed = JSON.parse(stdout); } catch { /* not json */ }
-      const ok = code === 0 && parsed && parsed.ok !== false;
+      // WHY THE ANSWER MUST BE A JSON OBJECT: `parsed.ok` on a number or on
+      // an array is `undefined`, and `undefined !== false` is true — so a
+      // bare number or a list on stdout would be read as a successful call.
+      const answer = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+      // WHY `ok` MUST BE A BOOLEAN: this used to be
+      //
+      //   const ok = code === 0 && parsed && parsed.ok !== false;
+      //
+      // and `parsed` is null when the CLI's stdout is not JSON — so `ok` came
+      // out as null, not false. Every other path in this function answers
+      // `ok: false`, and the routes that answer their callers with
+      // `status.ok` were handing back null where a boolean belongs: a caller
+      // that asks "was this ok === false?" reads null as "no" — as a success.
+      //
+      // WHY THE VERDICT IS NOT ASKED OF AN ANSWER THAT IS NOT THERE: the CLI
+      // exited 0 and said something that cannot be read, so there is no
+      // verdict to read — not the exit code's, and not the CLI's own. The
+      // bridge has to decide on its own, and the only honest answer is that
+      // the call did not work: there is no answer to give.
+      const ok = code === 0 && answer !== null && answer.ok !== false;
       resolve({
         ok, stdout, stderr, ms, code,
         // WHY THE PARSED ANSWER IS KEPT WHEN THE CALL FAILED: the CLI says
@@ -862,6 +881,30 @@ async function callOverwatch(args) {
 function agentErrorMessage(status) {
   const message = status?.parsed?.error?.message;
   return typeof message === 'string' && message.trim() ? message : null;
+}
+
+/**
+ * What to tell the caller when the CLI said nothing at all.
+ *
+ * WHY THIS EXISTS: the failure route answers 502 with the CLI's own message,
+ * and falls back to the CLI's stderr. There is a third case — the CLI ran and
+ * said nothing on either — and a 502 whose message is an EMPTY STRING tells
+ * the caller that something broke while saying nothing about what.
+ *
+ * WHY THE TWO CASES ARE NAMED SEPARATELY: they are different faults. A CLI
+ * that exits 0 and prints something unreadable has answered, badly; a CLI
+ * that exits non-zero and says nothing has failed outright. One sentence
+ * each is the difference between a caller that can act and one that can only
+ * report that HomeHub broke.
+ *
+ * @param {object} status what callOverwatch resolved with
+ * @returns {string} something a person can act on
+ */
+function silentAgentMessage(status) {
+  if (status?.code === 0) {
+    return 'the overwatch CLI answered with something that could not be read as JSON';
+  }
+  return `the overwatch CLI failed with exit code ${status?.code} and said nothing`;
 }
 
 /** Best-effort sniff of PNG/JPEG width×height from a raw buffer.
@@ -978,8 +1021,10 @@ app.post('/api/overwatch', async (req, res) => {
       // THE CLI'S OWN MESSAGE FIRST: it says what went wrong in one line
       // ("Unknown agent id \"overwatch\""), and the stderr behind it is the
       // CLI's own noise. The stderr is still there for the failures the CLI
-      // did not describe in JSON — a crash, a spawn error.
-      message: agentErrorMessage(status) || status.stderr,
+      // did not describe in JSON — a crash, a spawn error. And when the CLI
+      // said nothing on either, there is a third fallback: an empty message
+      // on a 502 tells the caller that something broke and nothing about what.
+      message: agentErrorMessage(status) || status.stderr || silentAgentMessage(status),
       code: status.code,
       ms: status.ms,
     });

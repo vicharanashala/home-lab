@@ -92,6 +92,10 @@ if [ "$mode" = "ok" ]; then
   printf '%s\\n' '{"ok":true,"result":{"reply":"The overwatch agent is here."}}'
   exit 0
 fi
+if [ "$mode" = "garbage" ]; then
+  printf '%s\\n' 'starting up, please wait'
+  exit 0
+fi
 printf '%s\\n' '{"ok":false,"error":{"type":"cli_error","message":"the agent could not be reached"}}'
 exit 0
 `;
@@ -267,6 +271,44 @@ try {
 
     const workedImage = await imageBody();
     ok(workedImage.body?.ok === true, 'an image that worked is still a success', String(workedImage.body?.ok));
+
+    // ── the answer that could not be read ───────────────────────────────
+    //
+    // WHY THIS CASE IS ITS OWN: the CLI exits 0 and prints something that is
+    // not JSON, so there is no verdict to read — neither the exit code nor
+    // the CLI's own `ok`. The bridge has to decide on its own, and the answer
+    // it decides on has to be a BOOLEAN: the routes hand `status.ok` to their
+    // callers, and a caller that asks "was this ok === false?" reads `null` as
+    // "no" — as a success.
+    //
+    // WHY THE MESSAGE MATTERS HERE TOO: the main route answers 502 with the
+    // CLI's own message, and falls back to the CLI's stderr. This CLI says
+    // nothing on stderr either, so without a third fallback the 502 carries
+    // an EMPTY message: the caller is told that something broke and nothing
+    // about what.
+    writeFileSync(join(home, 'fake-cli-mode'), 'garbage');
+
+    const garbledMain = await mainBody();
+    ok(garbledMain.status === 502, 'an answer that cannot be read is a failure', `status ${garbledMain.status}`);
+    ok(
+      typeof garbledMain.body?.message === 'string' && garbledMain.body.message.trim() !== '',
+      'and the failure says what went wrong rather than leaving the message empty',
+      JSON.stringify(garbledMain.body?.message).slice(0, 140),
+    );
+
+    const garbledChat = await chatBody();
+    ok(
+      garbledChat.body?.ok === false,
+      'the chat route says it failed with a boolean false, not null',
+      String(garbledChat.body?.ok),
+    );
+
+    const garbledImage = await imageBody();
+    ok(
+      garbledImage.body?.ok === false,
+      'and the image route says it failed with a boolean false, not null',
+      String(garbledImage.body?.ok),
+    );
   }
 } finally {
   await stopBridge();
