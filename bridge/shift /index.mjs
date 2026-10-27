@@ -1024,7 +1024,14 @@ app.post('/api/overwatch/image', upload.single('image'), asyncRoute(async (req, 
   const text = extractAgentText(status.parsed) || agentErrorMessage(status) || '';
   const { prediction, rawReply, parsedOk } = parseAgentReply(text);
   res.json({
-    ok: status.code === 0,
+    // WHY `status.ok` AND NOT `status.code === 0`: the CLI can leave a failed
+    // call with an exit code of zero and say so in its own answer — it
+    // answers `{"ok": false, "error": {...}}` — so the exit code alone is not
+    // an answer to "did it work". `status.ok` is: it asks the code AND the
+    // CLI's own verdict. The main route above already asks it, and this one
+    // used to disagree with it, which let a failed call be reported as a
+    // success with the failure's own words in `rawReply`.
+    ok: status.ok,
     ms: status.ms,
     imageUrl: `/uploads/${storedName}`,
     prediction,
@@ -1076,7 +1083,17 @@ app.post('/api/overwatch/chat', asyncRoute(async (req, res) => {
   });
 
   res.json({
-    ok: status.code === 0,
+    // WHY `status.ok` AND NOT `status.code === 0`: the CLI can leave a failed
+    // call with an exit code of zero and say so in its own answer — it
+    // answers `{"ok": false, "error": {...}}` — so the exit code alone is not
+    // an answer to "did it work". `status.ok` is: it asks the code AND the
+    // CLI's own verdict.
+    //
+    // WHY IT MATTERS HERE MORE THAN ANYWHERE ELSE: this reply is filed in the
+    // chat history as what the agent said. A call that failed used to be
+    // filed with `ok: true` beside it, so the history and the flag agreed
+    // with each other and both were wrong.
+    ok: status.ok,
     reply: replyText,
     parsed: status.parsed,
     history,
