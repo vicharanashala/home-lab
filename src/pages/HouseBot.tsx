@@ -515,9 +515,18 @@ export function HouseBotPage() {
   const [webMode, setWebMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attach = usePhotoAttach();
-  // The window being shared, if any. It lives in another window — the
-  // Digital stores page asked the browser for it — and arrives here as
-  // frames.
+  // The window being shared, if any.
+  //
+  // WHY IT IS NOT "ANOTHER WINDOW": what lives somewhere else is the SHARER,
+  // not the window. The Digital stores page — another TAB of this app — is
+  // the page that asks the browser for the window, and what arrives here is
+  // that page's frames. The window itself is the one the person is looking
+  // at: the store's page and this app's own tab, side by side.
+  //
+  // WHY IT MATTERS WHEN WRITTEN DOWN: the frames arrive over a
+  // BroadcastChannel, which reaches tabs of this same origin and nothing
+  // else — so House Bot is always being told by a tab of this app what the
+  // shared window holds.
   const screen = useScreenWatcher();
   const voice = useVoice();
   // Whether replies are read aloud. Off by default: people don't always want
