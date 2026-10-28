@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { daysUntil, expiryBucket, formatDays, formatQuantity, itemsExpiringSoon } from '../utils/date';
+import { formatAttentionCount } from '../utils/attention';
 import type { StockItem } from '../types';
 
 export function AlertsPage() {
@@ -151,7 +152,13 @@ export function AlertsPage() {
         subtitle={
           totalAlerts === 0
             ? 'All clear — nothing needs attention'
-            : `${totalAlerts} item${totalAlerts === 1 ? '' : 's'} need attention`
+            // WHY THE SHARED SENTENCE: the Dashboard's "Expiring soon" card
+            // writes this sentence too, and the two of them wrote it with the
+            // verb agreeing with a plural — so a household with exactly one
+            // thing to attend to was told "1 item need attention" on both.
+            // The rule lives in `formatAttentionCount` so the two cannot
+            // drift apart again.
+            : formatAttentionCount(totalAlerts)
         }
       />
       <div className="mx-auto max-w-3xl px-4 sm:px-6 pt-4 space-y-5">

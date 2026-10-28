@@ -32,6 +32,7 @@ import { useAnimatedNumber } from '../hooks/useAnimatedNumber';
 import { format } from 'date-fns';
 import { dietEmoji, dietLabel } from '../utils/categories';
 import { expiryBucket, formatDays, itemsExpiringSoon } from '../utils/date';
+import { formatAttentionCount } from '../utils/attention';
 import { GroceryRow } from '../components/GroceryRow';
 import { StockRow } from '../components/StockRow';
 import { NearbyStoresCard } from '../components/NearbyStoresCard';
@@ -416,7 +417,14 @@ export function Dashboard() {
                 <p className="text-xs text-sage-500 dark:text-ink-300">
                   {expiringSoonCount === 0
                     ? `No items expiring in the next ${formatDays(settings.expiringSoonDays)}`
-                    : `${expiringSoonCount} item${expiringSoonCount === 1 ? '' : 's'} need attention`}
+                    // WHY THE SHARED SENTENCE: the Alerts screen's bar writes
+                    // this sentence too, and the two of them wrote it with the
+                    // verb agreeing with a plural — so a household with exactly
+                    // one thing about to go off was told "1 item need
+                    // attention" on both. The rule lives in
+                    // `formatAttentionCount` so the two cannot drift apart
+                    // again.
+                    : formatAttentionCount(expiringSoonCount)}
                 </p>
               </div>
             </div>

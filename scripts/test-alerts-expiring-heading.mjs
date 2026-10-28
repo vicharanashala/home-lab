@@ -324,7 +324,11 @@ function expiringCountOf(sentence) {
  */
 function screenTotalOf(html) {
   const flat = html.replace(/<!-- -->/g, '');
-  const match = flat.match(/(\d+) items? need attention/);
+  // WHY THE VERB IS OPTIONAL: the sentence agrees with its count — one thing
+  // to attend to reads "1 item needs attention" and more than one reads "2
+  // items need attention". The reader takes both forms so it still finds the
+  // number for a household that has exactly one thing to attend to.
+  const match = flat.match(/(\d+) items? needs? attention/);
   return match ? match[1] : '(none)';
 }
 
