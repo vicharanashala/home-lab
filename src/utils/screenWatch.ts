@@ -155,7 +155,23 @@ export function grabFrame(
  * one or another.
  */
 export const SHARE_PICKER_HINT =
-  'Choose “Just this tab” and pick the store you just opened.';
+  'Choose “Chrome tab”, then “Select a tab to share”, and pick the store you just opened.';
+
+/**
+ * The surface the app asks the browser for.
+ *
+ * WHY A TAB AND NOT THE WHOLE SCREEN: the whole screen would show the
+ * person's bank, their messages and everything else they have open, and the
+ * model would be sent all of it. A tab is one page of one store, which is
+ * the thing that is actually being asked about.
+ *
+ * WHY IT IS NAMED EXPLICITLY: Chrome opens its picker on "Entire screen"
+ * unless the page says otherwise, so without this the person is offered a
+ * choice that is far bigger than the app wants, and the share they end up
+ * granting is one they did not mean to give.
+ */
+export const SHARE_SURFACE = 'browser';
+
 
 /**
  * What the watching tab knows.

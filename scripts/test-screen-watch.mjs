@@ -14,6 +14,8 @@
  */
 import {
   SCREEN_WATCH_CHANNEL,
+  SHARE_SURFACE,
+  SHARE_PICKER_HINT,
   WATCH_FRAME_WIDTH,
   WATCH_FRAME_INTERVAL_MS,
   WATCH_STALE_MS,
@@ -331,6 +333,27 @@ console.log("\na picture from another store does not keep a watch alive");
     justAfter.watching === true && justAfter.frame === bazaarFrame,
     'the watch of a live share survives another store sharing beside it',
     `watching: ${justAfter.watching}, frame: ${justAfter.frame ? 'held' : 'none'}`,
+  );
+}
+
+
+console.log('\nthe browser is asked for a TAB, not the whole screen');
+{
+  // WHY THIS MATTERS: Chrome opens its picker on "Entire screen" unless the
+  // page says otherwise, and the whole screen holds the person's bank and
+  // their messages, not just the store. Saying "browser" opens the picker on
+  // "Chrome tab", where the person picks the one tab they mean — which is
+  // what the example of the picker showed.
+  ok(SHARE_SURFACE === 'browser', 'the surface asked for is a browser tab', SHARE_SURFACE);
+  ok(
+    /Chrome tab/.test(SHARE_PICKER_HINT) && /Select a tab to share/.test(SHARE_PICKER_HINT),
+    'the hint uses the words the picker actually shows',
+    SHARE_PICKER_HINT,
+  );
+  ok(
+    !/just this tab/i.test(SHARE_PICKER_HINT),
+    'and not another browser\'s wording',
+    SHARE_PICKER_HINT,
   );
 }
 

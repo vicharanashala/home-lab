@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // testable without a browser.
 import {
   SCREEN_WATCH_CHANNEL,
+  SHARE_SURFACE,
   WATCH_FRAME_INTERVAL_MS,
   grabFrame,
   reduceWatch,
@@ -221,7 +222,24 @@ export function useScreenSharer() {
         }
 
         const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: 5 },
+          video: {
+            frameRate: 5,
+            // ASK FOR A TAB, NOT THE SCREEN.
+            //
+            // Chrome opens its picker on "Entire screen" unless the page says
+            // otherwise, and the whole screen holds the person's bank and
+            // their messages, not just the store. Saying "browser" opens
+            // the picker on "Chrome tab", where the person picks the one tab
+            // they mean.
+            displaySurface: SHARE_SURFACE,
+            // The page asking is allowed to be in the list too, so the
+            // person can see what is being offered.
+            //
+            // WHY THE CAST: "selfBrowserSurface" is in the spec and in
+            // Chrome, but it is newer than the DOM library this project
+            // type-checks against, so the compiler has never heard of it.
+            ...({ selfBrowserSurface: 'include' } as Record<string, unknown>),
+          },
           audio: false,
         });
         granted = stream;
