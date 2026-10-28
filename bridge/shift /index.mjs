@@ -3594,6 +3594,55 @@ function localDay(date = new Date()) {
 }
 
 /**
+ * The window used when the client sends no usable one.
+ *
+ * WHY THREE: it is the app's own default (src/store/seed.ts writes
+ * `expiringSoonDays: 3`) and it is the window this bridge has always used.
+ */
+const DEFAULT_EXPIRY_WINDOW_DAYS = 3;
+
+/**
+ * The largest window that will be believed.
+ *
+ * WHY A CEILING: the value comes from a browser. A window of a million days
+ * would tell the model the whole kitchen is about to go off, which is a lie
+ * told in the user's voice. The app's slider goes from 1 to 14.
+ */
+const MAX_EXPIRY_WINDOW_DAYS = 365;
+
+/**
+ * The window the household uses to decide what is "expiring soon".
+ *
+ * WHY IT IS THE HOUSEHOLD'S AND NOT A FIXED NUMBER: the app has ONE setting
+ * for this — `settings.expiringSoonDays` — and the Alerts screen, the
+ * Dashboard and the Stock screen all read it. The Alerts screen even has a
+ * slider for it (1 to 14 days) and writes it on every change. The bridge
+ * used a hard-coded 3, and the app did not send the setting at all, so a
+ * household that had widened the window to a week was told "6 items expiring
+ * within 7 days" on the Alerts screen while House Bot's EXPIRING SOON block
+ * listed only the next three days. The same item read "expiring soon" on
+ * one screen and was missing from the other.
+ *
+ * WHY THE DEFAULT IS STILL 3: an older app, or a client that sends no
+ * settings at all, must get the window this bridge has always used — not an
+ * empty list, and not everything.
+ *
+ * WHY IT IS CLAMPED: the value arrives from a browser, so it is not trusted
+ * to be a number. A window of zero or a negative one is not a window, and a
+ * window of a million days would make the block claim the whole kitchen is
+ * about to go off. The app's own slider goes from 1 to 14; the clamp allows
+ * more than that but not absurdly more.
+ *
+ * @param {unknown} value the setting, as the client sent it
+ * @returns {number} the window in days
+ */
+function expiryWindow(value) {
+  const days = Number(value);
+  if (!Number.isFinite(days) || days < 1) return DEFAULT_EXPIRY_WINDOW_DAYS;
+  return Math.min(MAX_EXPIRY_WINDOW_DAYS, Math.floor(days));
+}
+
+/**
  * The day a meal was eaten, as the model reads it.
  *
  * WHY A DATE AND NOT THE RAW NUMBER: a meal log stores when it was eaten
@@ -3730,9 +3779,20 @@ app.post('/api/housebot/chat', async (req, res) => {
     : [];
 
   const today = localDay();
+  // The window is the household's, not the bridge's — see `expiryWindow`.
+  const soonWindow = expiryWindow(settings.expiringSoonDays);
   const expiringSoon = stock
     .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
-    .filter((s) => s.expires && s.expires <= addDays(today, 3));
+    // WHY THE LOWER BOUND: the Alerts screen does not put an item whose date
+    // has passed in the "expiring soon" list — it has its own "Expired"
+    // section for those. Without this bound the block called a mango that
+    // went off a week ago "expiring soon (within 7 days)", which is a
+    // contradiction inside one line and a false thing to tell the owner.
+    //
+    // An expired item is still visible to the model: every stock line in the
+    // STOCK block carries its expiry day, so "what has gone off?" can still
+    // be answered.
+    .filter((s) => s.expires && s.expires >= today && s.expires <= addDays(today, soonWindow));
 
   const recipesBlock = recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
@@ -3761,7 +3821,7 @@ app.post('/api/housebot/chat', async (req, res) => {
       ? stock.slice(0, 80).map(stockContextLine).join('\n')
       : '  (empty)',
     grocery.length ? `GROCERY LIST (${grocery.length} open):\n${grocery.slice(0, 40).map((g) => `  - ${g.name}${g.quantity ? ` x${g.quantity}` : ''}`).join('\n')}` : null,
-    expiringSoon.length ? `EXPIRING SOON: ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
+    expiringSoon.length ? `EXPIRING SOON (within ${soonWindow} days): ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
     recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map(mealContextLine).join('\n')}` : null,
     recipesBlock,
     webBlock,
@@ -3881,9 +3941,20 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
       : [];
 
   const today = localDay();
+  // The window is the household's, not the bridge's — see `expiryWindow`.
+  const soonWindow = expiryWindow(settings.expiringSoonDays);
   const expiringSoon = stock
     .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
-    .filter((s) => s.expires && s.expires <= addDays(today, 3));
+    // WHY THE LOWER BOUND: the Alerts screen does not put an item whose date
+    // has passed in the "expiring soon" list — it has its own "Expired"
+    // section for those. Without this bound the block called a mango that
+    // went off a week ago "expiring soon (within 7 days)", which is a
+    // contradiction inside one line and a false thing to tell the owner.
+    //
+    // An expired item is still visible to the model: every stock line in the
+    // STOCK block carries its expiry day, so "what has gone off?" can still
+    // be answered.
+    .filter((s) => s.expires && s.expires >= today && s.expires <= addDays(today, soonWindow));
 
   const recipesBlock = recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
@@ -3912,7 +3983,7 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
       ? stock.slice(0, 80).map(stockContextLine).join('\n')
       : '  (empty)',
     grocery.length ? `GROCERY LIST (${grocery.length} open):\n${grocery.slice(0, 40).map((g) => `  - ${g.name}${g.quantity ? ` x${g.quantity}` : ''}`).join('\n')}` : null,
-    expiringSoon.length ? `EXPIRING SOON: ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
+    expiringSoon.length ? `EXPIRING SOON (within ${soonWindow} days): ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
     recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map(mealContextLine).join('\n')}` : null,
     recipesBlock,
     webBlock,

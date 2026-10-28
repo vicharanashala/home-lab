@@ -754,6 +754,13 @@ export function HouseBotPage() {
         userName: settings.userName,
         dietaryPreference: settings.dietaryPreference,
         allergies: settings.allergies,
+        // WHY THE WINDOW IS SENT: House Bot tells the model what is expiring
+        // soon, and the Alerts screen tells the same person what is expiring
+        // soon. Those two answers have to come from the same number, or the
+        // same item reads "expiring soon" on one screen and is missing from
+        // the other — which is exactly what happened while the bridge counted
+        // a fixed three days and this setting was never sent at all.
+        expiringSoonDays: settings.expiringSoonDays,
       },
       recipes: recipeCatalog,
     };

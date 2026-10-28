@@ -75,6 +75,22 @@ export interface SuggestInput {
   mode?: DayModeId;
   /** Override the adventurous share. Defaults to 25%. */
   adventureMix?: number;
+  /**
+   * How many days before expiry an item counts as "about to go off".
+   *
+   * WHY IT IS HERE AND NOT FIXED: this is the same rule the Alerts screen,
+   * the Dashboard, the Stock screen and House Bot's context block all use —
+   * `settings.expiringSoonDays`. This function used to count three days of
+   * its own, so a household that had widened the window to a week saw a
+   * "rescues what is about to go off" strip on the Meal Plan and a set of
+   * suggestions that disagreed with it: the strip offered dishes that used
+   * up food expiring in six days, and the suggestions did not say so.
+   *
+   * Defaults to 3 — the app's own default, and what this function has always
+   * used — so a caller that knows nothing about the household's window keeps
+   * the old behaviour.
+   */
+  expiringSoonDays?: number;
   /** How many to return. Default 3. */
   limit?: number;
   /** Bumped by "shuffle" to reshuffle ties without changing the ranking logic. */
@@ -281,9 +297,15 @@ export function suggestMeals(input: SuggestInput): MealSuggestion[] {
   }
 
   // Use-it-first: dishes that rescue something expiring.
+  //
+  // WHY THE WINDOW COMES FROM THE INPUT: it is the same window the Alerts
+  // screen counts with, and the same one the rescue strip on the Meal Plan
+  // screen counts with. Two rules for one question is how a strip and a
+  // suggestion list end up disagreeing on the same screen.
   const rescue = new Map<string, number>();
   try {
-    for (const d of recipesUsingExpiringStock(catalogue, stock, 3, 40)) {
+    const soonDays = input.expiringSoonDays ?? 3;
+    for (const d of recipesUsingExpiringStock(catalogue, stock, soonDays, 40)) {
       rescue.set(d.recipe.id, d.uses.length);
     }
   } catch {

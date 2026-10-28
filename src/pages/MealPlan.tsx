@@ -260,11 +260,13 @@ export default function MealPlanPage() {
       household,
       mode: mealPlan[suggestFor.day]?.mode,
       nonce: suggestNonce,
+      expiringSoonDays: settings.expiringSoonDays,
       limit: 3,
     });
   }, [
     suggestFor, suggestBusy, catalogue, stock, mealLogs, embeddings,
-    mealPlan, settings.dietaryPreference, settings.allergies, household, suggestNonce,
+    mealPlan, settings.dietaryPreference, settings.allergies, settings.expiringSoonDays,
+    household, suggestNonce,
   ]);
 
   const hasTasteProfile = useMemo(
@@ -318,6 +320,7 @@ export default function MealPlanPage() {
           allergies: settings.allergies ?? [],
           household,
           mode: mealPlan[day]?.mode,
+          expiringSoonDays: settings.expiringSoonDays,
           limit: 6,
           nonce: filled,
         }).filter((p) => !taken.has(p.recipe.id));
@@ -356,7 +359,8 @@ export default function MealPlanPage() {
     );
   }, [
     catalogue, stock, mealLogs, embeddings, mealPlan, settings.dietaryPreference,
-    settings.allergies, household, hasTasteProfile, setMealPlanSlot, toast,
+    settings.allergies, settings.expiringSoonDays, household, hasTasteProfile,
+    setMealPlanSlot, toast,
   ]);
 
   /**
@@ -421,9 +425,15 @@ export default function MealPlanPage() {
 
   // Dishes that rescue food about to go off — the missing link between the
   // fridge and the plan.
+  //
+  // WHY THE WINDOW IS THE USER'S: the strip answers "what is about to go
+  // off", and the Alerts screen answers it with `settings.expiringSoonDays`.
+  // The strip used to count three days of its own, so a household that had
+  // widened the alert window to a week was told the Alerts screen had seven
+  // things to use up and the Meal Plan could only rescue three days of them.
   const rescues = useMemo(
-    () => recipesUsingExpiringStock(catalogue, stock, 3, 6),
-    [catalogue, stock],
+    () => recipesUsingExpiringStock(catalogue, stock, settings.expiringSoonDays, 6),
+    [catalogue, stock, settings.expiringSoonDays],
   );
 
   const planned = countPlanned(mealPlan);
