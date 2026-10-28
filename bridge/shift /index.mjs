@@ -3555,6 +3555,108 @@ app.post('/api/minimax/read-recipe', upload.single('image'), async (req, res) =>
   }
 });
 
+/**
+ * The day a meal was eaten, as the model reads it.
+ *
+ * WHY A DATE AND NOT THE RAW NUMBER: a meal log stores when it was eaten
+ * as `createdAt`, a count of milliseconds since the epoch. Handed to the
+ * model as that number it is not a date, it is noise — and the model was
+ * being handed exactly that, so the RECENT MEALS block read
+ * "1792497600000: meal" and said nothing about when anything was eaten.
+ *
+ * WHY IT IS ISO: the rest of the context block dates things this way (the
+ * stock expiry dates are ISO day strings), and a day is all the model can
+ * use anyway.
+ *
+ * @param {unknown} value the meal log's timestamp
+ * @returns {string} the day, or an honest "no day" when there is none
+ */
+function mealDay(value) {
+  const t = typeof value === 'string' ? Date.parse(value) : Number(value);
+  if (!Number.isFinite(t) || t <= 0) return 'unknown day';
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+/**
+ * The day a stock item expires, in the app's own field.
+ *
+ * WHY THE FIELD IS `expiryDate`: the app records a stock item as
+ * { id, name, quantity, unit, category, expiryDate?, ... }, and `expiryDate`
+ * is an ISO day string — "2026-10-20". The bridge used to read `expiresOn`,
+ * which is not a field of a stock item and never has been, so every stock
+ * line went out without its expiry date and the EXPIRING SOON block was
+ * always empty. House Bot could not answer "what needs using up today?"
+ * because it was never told that anything had an expiry date at all.
+ *
+ * WHY THE SHAPE IS CHECKED: the same rule the app applies when it accepts an
+ * expiry date from the agent (utils/agentActions.ts) — an ISO day, and
+ * nothing else. A value that is not a day is not a day, and putting one in
+ * the context would be a date the model would take at face value.
+ *
+ * @param {object} item a stock item as the app recorded it
+ * @returns {string|null} the day it expires, or null when it has no expiry
+ */
+function stockExpiry(item) {
+  const day = item?.expiryDate;
+  return typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
+}
+
+/**
+ * One line of context for a stock item.
+ *
+ * WHY IT IS ITS OWN FUNCTION: the expiry date is read here and nowhere else,
+ * so the day cannot be printed in one place and read in another. The line
+ * used to read `s.expiresOn`, a field no stock item has ever had, so no
+ * line ever carried a date.
+ *
+ * @param {object} item a stock item as the app recorded it
+ * @returns {string} one line of context
+ */
+function stockContextLine(item) {
+  const expiry = stockExpiry(item);
+  return `  - ${item.name}: ${item.quantity}${item.unit || ''}${expiry ? ` (exp ${expiry})` : ''}${item.category ? ` [${item.category}]` : ''}`;
+}
+
+/**
+ * One line of context for a meal the person logged.
+ *
+ * WHY THE FIELDS ARE THE APP'S OWN: the app records a meal as
+ * { id, mealType, description, createdAt, recipeId?, servings?, liked? }.
+ * The dish is in `description` — "Palak paneer with 2 rotis" — and the
+ * moment it was eaten is in `createdAt`. That is the whole record, and it
+ * has been that shape since the first commit.
+ *
+ * WHY THIS FUNCTION EXISTS: the block used to read
+ *
+ *   `  - ${m.date || m.createdAt}: ${m.title || (m.recipeIds ? ... : 'meal')}`
+ *
+ * and none of `date`, `title` or `recipeIds` is a field of a meal log. So
+ * every line came out as the raw timestamp and the word "meal", and the
+ * model was asked to ground its answers in what the person had been eating
+ * while being told they had eaten "meal" — never the dish, never the day.
+ * House Bot could not answer "what did I eat last night?" or "what should
+ * I cook tonight, not again this week?" because it had never been told.
+ *
+ * WHY IT IS ONE FUNCTION AND NOT A LINE IN EACH ROUTE: there are two chat
+ * routes and each builds its own copy of the context block. The rule lives
+ * here so both routes say the same thing, and so it can be tested without
+ * a browser.
+ *
+ * WHY A MISSING DISH SAYS SO: a meal can be logged with nothing written
+ * in the description box. Saying "meal" there would be inventing a fact;
+ * saying "(no dish recorded)" says what is true.
+ *
+ * @param {object} m a meal log as the app recorded it
+ * @returns {string} one line of context
+ */
+function mealContextLine(m) {
+  const day = mealDay(m?.createdAt);
+  const dish = typeof m?.description === 'string' ? m.description.trim() : '';
+  const kind = typeof m?.mealType === 'string' ? m.mealType.trim() : '';
+  const what = dish ? (kind ? `${dish} (${kind})` : dish) : '(no dish recorded)';
+  return `  - ${day}: ${what}`;
+}
+
 app.post('/api/housebot/chat', async (req, res) => {
   const { message, history, context, image } = req.body || {};
   if (!message || typeof message !== 'string') {
@@ -3588,8 +3690,8 @@ app.post('/api/housebot/chat', async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const expiringSoon = stock
-    .filter((s) => s.expiresOn && s.expiresOn <= addDays(today, 3))
-    .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: s.expiresOn }));
+    .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
+    .filter((s) => s.expires && s.expires <= addDays(today, 3));
 
   const recipesBlock = recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
@@ -3615,11 +3717,11 @@ app.post('/api/housebot/chat', async (req, res) => {
     allergies.length ? `ALLERGIES: ${allergies.join(', ')}` : null,
     `STOCK (${stock.length} items):`,
     stock.length
-      ? stock.slice(0, 80).map((s) => `  - ${s.name}: ${s.quantity}${s.unit || ''}${s.expiresOn ? ` (exp ${s.expiresOn})` : ''}${s.category ? ` [${s.category}]` : ''}`).join('\n')
+      ? stock.slice(0, 80).map(stockContextLine).join('\n')
       : '  (empty)',
     grocery.length ? `GROCERY LIST (${grocery.length} open):\n${grocery.slice(0, 40).map((g) => `  - ${g.name}${g.quantity ? ` x${g.quantity}` : ''}`).join('\n')}` : null,
     expiringSoon.length ? `EXPIRING SOON: ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
-    recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map((m) => `  - ${m.date || m.createdAt}: ${m.title || (m.recipeIds ? m.recipeIds.length + ' recipes' : 'meal')}`).join('\n')}` : null,
+    recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map(mealContextLine).join('\n')}` : null,
     recipesBlock,
     webBlock,
     memoryBlock(),
@@ -3739,8 +3841,8 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const expiringSoon = stock
-    .filter((s) => s.expiresOn && s.expiresOn <= addDays(today, 3))
-    .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: s.expiresOn }));
+    .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
+    .filter((s) => s.expires && s.expires <= addDays(today, 3));
 
   const recipesBlock = recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
@@ -3766,11 +3868,11 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
     allergies.length ? `ALLERGIES: ${allergies.join(', ')}` : null,
     `STOCK (${stock.length} items):`,
     stock.length
-      ? stock.slice(0, 80).map((s) => `  - ${s.name}: ${s.quantity}${s.unit || ''}${s.expiresOn ? ` (exp ${s.expiresOn})` : ''}${s.category ? ` [${s.category}]` : ''}`).join('\n')
+      ? stock.slice(0, 80).map(stockContextLine).join('\n')
       : '  (empty)',
     grocery.length ? `GROCERY LIST (${grocery.length} open):\n${grocery.slice(0, 40).map((g) => `  - ${g.name}${g.quantity ? ` x${g.quantity}` : ''}`).join('\n')}` : null,
     expiringSoon.length ? `EXPIRING SOON: ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
-    recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map((m) => `  - ${m.date || m.createdAt}: ${m.title || (m.recipeIds ? m.recipeIds.length + ' recipes' : 'meal')}`).join('\n')}` : null,
+    recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map(mealContextLine).join('\n')}` : null,
     recipesBlock,
     webBlock,
     memoryBlock(),
