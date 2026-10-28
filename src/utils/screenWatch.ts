@@ -169,8 +169,36 @@ export const SHARE_PICKER_HINT =
  * unless the page says otherwise, so without this the person is offered a
  * choice that is far bigger than the app wants, and the share they end up
  * granting is one they did not mean to give.
+ *
+ * WHAT IT DOES NOT DO: it does not take the whole screen AWAY. This is a
+ * PREFERENCE, not a limit — MDN is plain that the constraint "has no effect
+ * on what the user can choose to share", so the browser may use it to put
+ * the tab section in front of the person and the screens stay in the picker
+ * either way. The option that actually removes them is below.
  */
 export const SHARE_SURFACE = 'browser';
+
+/**
+ * Whether the browser offers WHOLE SCREAMS in the picker at all.
+ *
+ * WHY IT IS 'exclude': the whole screen holds the person's bank, their
+ * messages and everything else they have open, and the model would be sent
+ * all of it. The thing being asked about is one page of one store, so the
+ * app does not offer the screen at all.
+ *
+ * WHY IT IS NEEDED AND NOT ONLY `SHARE_SURFACE`: `SHARE_SURFACE` says which
+ * kind of surface the app WANTS; this is the one that decides which kinds
+ * the person is OFFERED. Chrome 119 and later honour it; a browser that has
+ * never heard of it ignores the option, which is why it is safe to send
+ * everywhere.
+ *
+ * WHY IT IS A SEPARATE NAME AND NOT A PART OF SHARE_SURFACE: they are two
+ * different questions to two different parts of the browser, and they go in
+ * two different places. `SHARE_SURFACE` goes in the video constraints, where
+ * the browser looks for it. This goes at the TOP LEVEL of the options,
+ * beside `video` and `audio`, like `SHARE_SELF_BROWSER_SURFACE` below.
+ */
+export const SHARE_MONITOR_SURFACES = 'exclude';
 
 /**
  * Whether the browser may offer the page that is asking, in the picker's list.

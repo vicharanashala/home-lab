@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // testable without a browser.
 import {
   SCREEN_WATCH_CHANNEL,
+  SHARE_MONITOR_SURFACES,
   SHARE_SELF_BROWSER_SURFACE,
   SHARE_SURFACE,
   WATCH_FRAME_INTERVAL_MS,
@@ -232,6 +233,12 @@ export function useScreenSharer() {
             // their messages, not just the store. Saying "browser" opens
             // the picker on "Chrome tab", where the person picks the one tab
             // they mean.
+            //
+            // WHAT IT DOES NOT DO: it does not take the whole screen AWAY.
+            // MDN is plain that this constraint "has no effect on what the
+            // user can choose to share" — it is a preference that may reorder
+            // the picker, and the screens stay in it either way. The option
+            // that takes them out is `monitorTypeSurfaces` below.
             displaySurface: SHARE_SURFACE,
           },
           audio: false,
@@ -251,6 +258,29 @@ export function useScreenSharer() {
           // but it is newer than the DOM library this project type-checks
           // against, so the compiler has never heard of it.
           ...({ selfBrowserSurface: SHARE_SELF_BROWSER_SURFACE } as Record<string, unknown>),
+          // NO WHOLE SCREAMS IN THE PICKER.
+          //
+          // WHY IT IS NEEDED: `displaySurface` says which kind of surface the
+          // app wants, and the whole screen — the person's bank, their
+          // messages, everything else they have open — is still one click
+          // away in the picker. MDN is plain that the constraint "has no
+          // effect on what the user can choose to share". This is the option
+          // that takes the screens out of the picker altogether.
+          //
+          // WHY IT IS HERE AND NOT INSIDE `video`: it is an option of the
+          // getDisplayMedia call itself, for the same reason
+          // `selfBrowserSurface` is: the browser reads it off the top of the
+          // options object, and inside the video constraints it is an unknown
+          // constraint, which the browser ignores.
+          //
+          // WHY IT IS SAFE TO SEND TO A BROWSER THAT HAS NEVER HEARD OF IT:
+          // Chrome 119 and later honour it; Safari and older browsers ignore
+          // an option they do not know, and are no worse off than before.
+          //
+          // WHY THE CAST: same as `selfBrowserSurface` above — the option is
+          // in the spec and in Chrome, but newer than the DOM library this
+          // project type-checks against.
+          ...({ monitorTypeSurfaces: SHARE_MONITOR_SURFACES } as Record<string, unknown>),
         });
         granted = stream;
 

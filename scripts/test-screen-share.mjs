@@ -803,6 +803,19 @@ console.log('\nthe share asks the browser the question the browser answers');
   // This fake browser reads the options the way the browser does: the
   // surface out of the video constraints, the self-browser hint off the top
   // of the options object.
+  //
+  // AND THE ONE THAT KEEPS THE WHOLE SCREEN OUT OF THE PICKER
+  //
+  // `displaySurface` says which kind of surface the app wants, and Chrome uses
+  // it to put that kind in front of the person. It does NOT take the other
+  // kinds away — MDN is explicit: it "has no effect on what the user can
+  // choose to share". The whole screen stays in the picker, one click away,
+  // and the whole screen is what holds the person's bank and their messages.
+  //
+  // `monitorTypeSurfaces: "exclude"` is the option that takes the screens
+  // out of the picker altogether (Chrome 119 and later; older browsers and
+  // Safari ignore it, which is why it is safe to send). It goes at the TOP
+  // LEVEL of the options, for the same reason `selfBrowserSurface` does.
   let asked = null;
   navigator.mediaDevices.getDisplayMedia = async (options) => {
     asked = options;
@@ -817,10 +830,12 @@ console.log('\nthe share asks the browser the question the browser answers');
   const surface = asked?.video?.displaySurface;
   const selfBrowserSurface = asked?.selfBrowserSurface;
   const buriedInVideo = asked?.video?.selfBrowserSurface;
+  const monitorTypeSurfaces = asked?.monitorTypeSurfaces;
+  const monitorBuriedInVideo = asked?.video?.monitorTypeSurfaces;
 
   ok(
     surface === 'browser',
-    'the picker is asked for a browser tab, not the whole screen',
+    'the picker is told a browser tab is what the app wants',
     `displaySurface: ${String(surface)}`,
   );
   ok(
@@ -832,6 +847,16 @@ console.log('\nthe share asks the browser the question the browser answers');
     buriedInVideo === undefined,
     'and the hint is not buried in the video constraints, where the browser never looks',
     `video.selfBrowserSurface: ${String(buriedInVideo)}`,
+  );
+  ok(
+    monitorTypeSurfaces === 'exclude',
+    'WHOLE SCREENS ARE NOT OFFERED AT ALL',
+    `monitorTypeSurfaces: ${String(monitorTypeSurfaces)}`,
+  );
+  ok(
+    monitorBuriedInVideo === undefined,
+    'and that hint is not buried in the video constraints either',
+    `video.monitorTypeSurfaces: ${String(monitorBuriedInVideo)}`,
   );
 
   harness.unmount();
