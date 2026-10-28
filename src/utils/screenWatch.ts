@@ -172,6 +172,22 @@ export const SHARE_PICKER_HINT =
  */
 export const SHARE_SURFACE = 'browser';
 
+/**
+ * Whether the browser may offer the page that is asking, in the picker's list.
+ *
+ * WHY IT IS 'include': the person is told the app is sharing a tab, and the
+ * picker can show them which one they are on. Hiding the page that is asking
+ * makes the picker look like it is offering a choice the app never made.
+ *
+ * WHY IT IS A SEPARATE NAME AND NOT A PART OF SHARE_SURFACE: they are two
+ * different questions to two different parts of the browser. `SHARE_SURFACE`
+ * says WHICH KIND of thing to capture — a tab, not a screen — and goes in the
+ * video constraints, where the browser looks for it. This says whether the
+ * page doing the asking may appear in the list at all, and goes at the TOP
+ * LEVEL of the options, because that is where the browser looks for it.
+ */
+export const SHARE_SELF_BROWSER_SURFACE = 'include';
+
 
 /**
  * What the watching tab knows.

@@ -781,5 +781,61 @@ console.log('\na share that fails after the capture is registered is taken down'
   globalThis.window = working;
 }
 
+console.log('\nthe share asks the browser the question the browser answers');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  // WHAT THE BROWSER ACTUALLY READS
+  //
+  // The Screen Capture spec puts `selfBrowserSurface` on the options object
+  // ITSELF, beside `video` and `audio` — MDN's own example reads
+  //
+  //   getDisplayMedia({ video: { displaySurface: "browser" },
+  //                     selfBrowserSurface: "include", ... })
+  //
+  // Inside the video constraints it is an unknown constraint, and an unknown
+  // constraint is one the browser ignores. So a hint buried in `video` is a
+  // hint the browser never reads, and the app is left believing it asked for
+  // something it did not ask for.
+  //
+  // This fake browser reads the options the way the browser does: the
+  // surface out of the video constraints, the self-browser hint off the top
+  // of the options object.
+  let asked = null;
+  navigator.mediaDevices.getDisplayMedia = async (options) => {
+    asked = options;
+    const stream = makeStream();
+    streams.push(stream);
+    return stream;
+  };
+
+  const harness = mountHook(() => useScreenSharer());
+  await harness.value.start('Amazon Fresh', () => {});
+
+  const surface = asked?.video?.displaySurface;
+  const selfBrowserSurface = asked?.selfBrowserSurface;
+  const buriedInVideo = asked?.video?.selfBrowserSurface;
+
+  ok(
+    surface === 'browser',
+    'the picker is asked for a browser tab, not the whole screen',
+    `displaySurface: ${String(surface)}`,
+  );
+  ok(
+    selfBrowserSurface === 'include',
+    'THE BROWSER IS TOLD THE CURRENT TAB MAY BE PICKED',
+    `selfBrowserSurface: ${String(selfBrowserSurface)}`,
+  );
+  ok(
+    buriedInVideo === undefined,
+    'and the hint is not buried in the video constraints, where the browser never looks',
+    `video.selfBrowserSurface: ${String(buriedInVideo)}`,
+  );
+
+  harness.unmount();
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

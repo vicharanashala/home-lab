@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // testable without a browser.
 import {
   SCREEN_WATCH_CHANNEL,
+  SHARE_SELF_BROWSER_SURFACE,
   SHARE_SURFACE,
   WATCH_FRAME_INTERVAL_MS,
   grabFrame,
@@ -232,15 +233,24 @@ export function useScreenSharer() {
             // the picker on "Chrome tab", where the person picks the one tab
             // they mean.
             displaySurface: SHARE_SURFACE,
-            // The page asking is allowed to be in the list too, so the
-            // person can see what is being offered.
-            //
-            // WHY THE CAST: "selfBrowserSurface" is in the spec and in
-            // Chrome, but it is newer than the DOM library this project
-            // type-checks against, so the compiler has never heard of it.
-            ...({ selfBrowserSurface: 'include' } as Record<string, unknown>),
           },
           audio: false,
+          // The page asking is allowed to be in the list too, so the person
+          // can see what is being offered.
+          //
+          // WHY IT IS HERE AND NOT INSIDE `video`: the Screen Capture spec
+          // puts `selfBrowserSurface` on the options object itself, beside
+          // `video` and `audio` — MDN's own example reads it from there. The
+          // browser does not look inside the video constraints for it: there
+          // it is an unknown constraint, and an unknown constraint is one the
+          // browser ignores. It was there, so the hint was silently doing
+          // nothing and the app was asking for something it had not asked
+          // for.
+          //
+          // WHY THE CAST: "selfBrowserSurface" is in the spec and in Chrome,
+          // but it is newer than the DOM library this project type-checks
+          // against, so the compiler has never heard of it.
+          ...({ selfBrowserSurface: SHARE_SELF_BROWSER_SURFACE } as Record<string, unknown>),
         });
         granted = stream;
 
