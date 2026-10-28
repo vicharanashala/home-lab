@@ -5,7 +5,7 @@ import type { StockItem } from '../types';
 import { getCategory } from '../utils/categories';
 import { CategoryIcon } from './icons/AppIcons';
 import { useStore } from '../store/useStore';
-import { daysUntil, expiryBucket, formatExpiry, formatQuantity } from '../utils/date';
+import { daysUntil, expiryBucket, formatExpiry, formatQuantity, singularUnit } from '../utils/date';
 import { conflictsDiet, detectAllergensInName } from '../utils/diet';
 import { ConfirmModal } from './ConfirmModal';
 import { hapticSelect, hapticDanger } from '../utils/haptics';
@@ -171,7 +171,7 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
               hapticSelect();
               incrementStock(item.id, -1);
               setBumpKey((k) => k + 1);
-              toast(`Used 1 ${item.unit.replace(/s$/, '') || ''} of ${item.name}`.trim(), 'info');
+              toast(`Used 1 ${singularUnit(item.unit) || ''} of ${item.name}`.trim(), 'info');
             }}
             disabled={item.quantity <= 0}
             aria-label="Decrease quantity"
@@ -190,7 +190,7 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
               hapticSelect();
               incrementStock(item.id, 1);
               setBumpKey((k) => k + 1);
-              toast(`Added 1 ${item.unit.replace(/s$/, '') || ''} of ${item.name}`.trim(), 'success');
+              toast(`Added 1 ${singularUnit(item.unit) || ''} of ${item.name}`.trim(), 'success');
             }}
             aria-label="Increase quantity"
             className="btn-icon bg-sage-50 text-sage-700 hover:bg-sage-100"

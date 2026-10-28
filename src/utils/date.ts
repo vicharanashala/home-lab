@@ -105,8 +105,14 @@ export const formatDays = (days: number): string =>
  * The old one-liner (`unit.replace(/s$/, '')`) turned "glass" into "glas",
  * "dashes" into "dashe" and "pinches" into "pinche" — units people actually
  * type for a kitchen app. English plurals are not just "+s".
+ *
+ * WHY IT IS EXPORTED: a stock row's own toast says how much of an item was
+ * used or added, and it used to spell that unit with the old one-liner while
+ * the quantity printed beside it used this rule — so one row could say "2
+ * glass" and then toast "Added 1 glas of Milk". The rule has to be the same
+ * rule wherever a unit is written.
  */
-function singularUnit(unit: string): string {
+export function singularUnit(unit: string): string {
   const u = unit.trim();
   if (!u) return unit;
   // -es plurals whose stem ends in a sibilant: dashes -> dash, pinches -> pinch.
