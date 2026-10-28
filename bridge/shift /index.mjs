@@ -3057,7 +3057,7 @@ const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'im
 // ─── what kind of picture this is ────────────────────────────────────────
 //
 // The app sends two different pictures through the same field: a photo of
-// food the person took, and a frame of the store tab they are shopping in.
+// food the person took, and a frame of the store window they are shopping in.
 // They want different answers, and the bridge cannot tell them apart on its
 // own — both arrive as base64 with a media type. So the app says which it
 // is.
@@ -3075,7 +3075,7 @@ const PHOTO_VISION_HINT =
   `\n\n--- A PHOTO IS ATTACHED ---\nThe user sent an image. Look at it and answer about what you actually see. Describe the food, estimate quantities and portions, judge doneness/ripeness/freshness, and suggest what they could cook with it. Be concrete and visual. If the image is unclear or you can't identify something, say so plainly rather than guessing.\n`;
 
 const SCREEN_VISION_HINT =
-  `\n\n--- A SHARED TAB IS ON SCREEN ---\nThe user is sharing a browser tab and asking about what is on it. Read the screen itself: the page, the product, its name, the price, the quantity or size, the options and buttons. Answer the question they asked about what they are looking at — "how much is this?" is answered with the price on the screen, "what is this?" with what the page is. This is a screenshot of a screen, not a photograph of food, so do not describe it as one, do not judge the ripeness of what is on it, and do not suggest what to cook with it. If you cannot read something on the screen, say so plainly rather than guessing.\n`;
+  `\n\n--- A SHARED WINDOW IS ON SCREEN ---\nThe user is sharing a browser window and asking about what is on it. Read the screen itself: the page, the product, its name, the price, the quantity or size, the options and buttons. Answer the question they asked about what they are looking at — "how much is this?" is answered with the price on the screen, "what is this?" with what the page is. This is a screenshot of a screen, not a photograph of food, so do not describe it as one, do not judge the ripeness of what is on it, and do not suggest what to cook with it. If you cannot read something on the screen, say so plainly rather than guessing.\n`;
 
 /**
  * The bytes of a picture, without the `data:` prefix.
