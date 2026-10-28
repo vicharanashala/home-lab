@@ -25,7 +25,15 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
   const cat = getCategory(item.category);
 
   const days = daysUntil(item.expiryDate);
-  const bucket = expiryBucket(item.expiryDate);
+  // WHY THE HOUSEHOLD'S WINDOW: the row is drawn by the Stock screen and the
+  // Dashboard, and both of them decide what is expiring with
+  // `settings.expiringSoonDays`. This asked for the bucket with no window at
+  // all, so it got the default of three days while every screen around it
+  // used the household's — a household that widened the window to a week saw
+  // "5 items expiring within 7 days" on the Alerts screen and a row beside it
+  // reading "Nov 2, 2026", the plain date, because three days was what this
+  // row asked about. One question, one window.
+  const bucket = expiryBucket(item.expiryDate, settings.expiringSoonDays);
   const isLow = item.quantity <= item.lowStockThreshold;
 
   const dietConflict = conflictsDiet(item, settings.dietaryPreference);
