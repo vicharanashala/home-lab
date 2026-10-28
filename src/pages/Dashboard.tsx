@@ -82,7 +82,10 @@ export function Dashboard() {
     [stock],
   );
 
-  const expiringCount = useMemo(
+  // Everything that needs a decision: stock that is low, and stock whose
+  // date has passed or is about to. An expired item is an ALERT even though
+  // it is not "expiring soon", so the Alerts tile counts it.
+  const alertCount = useMemo(
     () =>
       stock.filter((it) => {
         const bucket = expiryBucket(it.expiryDate, settings.expiringSoonDays);
@@ -100,12 +103,28 @@ export function Dashboard() {
     [stock],
   );
 
-  const expiringItems = useMemo(() => {
+  // The "Expiring soon" card is about the household's WINDOW — the days
+  // still to come. An item whose date has already passed is NOT expiring
+  // soon, and this card used to list it anyway: it said "3 items need
+  // attention" under a heading that reads "Expiring soon", and promised
+  // "No items expiring in the next 7 days" while showing a mango that went
+  // off last week. The Alerts screen can carry an expired item under that
+  // heading because it splits its list into an "Expired (n)" group and a
+  // "Within 7 days (n)" group; this card has no such split, so an expired
+  // item in it is simply an expired item under a heading that says it is
+  // not one. The Alerts tile above still counts it, and the Alerts screen
+  // still lists it under "Expired".
+  const expiringSoonCount = useMemo(
+    () =>
+      stock.filter(
+        (it) => expiryBucket(it.expiryDate, settings.expiringSoonDays) === 'soon',
+      ).length,
+    [stock, settings.expiringSoonDays],
+  );
+
+  const expiringSoonItems = useMemo(() => {
     return stock
-      .filter((it) => {
-        const bucket = expiryBucket(it.expiryDate, settings.expiringSoonDays);
-        return bucket === 'expired' || bucket === 'soon';
-      })
+      .filter((it) => expiryBucket(it.expiryDate, settings.expiringSoonDays) === 'soon')
       .sort((a, b) => {
         const ad = daysUntil(a.expiryDate) ?? 999;
         const bd = daysUntil(b.expiryDate) ?? 999;
@@ -285,9 +304,9 @@ export function Dashboard() {
           <StatTile
             to="/alerts"
             label="Alerts"
-            value={lowStockCount + expiringCount}
+            value={lowStockCount + alertCount}
             accent={
-              lowStockCount + expiringCount > 0
+              lowStockCount + alertCount > 0
                 ? 'bg-tomato-50 text-tomato-700'
                 : 'bg-sage-50 text-sage-700'
             }
@@ -407,9 +426,9 @@ export function Dashboard() {
               <div>
                 <h3 className="font-display font-bold text-lg text-sage-900 dark:text-cream-50">Expiring soon</h3>
                 <p className="text-xs text-sage-500 dark:text-ink-300">
-                  {expiringCount === 0
+                  {expiringSoonCount === 0
                     ? `No items expiring in the next ${settings.expiringSoonDays} days`
-                    : `${expiringCount} item${expiringCount === 1 ? '' : 's'} need attention`}
+                    : `${expiringSoonCount} item${expiringSoonCount === 1 ? '' : 's'} need attention`}
                 </p>
               </div>
             </div>
@@ -422,7 +441,7 @@ export function Dashboard() {
             </Link>
           </div>
 
-          {expiringCount === 0 ? (
+          {expiringSoonCount === 0 ? (
             <EmptyMini
               icon={Snowflake}
               title={stock.length === 0 ? 'No expiry alerts yet' : 'Nothing expiring soon'}
@@ -434,7 +453,7 @@ export function Dashboard() {
             />
           ) : (
             <ul className="divide-y divide-sage-100">
-              {expiringItems.map((it) => (
+              {expiringSoonItems.map((it) => (
                 <li key={it.id}>
                   <StockRow item={it} compact showActions={false} />
                 </li>
