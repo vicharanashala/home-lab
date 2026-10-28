@@ -515,8 +515,9 @@ export function HouseBotPage() {
   const [webMode, setWebMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const attach = usePhotoAttach();
-  // The tab being shared, if any. It lives in another tab — the Digital
-  // stores page asked the browser for it — and arrives here as frames.
+  // The window being shared, if any. It lives in another window — the
+  // Digital stores page asked the browser for it — and arrives here as
+  // frames.
   const screen = useScreenWatcher();
   const voice = useVoice();
   // Whether replies are read aloud. Off by default: people don't always want
@@ -606,7 +607,7 @@ export function HouseBotPage() {
 
     // WHAT THE PERSON IS LOOKING AT.
     //
-    // If a tab is being shared — the store they opened from the Digital
+    // If a window is being shared — the store they opened from the Digital
     // stores page — the frame of it goes out with the message, so the model
     // can answer "what is this?" and "how much is it?" about the screen in
     // front of them.
@@ -616,7 +617,7 @@ export function HouseBotPage() {
     // of them.
     //
     // WHY THE PICTURE IS MARKED: the bridge has to tell a photo of food from
-    // a frame of the store tab, and the two look identical on the wire —
+    // a frame of the store window, and the two look identical on the wire —
     // base64 with a media type. The kind travels with the picture so the
     // model is told to read the screen as a screen. See imagePayloadFor.
     const sentImagePayload = imagePayloadFor(sentImage, screen.frame);
@@ -1848,7 +1849,7 @@ export function HouseBotPage() {
               it cannot see and conclude it is not listening.
 
               WHY THIS NEEDS A FRAME AND NOT JUST "watching": the share can be
-              granted and still deliver nothing — a tab that is closed, a
+              granted and still deliver nothing — a window that is closed, a
               screen that has stopped coming through. The chip only appears
               when there is actually a picture for the bot to look at, so it
               never promises sight the bot does not have. */}
