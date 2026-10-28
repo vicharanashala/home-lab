@@ -31,7 +31,7 @@ import { EndOfDayMeals } from '../components/EndOfDayMeals';
 import { useAnimatedNumber } from '../hooks/useAnimatedNumber';
 import { format } from 'date-fns';
 import { dietEmoji, dietLabel } from '../utils/categories';
-import { expiryBucket, itemsExpiringSoon } from '../utils/date';
+import { expiryBucket, formatDays, itemsExpiringSoon } from '../utils/date';
 import { GroceryRow } from '../components/GroceryRow';
 import { StockRow } from '../components/StockRow';
 import { NearbyStoresCard } from '../components/NearbyStoresCard';
@@ -415,7 +415,7 @@ export function Dashboard() {
                 <h3 className="font-display font-bold text-lg text-sage-900 dark:text-cream-50">Expiring soon</h3>
                 <p className="text-xs text-sage-500 dark:text-ink-300">
                   {expiringSoonCount === 0
-                    ? `No items expiring in the next ${settings.expiringSoonDays} days`
+                    ? `No items expiring in the next ${formatDays(settings.expiringSoonDays)}`
                     : `${expiringSoonCount} item${expiringSoonCount === 1 ? '' : 's'} need attention`}
                 </p>
               </div>

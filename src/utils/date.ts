@@ -73,6 +73,33 @@ export const itemsExpiringSoon = (items: StockItem[], soonDays = 3): StockItem[]
     .sort((a, b) => (daysUntil(a.expiryDate) ?? 999) - (daysUntil(b.expiryDate) ?? 999));
 
 /**
+ * A count of days, with the word that goes with it.
+ *
+ * WHY ONE HELPER AND NOT A TERNARY IN EACH SCREEN: the household can
+ * narrow the expiry window to a single day — the sliders on the Alerts
+ * screen and on the Settings screen both start at 1 — and "the next 1
+ * days" is not a sentence anyone wrote on purpose. The Meal Plan got that
+ * right and the other places did not, so a household that had chosen the
+ * narrowest window the app offers was shown "1 days" on the Alerts
+ * screen, on the Dashboard and in Settings, while the Meal Plan said
+ * "1 day". Four screens, one number, two answers.
+ *
+ * WHY IT LIVES HERE AND NOT IN A SCREEN: the window is a fact about the
+ * household, and the screens are not all mounted at once — the phrase has
+ * to be answerable from the number alone.
+ *
+ * WHY IT IS ABOUT DAYS AND NOT ABOUT THE WINDOW: the same rule has to
+ * hold for any number of days the app writes, not only for the expiry
+ * window, so the helper is named for what it writes rather than for the
+ * setting that happens to use it most.
+ *
+ * @param days the number of days
+ * @returns the number and its word — "1 day", "3 days"
+ */
+export const formatDays = (days: number): string =>
+  `${days} ${days === 1 ? 'day' : 'days'}`;
+
+/**
  * Make a unit singular without mangling it.
  *
  * The old one-liner (`unit.replace(/s$/, '')`) turned "glass" into "glas",

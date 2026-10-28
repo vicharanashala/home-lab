@@ -12,7 +12,7 @@ import {
   Snowflake,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { daysUntil, expiryBucket, formatQuantity, itemsExpiringSoon } from '../utils/date';
+import { daysUntil, expiryBucket, formatDays, formatQuantity, itemsExpiringSoon } from '../utils/date';
 import type { StockItem } from '../types';
 
 export function AlertsPage() {
@@ -108,10 +108,13 @@ export function AlertsPage() {
     const soonCount = soon.length;
     const expiredCount = expired.length;
     const days = settings.expiringSoonDays;
+    // WHY THE SHARED PHRASE AND NOT `${days} days`: the household can set
+    // the window to a single day, and "the next 1 days" is not a sentence
+    // anyone wrote on purpose. See `formatDays`.
     const expiringPart =
       soonCount === 0
-        ? `Nothing expiring in the next ${days} days`
-        : `${soonCount} expiring in the next ${days} days`;
+        ? `Nothing expiring in the next ${formatDays(days)}`
+        : `${soonCount} expiring in the next ${formatDays(days)}`;
     const expiredPart = expiredCount === 0 ? '' : `${expiredCount} already gone off`;
     return expiredPart ? `${expiringPart} · ${expiredPart}` : expiringPart;
   }, [soon.length, expired.length, settings.expiringSoonDays]);
@@ -188,7 +191,7 @@ export function AlertsPage() {
               className="flex-1 accent-sage-600"
             />
             <div className="rounded-xl bg-sage-100 dark:bg-ink-700 text-sage-800 dark:text-cream-50 font-bold px-3 py-1.5 min-w-[64px] text-center">
-              {soonDays} days
+              {formatDays(soonDays)}
             </div>
           </div>
         </section>
@@ -331,7 +334,7 @@ export function AlertsPage() {
                       <Calendar size={14} />
                     </span>
                     <h4 className="font-display font-bold text-sm text-butter-800">
-                      Within {settings.expiringSoonDays} days ({soon.length})
+                      Within {formatDays(settings.expiringSoonDays)} ({soon.length})
                     </h4>
                   </div>
                   <ul className="divide-y divide-sage-100">

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import clsx from 'clsx';
+import { formatDays } from '../utils/date';
 import type { DietaryPreference, ThemeMode, UserConsents } from '../types';
 import { TopBar } from '../components/TopBar';
 import { DietIcon } from '../components/icons/AppIcons';
@@ -498,7 +499,7 @@ export function SettingsPage() {
               className="flex-1 accent-sage-600"
             />
             <div className="rounded-xl bg-sage-100 dark:bg-ink-700 text-sage-800 dark:text-cream-50 font-bold px-3 py-1.5 min-w-[64px] text-center">
-              {expiringSoonDays} days
+              {formatDays(expiringSoonDays)}
             </div>
           </div>
         </section>

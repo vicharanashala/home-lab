@@ -26,7 +26,7 @@ import type { MealPlanDay, MealPlanEntry, MealSlot, Recipe, ShoppingNeed } from 
 import { dayMode, recipeAllowed, recipeViolations, violationPhrase } from '../utils/dayModes';
 import { DayModeSheet } from '../components/DayModeSheet';
 import { recipesUsingExpiringStock, urgencyLabel } from '../utils/expiryRecipes';
-import { itemsExpiringSoon } from '../utils/date';
+import { formatDays, itemsExpiringSoon } from '../utils/date';
 import { suggestMeals, buildTasteVector } from '../utils/mealSuggest';
 import type { MealSuggestion } from '../utils/mealSuggest';
 import { SuggestSheet } from '../components/SuggestSheet';
@@ -596,9 +596,12 @@ export default function MealPlanPage() {
 
                 WHY "day" IS SINGULAR AT ONE: the household can narrow the
                 window to a single day, and "the next 1 days" is not a
-                sentence anyone wrote on purpose. */}
+                sentence anyone wrote on purpose. The phrase is written by
+                `formatDays`, which is the SAME rule the Alerts screen, the
+                Dashboard and the Settings screen call — so the four screens
+                cannot end up calling one window two different things. */}
             You have {expiringSoonCount} {expiringSoonCount === 1 ? 'thing' : 'things'} expiring in the next{' '}
-            {settings.expiringSoonDays} {settings.expiringSoonDays === 1 ? 'day' : 'days'}.
+            {formatDays(settings.expiringSoonDays)}.
           </p>
           <div ref={catFadeRef} className="scroll-fade-x flex gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {rescues.map((r) => (
