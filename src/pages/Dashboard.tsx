@@ -31,7 +31,7 @@ import { EndOfDayMeals } from '../components/EndOfDayMeals';
 import { useAnimatedNumber } from '../hooks/useAnimatedNumber';
 import { format } from 'date-fns';
 import { dietEmoji, dietLabel } from '../utils/categories';
-import { daysUntil, expiryBucket } from '../utils/date';
+import { expiryBucket, itemsExpiringSoon } from '../utils/date';
 import { GroceryRow } from '../components/GroceryRow';
 import { StockRow } from '../components/StockRow';
 import { NearbyStoresCard } from '../components/NearbyStoresCard';
@@ -114,24 +114,12 @@ export function Dashboard() {
   // item in it is simply an expired item under a heading that says it is
   // not one. The Alerts tile above still counts it, and the Alerts screen
   // still lists it under "Expired".
-  const expiringSoonCount = useMemo(
-    () =>
-      stock.filter(
-        (it) => expiryBucket(it.expiryDate, settings.expiringSoonDays) === 'soon',
-      ).length,
+  const expiringSoonItems = useMemo(
+    () => itemsExpiringSoon(stock, settings.expiringSoonDays),
     [stock, settings.expiringSoonDays],
   );
 
-  const expiringSoonItems = useMemo(() => {
-    return stock
-      .filter((it) => expiryBucket(it.expiryDate, settings.expiringSoonDays) === 'soon')
-      .sort((a, b) => {
-        const ad = daysUntil(a.expiryDate) ?? 999;
-        const bd = daysUntil(b.expiryDate) ?? 999;
-        return ad - bd;
-      })
-      .slice(0, 4);
-  }, [stock, settings.expiringSoonDays]);
+  const expiringSoonCount = expiringSoonItems.length;
 
   const todaysLogs = useMemo(
     () => mealLogs.filter((m) => isSameDay(m.createdAt, new Date())),
@@ -453,7 +441,7 @@ export function Dashboard() {
             />
           ) : (
             <ul className="divide-y divide-sage-100">
-              {expiringSoonItems.map((it) => (
+              {expiringSoonItems.slice(0, 4).map((it) => (
                 <li key={it.id}>
                   <StockRow item={it} compact showActions={false} />
                 </li>

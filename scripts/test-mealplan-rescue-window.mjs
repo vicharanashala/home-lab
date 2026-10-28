@@ -480,6 +480,57 @@ console.log("\nthe caption names the household's window");
 }
 
 /* -------------------------------------------------------------------------- */
+/* The caption counts the HOUSEHOLD's food, not one dish's ingredients           */
+/* -------------------------------------------------------------------------- */
+
+console.log("\nthe caption counts the household's food");
+
+{
+  // WHY THIS CASE: the kitchen has TWO things inside a seven-day window —
+  // curd, which goes off today, and milk, which goes off in five days. The
+  // strip's FIRST dish is the one that rescues the curd, and it rescues one
+  // ingredient. So the count the caption used to read —
+  // `rescues[0].uses.length` — was 1, while the household had 2 things going
+  // off. The Dashboard said "2 items need attention" and the Alerts screen
+  // said "Within 7 days (2)". The caption said "something", and the
+  // singular was a claim about the household that was false.
+  tap.resetState();
+  store.setWindow(7);
+  const tree = render();
+  const caption = rescueCaption(tree);
+  ok(
+    caption !== null && /You have 2 things expiring/.test(caption),
+    'a household with two things going off is told "2 things"',
+    `caption=${JSON.stringify(caption)}`,
+  );
+  ok(
+    caption !== null && !/You have something expiring/.test(caption),
+    'and is NOT told "something" because the first dish rescues one ingredient',
+    `caption=${JSON.stringify(caption)}`,
+  );
+}
+
+{
+  // The narrow window: only the curd is inside it, so the household really
+  // does have one thing going off, and the caption says so — and says "thing",
+  // not "things".
+  tap.resetState();
+  store.setWindow(3);
+  const tree = render();
+  const caption = rescueCaption(tree);
+  ok(
+    caption !== null && /You have 1 thing expiring/.test(caption),
+    'a household with one thing going off is told "1 thing"',
+    `caption=${JSON.stringify(caption)}`,
+  );
+  ok(
+    caption !== null && !/You have 1 things expiring/.test(caption),
+    'and it is not "1 things"',
+    `caption=${JSON.stringify(caption)}`,
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

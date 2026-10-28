@@ -12,7 +12,7 @@ import {
   Snowflake,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { daysUntil, expiryBucket, formatQuantity } from '../utils/date';
+import { daysUntil, expiryBucket, formatQuantity, itemsExpiringSoon } from '../utils/date';
 import type { StockItem } from '../types';
 
 export function AlertsPage() {
@@ -61,7 +61,20 @@ export function AlertsPage() {
   }, [stock, settings.expiringSoonDays]);
 
   const expired = expiring.filter((it) => (daysUntil(it.expiryDate) ?? 0) < 0);
-  const soon = expiring.filter((it) => (daysUntil(it.expiryDate) ?? 0) >= 0);
+
+  // The "Within N days" group, from the SHARED rule.
+  //
+  // WHY THE SHARED HELPER: the Dashboard's "N items need attention" and the
+  // Meal Plan's "You have N things expiring" are the same question about the
+  // same kitchen, so they are answered by the same function. This screen
+  // keeps its own `expiring` list because it splits that list into an
+  // "Expired (n)" group and a "Within N days (n)" group — expired items are
+  // shown here on purpose, in their own group, and that is the one place in
+  // the app where an expired item may appear under an expiry heading.
+  const soon = useMemo(
+    () => itemsExpiringSoon(stock, settings.expiringSoonDays),
+    [stock, settings.expiringSoonDays],
+  );
 
   const addToGrocery = (it: StockItem) => {
     const item = addGrocery({

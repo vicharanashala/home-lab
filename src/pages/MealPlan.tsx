@@ -26,6 +26,7 @@ import type { MealPlanDay, MealPlanEntry, MealSlot, Recipe, ShoppingNeed } from 
 import { dayMode, recipeAllowed, recipeViolations, violationPhrase } from '../utils/dayModes';
 import { DayModeSheet } from '../components/DayModeSheet';
 import { recipesUsingExpiringStock, urgencyLabel } from '../utils/expiryRecipes';
+import { itemsExpiringSoon } from '../utils/date';
 import { suggestMeals, buildTasteVector } from '../utils/mealSuggest';
 import type { MealSuggestion } from '../utils/mealSuggest';
 import { SuggestSheet } from '../components/SuggestSheet';
@@ -436,6 +437,26 @@ export default function MealPlanPage() {
     [catalogue, stock, settings.expiringSoonDays],
   );
 
+  // How much food is about to go off — the HOUSEHOLD'S count, not this
+  // strip's.
+  //
+  // WHY THE HOUSEHOLD'S COUNT: the caption under the strip's heading is a
+  // statement about the kitchen, and the Dashboard ("4 items need
+  // attention") and the Alerts screen ("Within 3 days (4)") are statements
+  // about the same kitchen. The count used to be `rescues[0].uses.length` —
+  // how many expiring items the FIRST dish in the strip happens to use — so a
+  // kitchen with four things going off was told it had "something" expiring
+  // while the Dashboard said four. One kitchen, one number.
+  //
+  // WHY IT IS COUNTED HERE AND NOT TAKEN FROM THE STRIP: the strip is a
+  // list of dishes, and which dishes it holds changes with the catalogue
+  // and with what can be cooked. A count of the household's food must not
+  // move when a recipe is added.
+  const expiringSoonCount = useMemo(
+    () => itemsExpiringSoon(stock, settings.expiringSoonDays).length,
+    [stock, settings.expiringSoonDays],
+  );
+
   const planned = countPlanned(mealPlan);
   const plannedDays = countPlannedDays(mealPlan);
   const needs = useMemo(
@@ -562,10 +583,21 @@ export default function MealPlanPage() {
                 and they disagreed — the exact failure commit 3bec8ed set out
                 to kill, left standing in the one line that names the window.
 
+                WHY THE COUNT IS THE HOUSEHOLD'S: it used to be
+                `rescues[0].uses.length` — how many expiring items the FIRST
+                dish in the strip happens to use. A kitchen with four things
+                going off was told "You have something expiring" while the
+                Dashboard said "4 items need attention" and the Alerts screen
+                said "Within 3 days (4)". Three screens, one kitchen, three
+                answers. The count now comes from the same place the other two
+                get theirs, and it is said out loud: the Dashboard shows "4"
+                and the Alerts screen shows "(4)", so this line shows "4" too
+                rather than a bare "something" that can only agree by luck.
+
                 WHY "day" IS SINGULAR AT ONE: the household can narrow the
                 window to a single day, and "the next 1 days" is not a
                 sentence anyone wrote on purpose. */}
-            You have {rescues[0].uses.length === 1 ? 'something' : 'things'} expiring in the next{' '}
+            You have {expiringSoonCount} {expiringSoonCount === 1 ? 'thing' : 'things'} expiring in the next{' '}
             {settings.expiringSoonDays} {settings.expiringSoonDays === 1 ? 'day' : 'days'}.
           </p>
           <div ref={catFadeRef} className="scroll-fade-x flex gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
