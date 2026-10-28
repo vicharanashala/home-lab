@@ -23,9 +23,9 @@ import { CATEGORY_LIST } from '../utils/categories';
 import { useScrollFade } from '../hooks/useScrollFade';
 import type { CategoryId, StockItem, StockLocation } from '../types';
 import { EmptyState } from '../components/EmptyState';
-import { daysUntil } from '../utils/date';
+import { expiryBucket } from '../utils/date';
 
-type StatusFilter = 'all' | 'low' | 'expiring';
+type StatusFilter = 'all' | 'low' | 'expiring' | 'expired';
 
 export function StockPage() {
   const { stock, settings } = useStore();
@@ -37,17 +37,45 @@ export function StockPage() {
   const [openAddLocation, setOpenAddLocation] = useState<StockLocation>('fridge');
   const [editing, setEditing] = useState<StockItem | null>(null);
 
-  const expiringSoon = useMemo(() => {
-    const soon = settings.expiringSoonDays;
-    return stock.filter((it) => {
-      // Use the project-wide helper so timezone math matches the rest of the app.
-      // `new Date(iso)` parses 'yyyy-MM-dd' as UTC midnight; differenceInCalendarDays
-      // converts both sides to local calendar dates so a date in IST doesn't shift
-      // half a day earlier the way raw millisecond math would.
-      const days = daysUntil(it.expiryDate);
-      return days !== null && days <= soon;
-    });
-  }, [stock, settings.expiringSoonDays]);
+  // WHY TWO SETS AND NOT ONE: "Expiring" means the date has NOT passed yet.
+  // An item whose date has passed has EXPIRED — food that has gone off — and
+  // this filter used to hold both of them:
+  //
+  //     const days = daysUntil(it.expiryDate);
+  //     return days !== null && days <= soon;   // <- a negative day passes too
+  //
+  // so the chip said "Expiring (3)" about a kitchen holding one mango that
+  // went off last week, and tapping it listed that mango under a heading that
+  // says it is not expiring. The empty state under that same filter said
+  // "Nothing expiring soon" about a list holding something that expired last
+  // week.
+  //
+  // WHY expiryBucket AND NOT COUNTING DAYS HERE: the Alerts screen, the
+  // Dashboard, the stock rows and House Bot all ask this same question, and
+  // `expiryBucket` is where the answer is written down — including the local
+  // calendar, so a date in IST does not shift half a day earlier the way raw
+  // millisecond math would. Asking it here instead of counting days here is
+  // what keeps the two from drifting apart again.
+  const expiringSoon = useMemo(
+    () =>
+      stock.filter(
+        (it) => expiryBucket(it.expiryDate, settings.expiringSoonDays) === 'soon',
+      ),
+    [stock, settings.expiringSoonDays],
+  );
+
+  // Food that has gone off. It is kept in a list of its own so it does not
+  // have to be counted as "expiring" — and so it stays reachable: taking it
+  // out of the expiring filter without giving it a home of its own would
+  // take it off the screen the person opens to find it. The Alerts screen
+  // splits its list the same way, into "Expired (n)" and "Within n days (n)".
+  const expired = useMemo(
+    () =>
+      stock.filter(
+        (it) => expiryBucket(it.expiryDate, settings.expiringSoonDays) === 'expired',
+      ),
+    [stock, settings.expiringSoonDays],
+  );
 
   const lowCount = useMemo(
     () => stock.filter((it) => it.quantity <= it.lowStockThreshold).length,
@@ -69,6 +97,9 @@ export function StockPage() {
     [expiringSoon],
   );
 
+  // The same, for the food that has already gone off.
+  const expiredIds = useMemo(() => new Set(expired.map((it) => it.id)), [expired]);
+
   const filtered = useMemo(() => {
     let list = stock;
     if (locationFilter !== 'all') {
@@ -76,6 +107,7 @@ export function StockPage() {
     }
     if (statusFilter === 'low') list = list.filter((it) => it.quantity <= it.lowStockThreshold);
     if (statusFilter === 'expiring') list = list.filter((it) => expiringSoonIds.has(it.id));
+    if (statusFilter === 'expired') list = list.filter((it) => expiredIds.has(it.id));
     if (category !== 'all') list = list.filter((it) => it.category === category);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -86,7 +118,7 @@ export function StockPage() {
       );
     }
     return [...list].sort((a, b) => a.name.localeCompare(b.name));
-  }, [stock, statusFilter, locationFilter, category, search, expiringSoonIds]);
+  }, [stock, statusFilter, locationFilter, category, search, expiringSoonIds, expiredIds]);
 
   const catFadeRef = useScrollFade<HTMLDivElement>();
 
@@ -145,6 +177,7 @@ export function StockPage() {
             { v: 'all' as const, label: 'All status' },
             { v: 'low' as const, label: `Low (${lowCount})`, danger: true },
             { v: 'expiring' as const, label: `Expiring (${expiringSoon.length})`, warn: true },
+            { v: 'expired' as const, label: `Expired (${expired.length})`, danger: true },
           ]).map((f) => {
             const active = statusFilter === f.v;
             return (
@@ -213,11 +246,14 @@ export function StockPage() {
             icon={
               locationFilter === 'pantry' ? Package :
               statusFilter === 'low' ? CircleCheck :
+              statusFilter === 'expired' ? AlertTriangle :
               statusFilter === 'expiring' ? Snowflake : ShoppingBasket
             }
             title={
               statusFilter === 'low'
                 ? 'Nothing is running low'
+                : statusFilter === 'expired'
+                ? 'Nothing has expired'
                 : statusFilter === 'expiring'
                 ? 'Nothing expiring soon'
                 : locationFilter === 'pantry'
