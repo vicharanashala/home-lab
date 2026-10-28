@@ -552,7 +552,21 @@ export default function MealPlanPage() {
             </h2>
           </div>
           <p className="text-[11px] text-butter-800/80 dark:text-butter-300/80 mb-2.5">
-            You have {rescues[0].uses.length === 1 ? 'something' : 'things'} expiring in the next 3 days.
+            {/* WHY THE WINDOW IS THE HOUSEHOLD'S: this sentence describes the
+                strip above it, and the strip is built from
+                `settings.expiringSoonDays`. The sentence used to say "the next
+                3 days" whatever the household had set, so a household that had
+                widened the window to a week was shown a strip of dishes that
+                rescue seven days of food under a heading that said three. The
+                count and the sentence were two answers to the same question,
+                and they disagreed — the exact failure commit 3bec8ed set out
+                to kill, left standing in the one line that names the window.
+
+                WHY "day" IS SINGULAR AT ONE: the household can narrow the
+                window to a single day, and "the next 1 days" is not a
+                sentence anyone wrote on purpose. */}
+            You have {rescues[0].uses.length === 1 ? 'something' : 'things'} expiring in the next{' '}
+            {settings.expiringSoonDays} {settings.expiringSoonDays === 1 ? 'day' : 'days'}.
           </p>
           <div ref={catFadeRef} className="scroll-fade-x flex gap-2 overflow-x-auto -mx-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {rescues.map((r) => (
