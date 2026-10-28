@@ -3643,6 +3643,30 @@ function expiryWindow(value) {
 }
 
 /**
+ * A count of days, with the word that goes with it.
+ *
+ * WHY THE BRIDGE HAS ITS OWN COPY: `formatDays` lives in
+ * src/utils/date.ts, which is TypeScript the app bundles. The bridge is plain
+ * .mjs run by node, and the tests copy it to a temporary directory, so it
+ * cannot import the app's source. What it has to agree with is the RULE, not
+ * the file: the household can narrow the window to a single day — the
+ * slider's first notch is 1 — and "within 1 days" is not a sentence anyone
+ * wrote on purpose.
+ *
+ * WHY IT MATTERS HERE AND NOT ONLY IN THE APP: this string is what the MODEL
+ * reads. The app's own screens say "within 1 day" while the model is told
+ * "within 1 days", and the model is the half that comes back as the answer.
+ * The two chat routes each build their own copy of the context block, so
+ * both copies need the rule — not one of them.
+ *
+ * @param {number} days the number of days
+ * @returns {string} the number and its word — "1 day", "3 days"
+ */
+function formatDays(days) {
+  return `${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
+/**
  * The day a meal was eaten, as the model reads it.
  *
  * WHY A DATE AND NOT THE RAW NUMBER: a meal log stores when it was eaten
@@ -3821,7 +3845,7 @@ app.post('/api/housebot/chat', async (req, res) => {
       ? stock.slice(0, 80).map(stockContextLine).join('\n')
       : '  (empty)',
     grocery.length ? `GROCERY LIST (${grocery.length} open):\n${grocery.slice(0, 40).map((g) => `  - ${g.name}${g.quantity ? ` x${g.quantity}` : ''}`).join('\n')}` : null,
-    expiringSoon.length ? `EXPIRING SOON (within ${soonWindow} days): ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
+    expiringSoon.length ? `EXPIRING SOON (within ${formatDays(soonWindow)}): ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
     recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map(mealContextLine).join('\n')}` : null,
     recipesBlock,
     webBlock,
@@ -3983,7 +4007,7 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
       ? stock.slice(0, 80).map(stockContextLine).join('\n')
       : '  (empty)',
     grocery.length ? `GROCERY LIST (${grocery.length} open):\n${grocery.slice(0, 40).map((g) => `  - ${g.name}${g.quantity ? ` x${g.quantity}` : ''}`).join('\n')}` : null,
-    expiringSoon.length ? `EXPIRING SOON (within ${soonWindow} days): ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
+    expiringSoon.length ? `EXPIRING SOON (within ${formatDays(soonWindow)}): ${expiringSoon.map((e) => `${e.name} (${e.expires})`).join(', ')}` : null,
     recentMeals.length ? `RECENT MEALS (last ${recentMeals.length}):\n${recentMeals.slice(0, 7).map(mealContextLine).join('\n')}` : null,
     recipesBlock,
     webBlock,
