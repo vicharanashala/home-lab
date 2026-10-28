@@ -64,17 +64,57 @@ export function AlertsPage() {
 
   // The "Within N days" group, from the SHARED rule.
   //
-  // WHY THE SHARED HELPER: the Dashboard's "N items need attention" and the
-  // Meal Plan's "You have N things expiring" are the same question about the
-  // same kitchen, so they are answered by the same function. This screen
-  // keeps its own `expiring` list because it splits that list into an
-  // "Expired (n)" group and a "Within N days (n)" group — expired items are
-  // shown here on purpose, in their own group, and that is the one place in
-  // the app where an expired item may appear under an expiry heading.
+  // WHY THE SHARED HELPER: the Dashboard's "N items need attention", this
+  // screen's own heading and the Meal Plan's "You have N things expiring"
+  // are the same question about the same kitchen, so they are answered by the
+  // same function. This screen keeps its own `expiring` list because it
+  // splits that list into an "Expired (n)" group and a "Within N days (n)"
+  // group — expired items are shown here on purpose, in their own group, and
+  // that is the one place in the app where an expired item may appear under
+  // an expiry heading.
   const soon = useMemo(
     () => itemsExpiringSoon(stock, settings.expiringSoonDays),
     [stock, settings.expiringSoonDays],
   );
+
+  // The sentence under the "Expiring soon" heading.
+  //
+  // WHY IT IS NOT THE SECTION'S TOTAL: this heading is the same heading the
+  // Dashboard's card carries, and both screens are asked the same question —
+  // "how many things are about to go off?". The Dashboard counts the food
+  // whose date has NOT passed and is inside the window. This sentence used to
+  // count the SECTION's total instead, so a kitchen with one mango that went
+  // off three days ago and two things still good for a week was told:
+  //
+  //     the Dashboard's card    "2 items need attention"   (under "Expiring soon")
+  //     this screen's heading   "3 items need attention"   (under "Expiring soon")
+  //
+  // The same heading, the same sentence, two numbers, one kitchen.
+  //
+  // THE REPO HAS ALREADY SETTLED WHICH NUMBER IS RIGHT: commit 892ffce ("Do
+  // not call food that has gone off 'expiring soon'") fixed this exact count
+  // on the Dashboard, commit cd689e6 gave the two sets their OWN counts on
+  // the Stock screen ("Expiring (n)" and "Expired (n)") instead of mixing
+  // them into one number, and commit aef0cde put the shared rule in
+  // `itemsExpiringSoon` so the Dashboard and the Meal Plan would call it.
+  // This sentence was the one left behind.
+  //
+  // WHY THE FOOD THAT HAS GONE OFF IS STILL NAMED: the COUNT is narrowed, not
+  // the food hidden. The card below keeps its own "Expired (n)" group, the
+  // screen's own total still counts it, and the sentence names it as well — so
+  // the screen is never described as holding nothing while it holds
+  // something.
+  const expiringSoonSentence = useMemo(() => {
+    const soonCount = soon.length;
+    const expiredCount = expired.length;
+    const days = settings.expiringSoonDays;
+    const expiringPart =
+      soonCount === 0
+        ? `Nothing expiring in the next ${days} days`
+        : `${soonCount} expiring in the next ${days} days`;
+    const expiredPart = expiredCount === 0 ? '' : `${expiredCount} already gone off`;
+    return expiredPart ? `${expiringPart} · ${expiredPart}` : expiringPart;
+  }, [soon.length, expired.length, settings.expiringSoonDays]);
 
   const addToGrocery = (it: StockItem) => {
     const item = addGrocery({
@@ -244,9 +284,7 @@ export function AlertsPage() {
             <div>
               <h3 className="font-display font-bold text-lg text-sage-900 dark:text-cream-50">Expiring soon</h3>
               <p className="text-xs text-sage-500 dark:text-ink-300">
-                {expiring.length === 0
-                  ? `Nothing expiring in the next ${settings.expiringSoonDays} days`
-                  : `${expiring.length} item${expiring.length === 1 ? '' : 's'} need attention`}
+                {expiringSoonSentence}
               </p>
             </div>
           </div>
