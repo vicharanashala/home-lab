@@ -55,7 +55,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { mkdtempSync, mkdirSync, copyFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, symlinkSync, rmSync, existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,11 +113,48 @@ const mealLog = {
   servings: 2,
 };
 
+// A meal eaten just after midnight, on the LOCAL calendar day.
+//
+// WHY THIS ONE IS HERE: the bridge dated a meal with toISOString(), which is
+// UTC. A meal eaten at 2am in IST is 8:30pm the PREVIOUS day in UTC, so the
+// bridge dated it a day early — the Dashboard showed the meal under today's
+// meals while House Bot was told the meal was eaten the night before, and
+// "what did I eat last night?" had no honest answer. The app dates
+// everything on the local calendar day (src/utils/date.ts: toISODate and
+// daysUntil), so the bridge has to count days the same way.
+//
+// WHY A DIFFERENT DAY FROM THE MEAL ABOVE: so that each assertion pins one
+// meal, and neither can be satisfied by the other's line.
+//
+// The day is built from LOCAL parts, so it is 2am wherever the test runs.
+const EARLY_MEAL_AT = new Date(2026, 9, 19, 2, 0, 0).getTime();
+const EARLY_MEAL_ON = '2026-10-19';
+// What the same instant is called in UTC. Where the machine's clock runs at
+// or ahead of UTC this is the PREVIOUS day, and the block must not use it.
+const EARLY_MEAL_UTC_ON = new Date(EARLY_MEAL_AT).toISOString().slice(0, 10);
+
+const earlyMealLog = {
+  id: 'meal_2',
+  mealType: 'dinner',
+  description: 'Dal and rice',
+  createdAt: EARLY_MEAL_AT,
+};
+
 // The bridge decides what is "expiring soon" by comparing against its own
 // today, so the dates here are relative to the day the test runs. The
 // window is three days, so two days is inside it and sixty days is not.
+//
+// WHY LOCAL: the app writes an expiry date as a LOCAL calendar day —
+// src/utils/date.ts `todayISO()` is `format(new Date(), 'yyyy-MM-dd')` — so
+// the fixture has to be local days too. A UTC day here would be a day the
+// app would never write, and the bridge would be comparing the screen's
+// calendar against a different one.
 const dayMs = 86_400_000;
-const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+const isoDay = (ms) => {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 const SOON_ON = isoDay(Date.now() + 2 * dayMs);
 const LATER_ON = isoDay(Date.now() + 60 * dayMs);
 
@@ -202,6 +239,23 @@ const home = join(work, 'home');
 mkdirSync(home, { recursive: true });
 copyFileSync(join(bridgeDir, 'index.mjs'), join(work, 'index.mjs'));
 copyFileSync(join(bridgeDir, 'openclaw-cli.mjs'), join(work, 'openclaw-cli.mjs'));
+
+// A past conversation, dated the same way the early meal is: on the LOCAL
+// calendar day. The bridge keeps these under HOME/.vision-overwatch, and
+// HOME points at the temporary directory, so this file is the one the bridge
+// copy will read.
+//
+// WHY IT IS HERE: the block dates past conversations too, and it dated them
+// with toISOString() — UTC. A late-night chat with House Bot happened on the
+// local day, and a block that dated the meals locally and the conversations
+// in UTC would show the model two different calendars in one prompt.
+const memoryDir = join(home, '.vision-overwatch');
+mkdirSync(memoryDir, { recursive: true });
+writeFileSync(
+  join(memoryDir, 'housebot-memory.json'),
+  JSON.stringify([{ ts: EARLY_MEAL_AT, summary: 'Asked about using up the milk' }]),
+);
+
 const deps = bridgeDependencies();
 if (deps) symlinkSync(deps, join(work, 'node_modules'));
 
@@ -266,29 +320,66 @@ function section(prompt, headerPrefix) {
   return out.join('\n');
 }
 
-const CONTEXT = { recentMeals: [mealLog], stock };
+/**
+ * The lines of the PAST CONVERSATIONS block.
+ *
+ * WHY NOT `section`: that helper reads the indented lines that start with
+ * "  - ", which is how the meal and stock blocks are written. The memory
+ * block numbers its entries instead — "  [1] (2026-10-19): ..." — so it
+ * needs its own reader.
+ */
+function memorySection(prompt) {
+  const lines = prompt.split('\n');
+  const start = lines.findIndex((l) => l.startsWith('PAST CONVERSATIONS'));
+  if (start === -1) return '';
+  const out = [lines[start]];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (!lines[i].startsWith('  [')) break;
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
+const CONTEXT = { recentMeals: [mealLog, earlyMealLog], stock };
 
 // WHY THIS MESSAGE: the bridge runs a web search for anything that reads as
 // a knowledge question, and the test has no web to search. A message that
 // triggers nothing keeps the test to the one thing it is about.
 const QUESTION = 'my kitchen stock and meals';
 
+/**
+ * Ask one route, and report the local day on either side of the request.
+ *
+ * WHY THE DAY IS CAPTURED TWICE: the bridge names its own "today" in the
+ * LIVE CONTEXT header, and it names it when the request arrives. If the
+ * request straddles local midnight, the bridge's today and the test's today
+ * are two different days and the comparison would fail for a reason that
+ * has nothing to do with the code. Capturing the day on both sides lets the
+ * check stand down when midnight passed under it.
+ *
+ * @returns {Promise<{dayBefore: string, dayAfter: string}>} the days
+ */
 async function askChat() {
+  const dayBefore = isoDay(Date.now());
   const res = await fetch(`http://127.0.0.1:${bridgePort}/api/housebot/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ message: QUESTION, history: [], context: CONTEXT }),
   });
   await res.text();
+  return { dayBefore, dayAfter: isoDay(Date.now()) };
 }
 
 async function askChatStream() {
+  // The same day either side of the request as `askChat` — see the note there.
+  const dayBefore = isoDay(Date.now());
   const res = await fetch(`http://127.0.0.1:${bridgePort}/api/housebot/chat/stream`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ message: QUESTION, history: [], context: CONTEXT }),
   });
   await res.text();
+  return { dayBefore, dayAfter: isoDay(Date.now()) };
 }
 
 /**
@@ -315,8 +406,10 @@ async function stopBridge() {
  *
  * @param {string} label which route is being checked
  * @param {string} prompt the system prompt that route sent the model
+ * @param {{dayBefore: string, dayAfter: string}} days the local day either
+ *   side of the request, so a check can stand down if midnight passed under it
  */
-function checkBlock(label, prompt) {
+function checkBlock(label, prompt, days) {
   const meals = section(prompt, 'RECENT MEALS');
   ok(meals.length > 0, `${label}: the model is sent the recent meals`, meals.slice(0, 120));
   ok(meals.includes(DISH), `${label}: the block names the dish that was eaten`, meals.slice(0, 160));
@@ -335,6 +428,22 @@ function checkBlock(label, prompt) {
     `${label}: the block does not call the dish "meal"`,
     meals.slice(0, 160),
   );
+
+  // The meal eaten just after midnight. It is on a day of its own, so this
+  // can only be satisfied by the right line, and it is the case the bridge's
+  // UTC formatting got wrong.
+  ok(
+    meals.includes(EARLY_MEAL_ON),
+    `${label}: a meal eaten just after midnight is dated on the day the app shows`,
+    meals.slice(0, 200),
+  );
+  if (EARLY_MEAL_UTC_ON !== EARLY_MEAL_ON) {
+    ok(
+      !meals.includes(EARLY_MEAL_UTC_ON),
+      `${label}: the meal is not dated on the UTC day the app never shows`,
+      meals.slice(0, 200),
+    );
+  }
 
   const stockBlock = section(prompt, 'STOCK (');
   ok(
@@ -361,6 +470,39 @@ function checkBlock(label, prompt) {
     `${label}: an item expiring in sixty days is not called expiring soon`,
     soon.slice(0, 160),
   );
+
+  // The block's own "today" is the day the app calls today — the same day
+  // the expiry window above is counted on.
+  //
+  // WHY IT STANDS DOWN WHEN MIDNIGHT PASSED: the bridge named its today
+  // when the request arrived and the test names its today after the answer
+  // came back. If the two straddle local midnight they are a day apart for
+  // a reason that has nothing to do with the code, so the check is skipped
+  // rather than failed.
+  if (days.dayBefore === days.dayAfter) {
+    ok(
+      prompt.includes(`LIVE CONTEXT (${days.dayBefore})`),
+      `${label}: the block's own today is the day the app calls today`,
+      prompt.split('\n').find((l) => l.includes('LIVE CONTEXT')) || '',
+    );
+  }
+
+  // A past conversation is dated on the local day too, so the block shows
+  // the model one calendar rather than two.
+  const memory = memorySection(prompt);
+  ok(memory.length > 0, `${label}: the model is sent the past conversations`, memory.slice(0, 160));
+  ok(
+    memory.includes(EARLY_MEAL_ON),
+    `${label}: a past conversation is dated on the day it happened`,
+    memory.slice(0, 160),
+  );
+  if (EARLY_MEAL_UTC_ON !== EARLY_MEAL_ON) {
+    ok(
+      !memory.includes(EARLY_MEAL_UTC_ON),
+      `${label}: the conversation is not dated on the UTC day the app never shows`,
+      memory.slice(0, 160),
+    );
+  }
 }
 
 // WHY THE TEST IS WRAPPED: the bridge copy is started above, and the
@@ -375,13 +517,13 @@ try {
   } else if (!bridgeUp) {
     ok(false, 'the bridge copy starts', bridgeErr.slice(0, 300));
   } else {
-    await askChat();
+    const chatDays = await askChat();
     await sleep(200);
-    checkBlock('the chat route', lastSystemPrompt());
+    checkBlock('the chat route', lastSystemPrompt(), chatDays);
 
-    await askChatStream();
+    const streamDays = await askChatStream();
     await sleep(200);
-    checkBlock('the streaming route', lastSystemPrompt());
+    checkBlock('the streaming route', lastSystemPrompt(), streamDays);
   }
 } catch (err) {
   failed += 1;

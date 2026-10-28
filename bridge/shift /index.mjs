@@ -2839,12 +2839,17 @@ function appendMemory(summary) {
 function memoryBlock() {
   const arr = readMemory().slice(-MEMORY_INJECT);
   if (arr.length === 0) return null;
+  // WHY THE LOCAL DAY: the model reads these dates to judge how recent a
+  // conversation was, and a conversation had a late-night chat with House Bot
+  // happened on the local day — not on the previous day in UTC. A block that
+  // dated the meals locally and the conversations in UTC would show the model
+  // two different calendars in one prompt. See `localDay`.
   return (
     `PAST CONVERSATIONS (last ${arr.length}, oldest first):\n` +
     arr
       .map(
         (m, i) =>
-          `  [${i + 1}] (${new Date(m.ts).toISOString().slice(0, 10)}): ${m.summary}`,
+          `  [${i + 1}] (${localDay(new Date(m.ts))}): ${m.summary}`,
       )
       .join('\n')
   );
@@ -3556,6 +3561,39 @@ app.post('/api/minimax/read-recipe', upload.single('image'), async (req, res) =>
 });
 
 /**
+ * A day, the way the app counts days.
+ *
+ * WHY LOCAL AND NOT UTC: the app dates everything on the LOCAL calendar day.
+ * src/utils/date.ts formats a date with date-fns `format(d, 'yyyy-MM-dd')`
+ * and counts with `differenceInCalendarDays`; the Dashboard renders a meal
+ * with `format(new Date(m.createdAt), 'MMM d, h:mm a')`. All of those are
+ * local. The bridge was using `toISOString()`, which is UTC — and a meal
+ * eaten at 2am in IST is 8:30pm the PREVIOUS day in UTC. So the bridge
+ * dated the meal a day early, named the wrong day in the block's own
+ * "LIVE CONTEXT (today)" header, and counted the expiry window on a
+ * different calendar than the Alerts screen counts it on.
+ *
+ * WHY IT MATTERS IN THIS REPO SPECIFICALLY: src/utils/expiryRecipes.ts says
+ * it in so many words — "the two must agree, or the same item reads
+ * 'expires tomorrow' on one screen and 'expires today' on another." The
+ * Alerts screen counts days locally, so this block has to count them the
+ * same way.
+ *
+ * WHY A HELPER AND NOT INLINE FORMATTING: a day is written in four places
+ * here — the meal, the expiry window, the block's own header and the past
+ * conversations — and a rule written out four times is a rule that can
+ * disagree with itself.
+ *
+ * @param {Date} date the instant to name
+ * @returns {string} the local calendar day, as YYYY-MM-DD
+ */
+function localDay(date = new Date()) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
  * The day a meal was eaten, as the model reads it.
  *
  * WHY A DATE AND NOT THE RAW NUMBER: a meal log stores when it was eaten
@@ -3568,13 +3606,16 @@ app.post('/api/minimax/read-recipe', upload.single('image'), async (req, res) =>
  * stock expiry dates are ISO day strings), and a day is all the model can
  * use anyway.
  *
+ * WHY IT IS THE LOCAL DAY: the day the owner sees the meal on is the local
+ * day, so that is the day the model has to be given. See `localDay`.
+ *
  * @param {unknown} value the meal log's timestamp
  * @returns {string} the day, or an honest "no day" when there is none
  */
 function mealDay(value) {
   const t = typeof value === 'string' ? Date.parse(value) : Number(value);
   if (!Number.isFinite(t) || t <= 0) return 'unknown day';
-  return new Date(t).toISOString().slice(0, 10);
+  return localDay(new Date(t));
 }
 
 /**
@@ -3688,7 +3729,7 @@ app.post('/api/housebot/chat', async (req, res) => {
     ? settings.allergies.filter(Boolean).map(String)
     : [];
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
   const expiringSoon = stock
     .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
     .filter((s) => s.expires && s.expires <= addDays(today, 3));
@@ -3839,7 +3880,7 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
       ? settings.allergies.filter(Boolean).map(String)
       : [];
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
   const expiringSoon = stock
     .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
     .filter((s) => s.expires && s.expires <= addDays(today, 3));
