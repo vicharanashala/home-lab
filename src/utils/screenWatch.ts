@@ -1,5 +1,5 @@
 /**
- * Watching a tab, and telling House Bot what is on it.
+ * Watching a window, and telling House Bot what is on it.
  *
  * WHAT THIS IS FOR
  * The Digital stores page opens the real store — amazon.in, jiomart.com —
@@ -52,7 +52,7 @@ export type WatchMessage =
 /**
  * How wide a captured frame is.
  *
- * WHY NOT THE FULL SIZE: a shared tab is 1200-2000 pixels wide, and a
+ * WHY NOT THE FULL SIZE: a shared window is 1200-2000 pixels wide, and a
  * screenshot of that is far more than the model needs to say what is on the
  * screen. 900 pixels wide is plenty to read a product name and a price, and
  * it is a fraction of the bytes to send.
@@ -143,16 +143,16 @@ export function grabFrame(
 
 /**
  * The store's page is a different site, so the share has to be asked for
- * against the BROWSER's picker, and the person picks the tab.
+ * against the BROWSER's picker, and the person picks the window.
  *
  * WHY THE PICKER IS THE ONLY WAY IN: the browser decides what can be
  * shared. A page cannot ask for "the Amazon Fresh tab" by name — it asks
- * for a screen and the person chooses. That is the browser's privacy
+ * for a surface and the person chooses. That is the browser's privacy
  * promise, and this app does not get to pick around it.
  *
  * So the flow is: open the store in a tab, then ask. The person picks the
- * tab they just opened, and the app never learns whether they picked that
- * one or another.
+ * window the store opened in, and the app never learns which window that
+ * was.
  */
 export const SHARE_PICKER_HINT =
   'Chrome will ask whether you want to share your entire window. Say yes, and House Bot can see it.';
@@ -206,19 +206,77 @@ export const SHARE_MONITOR_SURFACES = 'exclude';
 /**
  * Whether the browser may offer the page that is asking, in the picker's list.
  *
- * WHY IT IS 'include': the person is told the app is sharing a tab, and the
- * picker can show them which one they are on. Hiding the page that is asking
- * makes the picker look like it is offering a choice the app never made.
+ * WHY IT IS 'include': the person is told the app is sharing a window, and
+ * the picker can show them which one they are on. Hiding the page that is
+ * asking makes the picker look like it is offering a choice the app never
+ * made.
  *
  * WHY IT IS A SEPARATE NAME AND NOT A PART OF SHARE_SURFACE: they are two
  * different questions to two different parts of the browser. `SHARE_SURFACE`
- * says WHICH KIND of thing to capture — a tab, not a screen — and goes in the
+ * says WHICH KIND of thing to capture — a window, not a screen — and goes in the
  * video constraints, where the browser looks for it. This says whether the
  * page doing the asking may appear in the list at all, and goes at the TOP
  * LEVEL of the options, because that is where the browser looks for it.
  */
 export const SHARE_SELF_BROWSER_SURFACE = 'include';
 
+/**
+ * What the person reads while the browser's picker is open.
+ *
+ * WHY IT IS ONE SENTENCE AND NOT TWO: the hint used to be half a sentence,
+ * with the screen supplying the other half — and the two halves disagreed.
+ * The hint said "your entire window" and the screen finished the sentence
+ * with "on that tab". The sentence that says what is about to happen to the
+ * person is written once, here, where the surface it names is decided.
+ */
+export const SHARE_ASKING_TEXT = `${SHARE_PICKER_HINT} HomeHub will then be able to answer questions about what is on that window.`;
+
+/**
+ * What the stores screen says while the share is running.
+ *
+ * WHY THE WINDOW AND NOT THE TAB: the share is of the WINDOW — the store's
+ * page and HomeHub's own tab, side by side. Calling it a tab was a promise
+ * the app did not keep: the person was told one tab was being shared, and
+ * the browser then asked them for a window, which holds every tab in it.
+ *
+ * WHY THE STORE'S NAME IS STILL HERE: the name says WHICH store the person
+ * is looking at. The window is not named — the store's tab is in it.
+ *
+ * @param store the store the person pressed, if there is one
+ * @returns {string} the line to show
+ */
+export function shareRunningText(store: string | null): string {
+  return store ? `Sharing the window with ${store}` : 'Sharing the window';
+}
+
+/**
+ * What House Bot says when it can see the shared window.
+ *
+ * WHY IT IS HERE AND NOT IN THE PAGE: it is a promise about what the bot
+ * can see, and the browser's own answer to that promise is `SHARE_SURFACE`
+ * above. Written in two places, the two drifted apart — the chip said
+ * "tab" while the app had been asking for a window for hours.
+ *
+ * @param store the store the share was started for, if there is one
+ * @returns {string} the chip to show
+ */
+export function shareVisibleText(store: string | null): string {
+  return store
+    ? `I can see the window with ${store}`
+    : 'I can see your shared window';
+}
+
+/**
+ * What the stores screen says before anything has been shared.
+ *
+ * WHY IT IS A CONSTANT AND NOT MARKUP IN THE PAGE: this is the sentence
+ * that says what is about to be shared, and it has to say the same thing the
+ * browser is about to be asked for. It said "the tab" while the app asked
+ * for a window — which understated what the person was agreeing to, on the
+ * one screen where the agreement is made.
+ */
+export const SHARE_CONSENT_TEXT =
+  'Pressing a store opens that store’s own site and asks whether HomeHub may share this window, so House Bot can talk about what is on it. Nothing is shared until you say yes, and the browser’s “Stop sharing” always works.';
 
 /**
  * What the watching tab knows.
@@ -374,7 +432,7 @@ export function reduceWatch(
   // that throttles a background tab's timers, or a frame that was merely
   // late, both look the same from here. So the name is kept, and a watch
   // that comes back to life knows which store it is watching again instead
-  // of saying it can see "a shared tab".
+  // of saying it can see "a shared window".
   //
   // WHY IT IS NOT LEAKED TO THE OTHER TABS: nothing here leaves the device,
   // and the name is only ever shown while a frame is on screen beside it.
@@ -410,7 +468,7 @@ export function sharerReply(
  *
  * WHY THE KIND TRAVELS WITH THE PICTURE: the app sends two different
  * pictures to House Bot — a photo of food the person took, and a frame of
- * the store tab they are shopping in. The bridge has to answer them
+ * the window they are shopping in. The bridge has to answer them
  * differently, and it cannot tell them apart on its own: both arrive in the
  * same field, as base64 with a media type. So the app says which it is.
  *
@@ -419,7 +477,7 @@ export function sharerReply(
  * food is not a slightly worse answer — it is the answer to a different
  * question, and the person asked about the screen in front of them.
  *
- * WHY 'screen' AND NOT 'store': the frame is whatever tab was shared, and
+ * WHY 'screen' AND NOT 'store': the frame is whatever window was shared, and
  * the name says where the picture came from, not what it shows. Which store
  * it is is named separately, and only for the person's benefit.
  */

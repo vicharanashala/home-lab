@@ -5,7 +5,7 @@ import { ShoppingListPanel } from '../components/ShoppingListPanel';
 import { useStore } from '../store/useStore';
 import { useScreenSharer } from '../hooks/useScreenWatch';
 import { DIGITAL_STORES, DIGITAL_STORE_KIND_LABEL } from '../utils/digitalStores';
-import { SHARE_PICKER_HINT } from '../utils/screenWatch';
+import { SHARE_ASKING_TEXT, SHARE_CONSENT_TEXT, shareRunningText } from '../utils/screenWatch';
 
 /**
  * The online stores you can order from, with the shopping list beside them.
@@ -24,18 +24,23 @@ import { SHARE_PICKER_HINT } from '../utils/screenWatch';
  * PRESSING A STORE OPENS THE REAL SITE AND OFFERS TO SHARE IT
  * The store's own site is a different site, and it is not ours to put inside
  * this app. So pressing a store opens the real thing, in a new tab, and then
- * asks the browser whether HomeHub may see that tab.
+ * asks the browser whether HomeHub may see the window that tab opened in.
  *
  * WHY ASK AT ALL: because House Bot can then talk about what is on the
  * screen. "What is this?" and "how much is it?" are the questions a person
  * asks while looking at a product, and a bot that cannot see the screen
  * cannot answer them.
  *
- * THE PERSON PICKS THE TAB, NOT THE APP. The browser decides what can be
- * shared, and this app does not get to pick around that: the browser's own
- * picker opens, and the person chooses "Just this tab" and the store they
- * just opened. If they say no, the store still opens and nothing else
- * happens.
+ * THE PERSON PICKS THE WINDOW, NOT THE APP. The browser decides what can
+ * be shared, and this app does not get to pick around that: the browser's own
+ * picker opens, and the person chooses the window their store just opened in.
+ * If they say no, the store still opens and nothing else happens.
+ *
+ * WHY THE WINDOW AND NOT JUST THE STORE'S TAB: the screen is more than the
+ * store's page. It is the store's page AND this app's own tab, side by side,
+ * so the question can be asked while the thing being asked about is still in
+ * view. Every word this page shows the person says "window" for that reason —
+ * a page that said "tab" would be promising less than the browser asks for.
  *
  * HOUSE BOT NEEDS A TAB OF ITS OWN
  * The share belongs to this page, so this page is the share. House Bot has to
@@ -57,10 +62,10 @@ export function DigitalStoresPage() {
   /**
    * Open the store, and offer to share it.
    *
-   * The tab is opened FIRST, because the browser's picker lists the tabs
-   * that can be shared and the person has to be able to pick the store they
-   * just opened. The share is asked for in the same click, because the
-   * browser only allows a screen share to be asked for in response to
+   * The tab is opened FIRST, because the browser's picker lists the windows
+   * that can be shared and the person has to be able to pick the one the
+   * store just opened in. The share is asked for in the same click, because
+   * the browser only allows a screen share to be asked for in response to
    * something the person did.
    */
   const openAndWatch = (id: string, name: string, url: string) => {
@@ -142,8 +147,7 @@ export function DigitalStoresPage() {
               <p className="rounded-xl border border-sage-200 dark:border-ink-700 bg-white dark:bg-ink-800 px-3 py-2.5 text-[11px] text-sage-600 dark:text-ink-300 leading-relaxed flex items-start gap-2">
                 <Loader2 size={13} className="shrink-0 mt-0.5 animate-spin" />
                 <span>
-                  {SHARE_PICKER_HINT} HomeHub will then be able to answer
-                  questions about what is on that tab.
+                  {SHARE_ASKING_TEXT}
                 </span>
               </p>
             )}
@@ -153,7 +157,7 @@ export function DigitalStoresPage() {
                 <MonitorPlay size={13} className="shrink-0 mt-0.5 text-sage-600 dark:text-sage-300" />
                 <div className="flex-1 min-w-0">
                   <p className="text-[11px] font-semibold text-sage-800 dark:text-cream-100">
-                    Sharing the {share.state.label} tab
+                    {shareRunningText(share.state.label)}
                   </p>
                   <p className="text-[11px] text-sage-600 dark:text-ink-300 mt-0.5 leading-relaxed">
                     {share.state.sentFrame
@@ -188,10 +192,7 @@ export function DigitalStoresPage() {
 
             <p className="text-[11px] text-sage-500 dark:text-ink-400 leading-relaxed flex items-start gap-1.5">
               <Globe size={12} className="shrink-0 mt-0.5" />
-              Pressing a store opens that store’s own site and asks whether
-              HomeHub may share the tab, so House Bot can talk about what is on
-              it. Nothing is shared until you say yes, and the browser’s
-              “Stop sharing” always works.
+              {SHARE_CONSENT_TEXT}
             </p>
           </section>
 

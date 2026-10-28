@@ -17,7 +17,7 @@ import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhotoAttachButton, AttachedImageChip, usePhotoAttach } from '../components/PhotoAttach';
 import { useScreenWatcher } from '../hooks/useScreenWatch';
-import { imagePayloadFor } from '../utils/screenWatch';
+import { imagePayloadFor, shareVisibleText } from '../utils/screenWatch';
 import { useVoice } from '../hooks/useVoice';
 
 type Msg = {
@@ -1855,7 +1855,7 @@ export function HouseBotPage() {
           {!attach.image && screen.watching && screen.frame && (
             <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-lg bg-sage-50 dark:bg-sage-900/30 px-2 py-1 text-[10px] font-semibold text-sage-700 dark:text-sage-200">
               <MonitorPlay size={11} />
-              I can see your {screen.label ?? 'shared'} tab
+              {shareVisibleText(screen.label)}
             </span>
           )}
           <div className="flex items-end gap-2 flex-1 min-w-0">

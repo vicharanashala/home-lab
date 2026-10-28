@@ -169,9 +169,10 @@ export function useScreenSharer() {
   /**
    * Ask the browser for a share, and start watching it.
    *
-   * WHY THE TAB IS OPENED FIRST: the browser's picker lists the tabs that
-   * can be shared, and the person has to pick the store's tab. If the store
-   * is not open yet, it is not in the list to pick.
+   * WHY THE STORE IS OPENED FIRST: the browser's picker lists the windows
+   * that can be shared, and the person picks the one the store opened in. If
+   * the store is not open yet, the window they would share is not showing it,
+   * and there is nothing to ask about.
    *
    * WHY getDisplayMedia IS STILL CALLED IN THE SAME HANDLER: the browser
    * only allows a screen share to be asked for in response to something the
@@ -226,13 +227,13 @@ export function useScreenSharer() {
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: {
             frameRate: 5,
-            // ASK FOR A TAB, NOT THE SCREEN.
+            // ASK FOR A WINDOW, NOT THE SCREEN.
             //
             // Chrome opens its picker on "Entire screen" unless the page says
             // otherwise, and the whole screen holds the person's bank and
-            // their messages, not just the store. Saying "browser" opens
-            // the picker on "Chrome tab", where the person picks the one tab
-            // they mean.
+            // their messages, not just the store. Saying "window" opens the
+            // picker on the window, where the person picks the one their
+            // store is in — the store's page and this app's tab, side by side.
             //
             // WHAT IT DOES NOT DO: it does not take the whole screen AWAY.
             // MDN is plain that this constraint "has no effect on what the
