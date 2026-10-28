@@ -337,22 +337,26 @@ console.log("\na picture from another store does not keep a watch alive");
 }
 
 
-console.log('\nthe browser is asked for a TAB, not the whole screen');
+console.log('\nthe browser is asked for the WINDOW, so Chrome asks about the window');
 {
   // WHY THIS MATTERS: Chrome opens its picker on "Entire screen" unless the
-  // page says otherwise, and the whole screen holds the person's bank and
-  // their messages, not just the store. Saying "browser" opens the picker on
-  // "Chrome tab", where the person picks the one tab they mean — which is
-  // what the example of the picker showed.
-  ok(SHARE_SURFACE === 'browser', 'the surface asked for is a browser tab', SHARE_SURFACE);
+  // page says otherwise. Asking for a window by name means Chrome's own
+  // question — "would you like to share your entire window?" — is about the
+  // thing that is actually wanted, and the person is told what they are
+  // agreeing to before they agree to it.
+  //
+  // The whole window and not one tab, because the screen is more than the
+  // store's page: it is the store AND the app's own tab, side by side, so
+  // the question can be asked while the thing being asked about is in view.
+  ok(SHARE_SURFACE === 'window', 'the surface asked for is a window', SHARE_SURFACE);
   ok(
-    /Chrome tab/.test(SHARE_PICKER_HINT) && /Select a tab to share/.test(SHARE_PICKER_HINT),
-    'the hint uses the words the picker actually shows',
+    /entire window/i.test(SHARE_PICKER_HINT),
+    'the hint says what the person is agreeing to share',
     SHARE_PICKER_HINT,
   );
   ok(
-    !/just this tab/i.test(SHARE_PICKER_HINT),
-    'and not another browser\'s wording',
+    !/just this tab/i.test(SHARE_PICKER_HINT) && !/Chrome tab/.test(SHARE_PICKER_HINT),
+    'and not the wording of a different choice',
     SHARE_PICKER_HINT,
   );
 }

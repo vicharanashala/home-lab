@@ -834,8 +834,8 @@ console.log('\nthe share asks the browser the question the browser answers');
   const monitorBuriedInVideo = asked?.video?.monitorTypeSurfaces;
 
   ok(
-    surface === 'browser',
-    'the picker is told a browser tab is what the app wants',
+    surface === 'window',
+    'the picker is told a WINDOW is what the app wants, so Chrome asks about the window',
     `displaySurface: ${String(surface)}`,
   );
   ok(

@@ -155,36 +155,39 @@ export function grabFrame(
  * one or another.
  */
 export const SHARE_PICKER_HINT =
-  'Choose “Chrome tab”, then “Select a tab to share”, and pick the store you just opened.';
+  'Chrome will ask whether you want to share your entire window. Say yes, and House Bot can see it.';
 
 /**
- * The surface the app asks the browser for.
+ * The surface the app asks the browser for: a WINDOW.
  *
- * WHY A TAB AND NOT THE WHOLE SCREEN: the whole screen would show the
- * person's bank, their messages and everything else they have open, and the
- * model would be sent all of it. A tab is one page of one store, which is
- * the thing that is actually being asked about.
+ * WHY THE WHOLE WINDOW AND NOT ONE TAB: the person sharing wants House Bot
+ * to see what is on the screen, and the screen is more than the store's
+ * page. It is the store's page AND the app's own tab, side by side — so
+ * the question can be asked while the thing being asked about is still in
+ * view, rather than the person having to keep switching back and forth
+ * between a tab they are reading and a tab they are talking in.
  *
  * WHY IT IS NAMED EXPLICITLY: Chrome opens its picker on "Entire screen"
- * unless the page says otherwise, so without this the person is offered a
- * choice that is far bigger than the app wants, and the share they end up
- * granting is one they did not mean to give.
+ * unless the page says otherwise. Asking for a window by name means
+ * Chrome's own question — "would you like to share your entire window?" —
+ * is about the thing that is actually wanted, and the person is told what
+ * they are agreeing to before they agree to it.
  *
- * WHAT IT DOES NOT DO: it does not take the whole screen AWAY. This is a
+ * WHAT IT DOES NOT DO: it does not take the other screens away. This is a
  * PREFERENCE, not a limit — MDN is plain that the constraint "has no effect
  * on what the user can choose to share", so the browser may use it to put
- * the tab section in front of the person and the screens stay in the picker
- * either way. The option that actually removes them is below.
+ * the window section in front of the person and the screens stay in the
+ * picker either way. The option that actually removes them is below.
  */
-export const SHARE_SURFACE = 'browser';
+export const SHARE_SURFACE = 'window';
 
 /**
  * Whether the browser offers WHOLE SCREAMS in the picker at all.
  *
  * WHY IT IS 'exclude': the whole screen holds the person's bank, their
  * messages and everything else they have open, and the model would be sent
- * all of it. The thing being asked about is one page of one store, so the
- * app does not offer the screen at all.
+ * all of it. What is wanted is the browser window — the store and the app
+ * side by side — so the other screens are not offered at all.
  *
  * WHY IT IS NEEDED AND NOT ONLY `SHARE_SURFACE`: `SHARE_SURFACE` says which
  * kind of surface the app WANTS; this is the one that decides which kinds
