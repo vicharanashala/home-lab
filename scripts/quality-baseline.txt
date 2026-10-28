@@ -33,7 +33,6 @@ src/pages/MealPlan.tsx TS6133 'suggestCategory' is declared but its value is nev
 src/pages/Settings.tsx TS6133 'force' is declared but its value is never read.
 src/pages/Settings.tsx TS6133 'scheduleEndOfDayReminder' is declared but its value is never read.
 src/pages/Settings.tsx TS6196 'ThemeMode' is declared but never used.
-src/pages/Stock.tsx TS6133 'AlertTriangle' is declared but its value is never read.
 src/pages/Stores.tsx TS6133 'Languages' is declared but its value is never read.
 src/pages/Stores.tsx TS6133 'Search' is declared but its value is never read.
 src/pages/Stores.tsx TS6133 'SettingsIcon' is declared but its value is never read.
