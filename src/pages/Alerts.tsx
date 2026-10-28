@@ -18,7 +18,28 @@ import type { StockItem } from '../types';
 export function AlertsPage() {
   const { stock, settings, updateSettings, addGrocery, toast } = useStore();
 
-  const [soonDays, setSoonDays] = useState(settings.expiringSoonDays);
+  // WHY THE SLIDER FOLLOWS THE HOUSEHOLD: the window is the household's
+  // number, not this screen's. The list under this slider reads
+  // `settings.expiringSoonDays`, and the household can change that number
+  // from another tab — the store adopts the whole state another tab wrote —
+  // or from the Settings screen. A local COPY of the number would then be a
+  // number the household no longer has: the slider would read one thing
+  // while the heading under it read another, and the release and blur
+  // handlers would write the old number straight back over the new one.
+  //
+  // WHY IT IS A DRAFT AND NOT A COPY: the draft holds only the number the
+  // person is dragging RIGHT NOW, and it is dropped the moment that number
+  // is written. Everything else is read from the setting, so the slider
+  // cannot drift away from the household's answer — and there is no local
+  // number left for a stale write to carry.
+  const [draft, setDraft] = useState<number | null>(null);
+  const soonDays = draft ?? settings.expiringSoonDays;
+
+  /** Write the window the household chose, and stop drafting. */
+  const commitWindow = (days: number) => {
+    updateSettings({ expiringSoonDays: days });
+    setDraft(null);
+  };
 
   const lowStock = useMemo(() => {
     return [...stock]
@@ -99,11 +120,18 @@ export function AlertsPage() {
               min={1}
               max={14}
               value={soonDays}
-              onChange={(e) => setSoonDays(Number(e.target.value))}
-              onMouseUp={() => updateSettings({ expiringSoonDays: soonDays })}
-              onTouchEnd={() => updateSettings({ expiringSoonDays: soonDays })}
-              onKeyUp={() => updateSettings({ expiringSoonDays: soonDays })}
-              onBlur={() => updateSettings({ expiringSoonDays: soonDays })}
+              onChange={(e) => setDraft(Number(e.target.value))}
+              onMouseUp={() => commitWindow(soonDays)}
+              onTouchEnd={() => commitWindow(soonDays)}
+              onKeyUp={() => commitWindow(soonDays)}
+              // WHY THE BLUR WRITES ONLY A PENDING DRAG: a blur with nothing
+              // pending has nothing to say — the setting already holds the
+              // number the slider shows. Writing it again would be a no-op
+              // at best, and at worst a stale number put back over a window
+              // the household has since changed.
+              onBlur={() => {
+                if (draft !== null) commitWindow(draft);
+              }}
               className="flex-1 accent-sage-600"
             />
             <div className="rounded-xl bg-sage-100 dark:bg-ink-700 text-sage-800 dark:text-cream-50 font-bold px-3 py-1.5 min-w-[64px] text-center">
