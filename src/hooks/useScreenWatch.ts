@@ -165,6 +165,15 @@ export function useScreenSharer() {
    */
   const stop = useCallback(() => {
     attemptRef.current += 1;
+    // The timer that opens the store if the browser never answers must not
+    // outlive the Stop either: the attempt it belonged to is over, and the
+    // person who pressed Stop did not ask for a store to open a moment
+    // later. The page going away already says this; Stop says the same
+    // thing, only the person says it.
+    if (fallbackRef.current !== null) {
+      clearTimeout(fallbackRef.current);
+      fallbackRef.current = null;
+    }
     endCurrentShare();
   }, [endCurrentShare]);
 
@@ -217,7 +226,7 @@ export function useScreenSharer() {
       // capture running that nothing in the app holds.
       let granted: MediaStream | null = null;
 
-      // THE STORE IS OPENED EXACTLY ONCE, however this ends.
+      // THE STORE IS OPENED AT MOST ONCE, and only while the attempt lives.
       //
       // It is opened once the browser has answered, and also after a few
       // seconds in case the answer never comes — a person who walks away
@@ -226,6 +235,28 @@ export function useScreenSharer() {
       const openTheStore = () => {
         if (storeOpened) return;
         storeOpened = true;
+        // WHY THE ATTEMPT IS CHECKED HERE AND NOT AT EACH CALL SITE: the
+        // store is opened from three places — the browser's answer, the
+        // refusal, and the fallback timer — and the attempt can die between
+        // the question and the answer. The person pressed Stop, or the page
+        // went away, and the store opened anyway:
+        //
+        //     the person presses Stop, then dismisses Chrome's picker
+        //       -> a store opens in a tab, after the person said stop
+        //
+        // The attempt number is the hook's own answer to "is this still the
+        // question the page is asking?", and every OTHER side effect of the
+        // answer already asks it — the capture is given back, no frame timer
+        // is left running, the other tabs are not told a share is live. The
+        // store was the one side effect that did not, and a store opening
+        // after the person has gone is worse than a store that did not open:
+        // the person is left with a tab they did not ask for, and nothing on
+        // screen says it is there. They can always ask for the store again.
+        //
+        // AND WHY IT MATTERS WHEN A SECOND STORE IS ASKED FOR: the older
+        // attempt's store would open as well, and only the newer one was
+        // asked for. One store, the one the person asked for last.
+        if (attemptRef.current !== attempt) return;
         try { openTab(); } catch { /* the popup was blocked */ }
       };
       //

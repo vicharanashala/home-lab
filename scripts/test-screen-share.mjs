@@ -29,6 +29,7 @@
  *   - does the page tell the other tabs when the share is over?
  *   - does a capture granted after the page has gone away get given back?
  *   - does a capture the browser granted get given back when the share fails?
+ *   - does the store stay shut when the attempt has been abandoned?
  *
  * WHY A FAKE REACT INSTEAD OF A BROWSER: the rule is about what the page
  * holds on to, and what it holds on to is decided by the hook. A fake
@@ -1014,6 +1015,194 @@ console.log('\nthe store opens even when the browser refuses the share');
     'the person asked for a STORE, so the store opens',
     order.join(' then '),
   );
+}
+
+console.log('\nthe store stays shut when the attempt has been abandoned');
+{
+  // WHY THIS TEST EXISTS
+  //
+  // The store is opened from three places — the browser's answer, the
+  // refusal, and the fallback timer that opens it when the browser never
+  // answers. And the attempt can die between the question and the answer:
+  // the person presses Stop, or the page goes away. The store opened anyway:
+  //
+  //     the person presses Stop, then dismisses Chrome's picker
+  //       ->  a store opens in a tab, after the person said stop
+  //
+  // Every OTHER side effect of that answer already asks whether the attempt
+  // is still alive — the capture is given back, no frame timer is left
+  // running, the other tabs are not told a share is live (see "the person
+  // stops the share while the picker is open" above). The store was the one
+  // side effect that did not ask, and the hook's own rule says what should
+  // happen when it does:
+  //
+  //     "a store opening in a tab after the person has gone is worse than
+  //      a store that did not open"
+  //
+  // — the comment that clears the fallback timer when the page goes away.
+  // The person is left with a tab they did not ask for, and nothing on screen
+  // says it is there. They can always ask for the store again.
+
+  console.log('\n  and the person presses Stop, then dismisses the picker');
+  {
+    reset();
+    const streams = [];
+    installBrowser(streams);
+
+    let refuse;
+    navigator.mediaDevices.getDisplayMedia = () =>
+      new Promise((_resolve, reject) => {
+        refuse = reject;
+      });
+
+    const harness = mountHook(() => useScreenSharer());
+    const order = [];
+    const starting = harness.value.start('Amazon Fresh', () => {
+      order.push('opened');
+    });
+
+    // The person presses Stop while Chrome's picker is still up.
+    harness.value.stop();
+
+    // And then dismisses Chrome's picker.
+    const err = new Error('the person said no');
+    err.name = 'NotAllowedError';
+    refuse(err);
+    await starting;
+
+    ok(
+      order.length === 0,
+      'THE STORE DOES NOT OPEN AFTER STOP',
+      order.join(' then '),
+    );
+  }
+
+  console.log('\n  and the page goes away, then the picker is refused');
+  {
+    reset();
+    const streams = [];
+    installBrowser(streams);
+
+    let refuse;
+    navigator.mediaDevices.getDisplayMedia = () =>
+      new Promise((_resolve, reject) => {
+        refuse = reject;
+      });
+
+    const harness = mountHook(() => useScreenSharer());
+    const order = [];
+    const starting = harness.value.start('Amazon Fresh', () => {
+      order.push('opened');
+    });
+
+    // The page goes away — the person navigated, or the tab was replaced.
+    harness.unmount();
+
+    const err = new Error('the person said no');
+    err.name = 'NotAllowedError';
+    refuse(err);
+    await starting;
+
+    ok(
+      order.length === 0,
+      'THE STORE DOES NOT OPEN AFTER THE PAGE WENT AWAY',
+      order.join(' then '),
+    );
+  }
+
+  console.log('\n  and the capture is granted after Stop');
+  {
+    reset();
+    const streams = [];
+    installBrowser(streams);
+
+    let answer;
+    navigator.mediaDevices.getDisplayMedia = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+
+    const harness = mountHook(() => useScreenSharer());
+    const order = [];
+    const starting = harness.value.start('Amazon Fresh', () => {
+      order.push('opened');
+    });
+
+    harness.value.stop();
+
+    const granted = makeStream();
+    streams.push(granted);
+    answer(granted);
+    await starting;
+
+    ok(
+      order.length === 0,
+      'THE STORE DOES NOT OPEN WHEN THE CAPTURE IS GRANTED AFTER STOP',
+      order.join(' then '),
+    );
+    ok(
+      granted.track.stopped === true,
+      'and the late capture is still given back',
+      `track.stopped = ${granted.track.stopped}`,
+    );
+  }
+}
+
+console.log('\nStop clears the timer that would open the store');
+{
+  // WHY THIS IS CHECKED SEPARATELY: the fallback timer opens the store when
+  // the browser never answers, and it belongs to the attempt. Stop retires
+  // the attempt, so the timer has to go with it — otherwise a timer is left
+  // running for four seconds on a page whose person has said stop.
+  //
+  // WHY THE TIMERS ARE COUNTED RATHER THAN WAITED FOR: the fallback is four
+  // seconds, and a test that waits four seconds to learn what a counter can
+  // say in a millisecond makes every commit slower for every agent.
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const pending = new Map();
+  globalThis.setTimeout = (fn, ms) => {
+    const id = realSetTimeout(fn, ms);
+    pending.set(id, ms);
+    return id;
+  };
+  globalThis.clearTimeout = (id) => {
+    pending.delete(id);
+    realClearTimeout(id);
+  };
+
+  try {
+    let answer;
+    navigator.mediaDevices.getDisplayMedia = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+
+    const harness = mountHook(() => useScreenSharer());
+    const starting = harness.value.start('Amazon Fresh', () => {});
+
+    const fallbacks = () => [...pending.values()].filter((ms) => ms >= 4000);
+    ok(fallbacks().length === 1, 'the store has a fallback timer', `${fallbacks().length}`);
+
+    harness.value.stop();
+    ok(
+      fallbacks().length === 0,
+      'STOP CLEARS THE TIMER THAT WOULD OPEN THE STORE',
+      `${fallbacks().length} left`,
+    );
+
+    const err = new Error('the person said no');
+    err.name = 'NotAllowedError';
+    answer(err);
+    await starting;
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
