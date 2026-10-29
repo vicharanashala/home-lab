@@ -815,6 +815,9 @@ export function HouseBotPage() {
       // Actions are collected during the stream and applied once the reply is
       // complete, so a half-streamed message can't leave the app half-edited.
       const queuedActions: unknown[] = [];
+      // How many actions the BRIDGE refused to carry, reported when the
+      // stream is done. See the comment at the applyAgentActions call below.
+      let droppedByBridge = 0;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -831,6 +834,7 @@ export function HouseBotPage() {
             reply?: string;
             error?: string;
             action?: unknown;
+            dropped?: number;
           };
           try {
             payload = JSON.parse(json);
@@ -848,6 +852,17 @@ export function HouseBotPage() {
             // The bridge already validated these; the client re-checks in
             // applyAgentActions before anything touches the store.
             queuedActions.push(payload.action);
+          } else if (payload.type === 'done') {
+            // WHY THE COUNT IS READ HERE: the bridge refuses an action it
+            // cannot vouch for, and a refused action never crosses to this
+            // browser — so the count of what did not happen was being kept
+            // on the far side of the wire. The "done" event is the last
+            // thing the bridge sends, so by the time the batch is applied
+            // below, this number is known.
+            droppedByBridge =
+              typeof payload.dropped === 'number' && Number.isFinite(payload.dropped)
+                ? Math.max(0, payload.dropped)
+                : 0;
           } else if (payload.type === 'error') {
             throw new Error(payload.error || 'stream error');
           }
@@ -874,8 +889,20 @@ export function HouseBotPage() {
       );
 
       // Apply whatever the bot decided to do, now that its reply is complete.
-      if (queuedActions.length > 0) {
-        const outcome = applyAgentActions(queuedActions, store);
+      //
+      // WHY THE BATCH CAN BE EMPTY AND STILL HAVE SOMETHING TO SAY: the
+      // bridge refuses an action it cannot vouch for, and a refused action
+      // never reaches this browser. A batch where EVERY action was refused
+      // arrives empty, so the old guard skipped it and the page said
+      // nothing at all — while the bot's own message said what it added:
+      //
+      //     the household read   "Added eggs and milk to your fridge"
+      //     the shelf held       nothing, and nothing said so
+      //
+      // So the gate is asked about the batch when there is anything to
+      // apply OR anything that was dropped.
+      if (queuedActions.length > 0 || droppedByBridge > 0) {
+        const outcome = applyAgentActions(queuedActions, store, droppedByBridge);
         // WHY THE SAYING IS A RULE AND NOT TWO LINES HERE: a change that was
         // dropped has to reach the household even when another one worked. The
         // bot writes its own confirmation into the reply the household reads,

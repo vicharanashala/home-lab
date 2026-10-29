@@ -134,10 +134,36 @@ export interface AgentActionResult {
 /**
  * Apply a batch of validated actions to the store.
  * Safe to call with an empty array — it just reports 0/0.
+ *
+ * @param actions the actions the bridge carried
+ * @param store the kitchen to apply them to
+ * @param droppedByBridge how many actions the BRIDGE refused to carry
+ *
+ * WHY THE BRIDGE'S OWN DROPS COUNT HERE: the bridge validates an action
+ * before it crosses to this browser, and an action it refuses never arrives
+ * — so the count of what did not happen was being kept on the far side of
+ * the wire, where the household could not see it:
+ *
+ *     the model proposed   two actions — one the bridge refuses
+ *     the bridge carried   one
+ *     the household read   "Added eggs and milk to your fridge"
+ *     the shelf held       eggs, and nothing said the milk was not there
+ *
+ * The model writes its own confirmation into the reply the household reads,
+ * so a change that was refused is a change the household BELIEVES happened.
+ * Counting it here — the same bucket as the changes this gate refuses — is
+ * what lets `describeAgentOutcome` say "House Bot couldn't apply 1 of 2
+ * changes" instead of a toast that claims everything worked.
+ *
+ * WHY IT IS COUNTED HERE AND NOT IN THE PAGE: the count of what did not
+ * happen belongs to the result, and the result is what the rule that words
+ * it takes. A page that added to the count on its own would have two places
+ * that decide the same number.
  */
 export function applyAgentActions(
   actions: unknown,
   store: UseStore,
+  droppedByBridge = 0,
 ): AgentActionResult {
   const result: AgentActionResult = {
     applied: 0,
@@ -146,6 +172,19 @@ export function applyAgentActions(
     touchedStockIds: [],
     touchedGroceryIds: [],
   };
+
+  // WHY THE BRIDGE'S DROPS ARE COUNTED BEFORE THE EMPTY-BATCH RETURN: the
+  // batch can be empty AND still have lost something. That is the worst case
+  // of the false success — the bridge refused every action the model
+  // proposed, so the list did not change at all, and the model's own message
+  // still said what it added:
+  //
+  //     the household read   "Added eggs and milk to your fridge"
+  //     the shelf held       nothing, and nothing said so
+  //
+  // Returning early here would report 0 of 0 and say nothing.
+  result.skipped += droppedByBridge;
+
   if (!Array.isArray(actions) || actions.length === 0) return result;
 
   // Anything past the cap is counted as skipped so the user still sees that

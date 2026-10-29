@@ -3065,11 +3065,37 @@ function validateAction(raw) {
 /**
  * Split a model reply into displayable text and validated actions.
  * Tolerates a missing/extra fence and a ```json wrapper inside the block.
+ *
+ * WHY IT ALSO COUNTS WHAT IT DID NOT CARRY: the model writes its OWN
+ * confirmation into the reply the household reads — "Added eggs and milk to
+ * your fridge" — and that text is shown VERBATIM. So a change the bridge
+ * refuses is a change the household believes happened.
+ *
+ * The client counts the changes IT refuses and says so ("House Bot couldn't
+ * apply 1 of 2 changes"), but the bridge's refusals were filtered out of the
+ * batch before the client ever saw them, so they left no trace at all:
+ *
+ *     the model proposed   two actions — one the bridge refuses
+ *     the bridge carried   one
+ *     the household read   "Added eggs and milk to your fridge"
+ *     the toast said       "House Bot · Eggs → grocery"
+ *
+ * A SUCCESS toast, and the bot's own sentence claiming both changes.
+ *
+ * WHY REFUSING IS STILL THE RIGHT THING TO DO: an LLM misparse must never be
+ * able to corrupt someone's kitchen, so the bridge refuses an action it
+ * cannot vouch for. The fix is not to pass the action on — it is to SAY that
+ * it was not passed on.
+ *
+ * WHY THE COUNT IS PROPOSED MINUS CARRIED AND NOT COUNTED SEPARATELY: an
+ * action can be lost for two reasons — the batch was longer than the cap, or
+ * the action itself was refused — and both are the same fact to the
+ * household: a change it was told about did not happen.
  */
 function splitActions(reply) {
   const text = typeof reply === 'string' ? reply : '';
   const start = text.indexOf(ACTION_FENCE);
-  if (start === -1) return { text: text.trim(), actions: [] };
+  if (start === -1) return { text: text.trim(), actions: [], dropped: 0 };
 
   const cleanText = text.slice(0, start).trim();
   let body = text.slice(start + ACTION_FENCE.length);
@@ -3079,17 +3105,25 @@ function splitActions(reply) {
   if (body.startsWith('json')) body = body.slice(4).trim();
 
   let actions = [];
+  let dropped = 0;
   try {
     const parsed = JSON.parse(body);
     const list = Array.isArray(parsed)
       ? parsed
       : (parsed && Array.isArray(parsed.actions) ? parsed.actions : []);
+    const proposed = list.length;
     actions = list.slice(0, MAX_ACTIONS_PER_MESSAGE).map(validateAction).filter(Boolean);
+    dropped = proposed - actions.length;
   } catch {
     // Malformed JSON means no actions — the user still gets their text.
+    //
+    // WHY THE COUNT STAYS AT ZERO HERE AND IS NOT GUESSED: the number of
+    // actions the model wrote cannot be read out of a body that did not
+    // parse, and a number made up would be a number the household could
+    // check. It is reported as unknown rather than invented.
     actions = [];
   }
-  return { text: cleanText, actions };
+  return { text: cleanText, actions, dropped };
 }
 
 const HOUSEBOT_SUMMARIZE_PROMPT = `You are summarizing a conversation between a user and House Bot, an Indian-household kitchen assistant.
@@ -4063,7 +4097,7 @@ app.post('/api/housebot/chat', async (req, res) => {
     });
   }
 
-  const { text: replyText, actions } = splitActions(r.content || '');
+  const { text: replyText, actions, dropped } = splitActions(r.content || '');
 
   res.json({
     ok: true,
@@ -4072,6 +4106,10 @@ app.post('/api/housebot/chat', async (req, res) => {
     ms,
     eval_count: r.eval_count,
     actions,
+    // WHY THE COUNT IS SENT: the actions that did not survive the bridge's
+    // own validation are changes the household was told about and that did
+    // not happen. The browser says so — see `describeAgentOutcome`.
+    dropped,
   });
   } catch (err) {
     console.error('[housebot/chat] unhandled error:', err?.message || err);
@@ -4240,7 +4278,7 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
     },
   });
 
-  const { text, actions } = splitActions(raw);
+  const { text, actions, dropped } = splitActions(raw);
 
   if (!r.ok) {
     // WHY THE MODEL'S OWN SENTENCE: this text is shown in the chat bubble,
@@ -4259,6 +4297,11 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
       ms: Date.now() - t0,
       eval_count: r.eval_count,
       actions: actions.length,
+      // WHY THE COUNT IS SENT ALONG WITH THE ACTIONS: an action the bridge
+      // refused is a change the household was told about and that did not
+      // happen, and the browser is the only place that can say so. See
+      // `splitActions` and `describeAgentOutcome`.
+      dropped,
     });
   }
   res.end();
