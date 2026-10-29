@@ -67,8 +67,8 @@
  *
  *   - the REAL rule, asked what a quantity should read as;
  *   - the REAL parser, asked what a bullet becomes;
- *   - the app's REAL unit vocabulary — every unit in the recipe catalogue and
- *     every unit the add form offers — read out of the app's own files.
+ *   - the app's REAL unit vocabulary — every unit in every recipe catalogue
+ *     and every unit the add form offers — read out of the app's own files.
  *
  * Run with:  node scripts/test-grocery-unit-round-trip.mjs
  */
@@ -130,6 +130,82 @@ function catalogueUnits() {
 }
 
 /**
+ * The units the app's BUILT-IN recipe catalogues measure their ingredients in.
+ *
+ * WHY THESE ARE A SEPARATE SOURCE AND NOT PART OF `catalogueUnits`: the app
+ * has THREE recipe catalogues, and they are not interchangeable.
+ *
+ *     src/data/csvRecipes.json   the CSV catalogue the Meal Plan loads
+ *     src/data/indianRecipes.ts  the built-in Indian recipes
+ *     src/data/recipes.ts        the built-in starter recipes
+ *
+ * The store puts the last two in the app on every start —
+ * `BUILT_IN_RECIPES = [...STARTER_RECIPES, ...INDIAN_RECIPES]` — so they are
+ * on the Meal Plan's list of recipes from the first minute the app is open.
+ *
+ * WHY THIS SOURCE WAS MISSING, AND WHAT IT COST: this test read only the CSV
+ * catalogue, and the Indian catalogue measures Bread in "slices":
+ *
+ *     ['Bread', 6, 'slices']   Bread pakora
+ *     ['Bread', 4, 'slices']   Shahi tukda
+ *
+ * so the app wrote "6 slices" on the shopping list and the parser could not
+ * read it back — the unit ended up in the item's NAME. The test claimed to
+ * cover "every unit in the recipe catalogue" while covering one of the
+ * three, which is the drift it was written to prevent, inside the test
+ * itself.
+ *
+ * WHY THEY ARE IMPORTED AND NOT SCRAPED OUT OF THE SOURCE TEXT: these are
+ * ordinary TypeScript modules, so the real recipe objects can simply be
+ * imported and their units read off them. A regex over the source text would
+ * have to guess at the shape of a tuple and would miss a unit the day the
+ * shape changed — which is how "slices" was missed in the first place.
+ *
+ * @returns {Promise<Set<string>>} the units the built-in catalogues use
+ */
+async function builtInCatalogueUnits() {
+  const { INDIAN_RECIPES } = await import(
+    pathToFileURL(path.join(REPO, 'src/data/indianRecipes.ts')).href
+  );
+  const { STARTER_RECIPES } = await import(
+    pathToFileURL(path.join(REPO, 'src/data/recipes.ts')).href
+  );
+  const units = new Set();
+  for (const recipe of [...STARTER_RECIPES, ...INDIAN_RECIPES]) {
+    for (const ingredient of recipe.ingredients ?? []) {
+      const unit = String(ingredient.unit ?? '').trim();
+      if (unit) units.add(unit);
+    }
+  }
+  return units;
+}
+
+/**
+ * The units the app can CONVERT — the app's own unit table.
+ *
+ * WHY THIS SOURCE IS HERE AND NOT JUST THE CATALOGUES: the stock unit field
+ * is FREE TEXT (the Edit Stock form is an input with a datalist, not a
+ * select), so a household can write any unit onto a stock row — and the app's
+ * own rule writes that unit onto the shopping list as it was typed:
+ *
+ *     the stock row's unit   "ounce"
+ *     the shopping list      "6 ounces"
+ *
+ * The units the app can CONVERT are the units the app can be asked about, and
+ * `units.ts` is the one place that says which those are. The test asks that
+ * table rather than restating a list of them, so a unit added to the table
+ * reaches this test without this file being edited.
+ *
+ * @returns {Promise<Set<string>>} the units the app understands
+ */
+async function convertibleUnits() {
+  const { KNOWN_UNITS } = await import(
+    pathToFileURL(path.join(REPO, 'src/utils/units.ts')).href
+  );
+  return new Set(KNOWN_UNITS);
+}
+
+/**
  * The units the ADD FORM offers the household.
  *
  * WHY THE FORM: a stock row writes its shopping line with the household's own
@@ -157,7 +233,12 @@ function formUnits() {
   return new Set(units);
 }
 
-const VOCABULARY = new Set([...catalogueUnits(), ...formUnits()]);
+const VOCABULARY = new Set([
+  ...catalogueUnits(),
+  ...(await builtInCatalogueUnits()),
+  ...(await convertibleUnits()),
+  ...formUnits(),
+]);
 
 console.log('\nthe app can read back every quantity the app writes');
 

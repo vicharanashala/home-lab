@@ -121,10 +121,45 @@ function cleanBullet(raw: string): string {
  *
  * The unit ends up in the item's NAME, and stock matching is exact, so the row
  * the household shops from and the row on the shelf are two different things.
+ *
+ * WHY "slices" IS IN THE LIST: the app has THREE recipe catalogues, and the
+ * built-in Indian one measures Bread in slices:
+ *
+ *     ['Bread', 6, 'slices']   Bread pakora
+ *     ['Bread', 4, 'slices']   Shahi tukda
+ *
+ * The Meal Plan writes that ingredient onto the shopping list with the app's
+ * own rule, so the list says "6 slices" — and the House Bot could not read it
+ * back:
+ *
+ *     "- 6 slices of bread"  ->  an item called "slices of bread", quantity "6"
+ *
+ * The unit is in the NAME again, and the quantity has lost its unit, which is
+ * the same failure as "pc" and "bottle" and for the same reason: the list has
+ * to hold every word the app can write. The round-trip test reads the units
+ * out of all three catalogues and out of the add form, so a unit added to any
+ * of them turns that test RED until it is written here — which is the drift
+ * this list is prone to and the one the test exists to catch.
+ *
+ * WHY THE LIST IS GROUPED THE WAY `units.ts` GROUPS ITS TABLES: the app has
+ * one table of the units it understands, and it is published as
+ * `KNOWN_UNITS` from there. The stock unit field is FREE TEXT — the Edit
+ * Stock form is an input with a datalist, not a select — so a household can
+ * write any unit onto a stock row, and the app's own rule writes that unit
+ * onto the shopping list as it was typed:
+ *
+ *     the stock row's unit   "ounce"
+ *     the shopping list      "6 ounces"
+ *
+ * The words below are that table's words, with their plurals, and the few
+ * words the kitchen counts in that the table does not carry — packs, packets,
+ * cloves, bottles, slices, bunches and handfuls.
  */
 const UNIT_WORDS =
-  'cups?|tbsp|tsps?|tablespoons?|teaspoons?|kgs?|grams?|g|ml|l|liters?|litres?' +
-  '|pcs|pc|pieces?|packs?|packets?|dozens?|cloves?|bottles?' +
+  'grams?|g|kgs?|kilograms?|oz|ounces?|lbs?|pounds?' +
+  '|ml|millilitres?|milliliters?|l|liters?|litres?' +
+  '|pcs|pc|pieces?|packs?|packets?|dozens?|cloves?|bottles?|slices?|units?' +
+  '|tbsp|tbs?|tsps?|tablespoons?|teaspoons?|cups?' +
   '|pinch(?:es)?|dash(?:es)?|bunch(?:es)?|handfuls?';
 
 /**

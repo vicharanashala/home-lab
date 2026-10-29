@@ -79,6 +79,36 @@ const SCOOP: Record<string, number> = {
   dashes: 0.6,
 };
 
+/**
+ * Every unit word the app understands.
+ *
+ * WHY IT IS EXPORTED: the House Bot's bullet parser has to tell a UNIT from
+ * the start of an ingredient's NAME, and it does that with a list of unit
+ * words. That list has to hold every word this app can write a quantity in,
+ * or the parser puts the unit in the name:
+ *
+ *     the app writes      "- 6 ounces of butter"
+ *     the parser read      an item called "ounces of butter", quantity "6"
+ *
+ * So the words are published from the one place that decides what the app
+ * understands, rather than restated in a second list that can drift from it.
+ *
+ * WHY IT IS THE TABLE'S KEYS AND NOT THE WORDS THE SHOP USES: this table is
+ * what the app can CONVERT, and the stock unit field is free text — a
+ * household can write any unit into it, and the app's own rule writes that
+ * unit onto the shopping list as it was typed. The units the app can convert
+ * are the ones the app can be asked about, so they are the ones the parser
+ * has to read back.
+ *
+ * @returns every unit word, in both singular and plural as the app knows them
+ */
+export const KNOWN_UNITS: string[] = [
+  ...Object.keys(MASS),
+  ...Object.keys(VOL),
+  ...Object.keys(COUNT),
+  ...Object.keys(SCOOP),
+];
+
 export function unitDimension(unit: string): UnitDimension {
   const k = unit.trim().toLowerCase();
   if (k in MASS) return 'mass';
