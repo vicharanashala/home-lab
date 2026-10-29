@@ -94,8 +94,10 @@ function ok(cond, label, detail = '') {
  *
  * @param {boolean | null} isActive the gesture, or null for a browser that
  *   has no user-activation API at all
+ * @param {boolean} openThrows whether the browser refuses the pop-up by
+ *   throwing rather than by blocking it
  */
-function fakeBrowser(isActive) {
+function fakeBrowser(isActive, openThrows = false) {
   const opened = [];
   Object.defineProperty(globalThis, 'navigator', {
     configurable: true,
@@ -110,6 +112,7 @@ function fakeBrowser(isActive) {
     writable: true,
     value: {
       open(url) {
+        if (openThrows) throw new Error('SecurityError: the popup was refused');
         opened.push(url);
         return null;
       },
@@ -178,6 +181,39 @@ console.log('\nand the store tab is opened, and reported');
   const allowed = typeof openStoreTab === 'function' ? openStoreTab('https://example.test/store') : true;
   ok(opened.length === 1, 'the tab is opened even when the browser will stop it');
   ok(allowed === false, 'and the app knows not to say it opened');
+}
+
+{
+  // WHY A POP-UP THE BROWSER THREW ON IS A REFUSED TAB: a browser that
+  // refuses a pop-up does not always do it by blocking it — a sandboxed
+  // frame, a policy — and then it throws. The app cannot open the tab
+  // another way, so the tab did not open, and the person is owed the truth.
+  //
+  // The exception used to escape `openStoreTab` and be swallowed by the
+  // share hook, whose own comment says "the popup was blocked". Nothing was
+  // recorded, so the screen fell back to the other sentence:
+  //
+  //     window.open   threw
+  //     the tab       did not open
+  //     the screen    "The store opened in a new tab."
+  //
+  // The gesture being live does not make it true — the opener asked the
+  // browser, and the browser said no.
+  fakeBrowser(true, true);
+  let allowed = 'THREW';
+  try {
+    allowed =
+      typeof openStoreTab === 'function'
+        ? openStoreTab('https://example.test/store')
+        : true;
+  } catch {
+    allowed = 'THREW';
+  }
+  ok(
+    allowed === false,
+    'a pop-up the browser refused by throwing is reported as not opened',
+    `got ${allowed}`,
+  );
 }
 
 console.log('\nand the page says what actually happened');

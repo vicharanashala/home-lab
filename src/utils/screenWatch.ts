@@ -300,13 +300,37 @@ export function popUpAllowedNow(): boolean {
  * block at all), and a tab that opens is what the person asked for. The
  * answer is about what to SAY, not about whether to try.
  *
+ * WHY A POP-UP THE BROWSER THREW ON COUNTS AS REFUSED: a browser does not
+ * always refuse a pop-up by blocking it — a sandboxed frame, a policy — and
+ * then it throws. The tab did not open, and the app has no other way to open
+ * it, so the answer is "the tab did not open".
+ *
+ * The exception used to escape this function and be swallowed by the share
+ * hook, whose own comment says "the popup was blocked". Nothing was recorded,
+ * so the stores screen fell back to the other sentence and told the
+ * household what had not happened:
+ *
+ *     window.open   threw
+ *     the tab       did not open
+ *     the screen    "The store opened in a new tab."
+ *
+ * A live gesture does not make that true — the opener asked the browser, and
+ * the browser said no.
+ *
  * @param url the store's address
  * @returns true when the browser allowed the tab to open
  */
 export function openStoreTab(url: string): boolean {
   const allowed = popUpAllowedNow();
-  if (typeof window !== 'undefined') {
+  if (typeof window === 'undefined') {
+    // There is no browser here, so there is no tab. Saying it opened would
+    // be the same false claim in the other direction.
+    return false;
+  }
+  try {
     window.open(url, '_blank', 'noopener,noreferrer');
+  } catch {
+    return false;
   }
   return allowed;
 }
