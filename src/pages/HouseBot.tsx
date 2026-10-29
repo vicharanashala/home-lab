@@ -13,6 +13,7 @@ import { parseGroceryList } from '../utils/groceryListParser';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { blockedReason } from '../utils/micPermission';
 import { applyAgentActions } from '../utils/agentActions';
+import { describeAgentOutcome } from '../utils/agentOutcome';
 import { formatQuantity } from '../utils/date';
 import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -875,16 +876,16 @@ export function HouseBotPage() {
       // Apply whatever the bot decided to do, now that its reply is complete.
       if (queuedActions.length > 0) {
         const outcome = applyAgentActions(queuedActions, store);
-        if (outcome.applied > 0) {
-          toast(
-            outcome.summary.length > 90
-              ? `House Bot updated ${outcome.applied} item${outcome.applied === 1 ? '' : 's'}`
-              : `House Bot · ${outcome.summary}`,
-            'success',
-          );
-        }
-        if (outcome.skipped > 0 && outcome.applied === 0) {
-          toast('House Bot couldn’t apply that change', 'warning');
+        // WHY THE SAYING IS A RULE AND NOT TWO LINES HERE: a change that was
+        // dropped has to reach the household even when another one worked. The
+        // bot writes its own confirmation into the reply the household reads,
+        // so "I set the yeast to 3" is on the screen — and if the yeast was
+        // not on the shelf, nothing on the screen said otherwise. The page
+        // used to warn only when NOTHING was applied, so a batch of one
+        // success and one failure showed the success alone. See
+        // `describeAgentOutcome`.
+        for (const shown of describeAgentOutcome(outcome)) {
+          toast(shown.message, shown.kind);
         }
       }
     } catch (err) {
