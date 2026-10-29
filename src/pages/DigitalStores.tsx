@@ -62,11 +62,20 @@ export function DigitalStoresPage() {
   /**
    * Open the store, and offer to share it.
    *
-   * The tab is opened FIRST, because the browser's picker lists the windows
-   * that can be shared and the person has to be able to pick the one the
-   * store just opened in. The share is asked for in the same click, because
-   * the browser only allows a screen share to be asked for in response to
-   * something the person did.
+   * THE ORDER IS NOT OURS: `share.start` asks the browser FIRST and opens the
+   * store afterwards, and the callback below is the store's opening. The order
+   * is the hook's because Chrome only puts the capture picker up for a page
+   * that is in FRONT — opening the store's tab first took the focus, hid this
+   * page, and the picker never appeared at all. The person saw nothing happen
+   * and nothing said why.
+   *
+   * WHY THE STORE IS STILL IN FRAME WHEN IT OPENS: the capture is of the
+   * WINDOW and not of one tab, so the window is filmed from the moment the
+   * share is granted — and the store tab opens into that same window a moment
+   * later. Opening it before the ask was the version that did nothing at all.
+   *
+   * WHERE THE RULE LIVES: `useScreenSharer` in src/hooks/useScreenWatch.ts,
+   * and the test "the store is opened AFTER the browser is asked, not before".
    */
   const openAndWatch = (id: string, name: string, url: string) => {
     setOpening(id);

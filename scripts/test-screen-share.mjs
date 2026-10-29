@@ -38,7 +38,18 @@
  * Run with:  node scripts/test-screen-share.mjs
  */
 import React from 'react';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SCREEN_WATCH_CHANNEL, reduceWatch } from '../src/utils/screenWatch.ts';
+
+/**
+ * The repository, found from this file rather than written down.
+ *
+ * WHY: the page that calls the hook is read from here, and a path written
+ * down is a path that is right until the checkout moves.
+ */
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 let passed = 0;
 let failed = 0;
@@ -896,6 +907,86 @@ console.log('\nthe store is opened AFTER the browser is asked, not before');
     order.includes('opened'),
     'and the store opens once the browser has answered',
     order.join(' then '),
+  );
+}
+
+console.log('\nand the caller describes the order the app actually runs in');
+{
+  // WHY THIS TEST EXISTS
+  //
+  // The order was reversed in 10a1645 ("Ask Chrome for the window while this
+  // page is still in front") and the test above pins it. But the page that
+  // CALLS the hook kept the comment that described the order before the
+  // reversal:
+  //
+  //     "The tab is opened FIRST, because the browser's picker lists the
+  //      windows that can be shared and the person has to be able to pick
+  //      the one the store just opened in."
+  //
+  // That is not only out of date — it is the reason the reversal was needed,
+  // stated as the reason the old order was right. A reader of that page would
+  // conclude the store's tab has to exist before the picker, and would put the
+  // broken order back.
+  //
+  // WHY IT IS THE SAME SHAPE AS THE OTHER HALVES: this is the mistake
+  // scripts/test-bridge-screen-window-wording.mjs was written for — one half
+  // of a feature is fixed and the other half is left behind, and nothing goes
+  // red. The hook half was fixed and pinned; the caller's half was not, and
+  // the comment is what was left behind.
+  //
+  // WHY THE ORDER IS TAKEN FROM THE RUN AND NOT WRITTEN DOWN HERE: the check
+  // is that the comment agrees with the code, so the code has to be the thing
+  // being compared against. Write the order into the test and the two could
+  // drift apart the same way the comment did.
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  const order = [];
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    order.push('asked');
+    const stream = makeStream();
+    streams.push(stream);
+    return stream;
+  };
+
+  const harness = mountHook(() => useScreenSharer());
+  await harness.value.start('Amazon Fresh', () => {
+    order.push('opened');
+  });
+  harness.unmount();
+
+  const askedFirst = order.indexOf('asked') < order.indexOf('opened');
+  ok(askedFirst, 'the browser really is asked first', order.join(' then '));
+
+  // The comment on the caller, which is what a reader of that page sees.
+  const caller = fs.readFileSync(
+    path.join(REPO, 'src', 'pages', 'DigitalStores.tsx'),
+    'utf8',
+  );
+  const fnAt = caller.indexOf('const openAndWatch');
+  ok(fnAt > 0, 'the caller that opens the store is where it is expected to be');
+
+  // WHY THE COMMENT IS FOUND BY ITS BRACES: the file is a page and its lines
+  // move. The comment that belongs to this function is the one above it.
+  const commentStart = caller.lastIndexOf('/**', fnAt);
+  const commentEnd = caller.indexOf('*/', commentStart);
+  const comment = commentStart < 0 || commentEnd < 0 ? '' : caller.slice(commentStart, commentEnd);
+
+  const claimsOpenedFirst = /opened\s+FIRST|tab\s+is\s+opened\s+first|opens?\s+the\s+(tab|store)\s+first/i.test(
+    comment,
+  );
+  ok(
+    !(askedFirst && claimsOpenedFirst),
+    'the caller does not claim the store is opened first',
+    claimsOpenedFirst
+      ? 'the comment says the tab is opened FIRST; the code asks the browser first'
+      : '',
+  );
+  ok(
+    !(askedFirst && !/\bafter\b/i.test(comment)),
+    'and it says the store opens after the browser has answered',
+    'the comment never says "after"',
   );
 }
 
