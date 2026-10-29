@@ -103,11 +103,29 @@ function cleanBullet(raw: string): string {
  * is "dashes" and a pinch is "pinches" — so each of those three has to be
  * written as the stem on its own OR the stem plus "es". Writing them as
  * "bunches?" alone would leave the singular form of the word unrecognised.
+ *
+ * WHY "pc" AND "bottles?" ARE IN THE LIST: the list has to hold every word
+ * the app's own rule can WRITE, because the House Bot writes the shopping list
+ * back in the app's own spelling. `formatQuantity` writes a quantity of one
+ * with a SINGULAR unit, so the two words the rule produces out of the units
+ * the kitchen actually uses are:
+ *
+ *     the unit "pcs"      ->  "1 pc"        the DEFAULT unit for a new item
+ *     the unit "bottles"  ->  "1 bottle"    one of the nine the add form offers
+ *
+ * Neither word was in the list, so the bullet the House Bot wrote back — the
+ * very spelling the app had shown it — could not be read:
+ *
+ *     "- 1 pc of eggs"      ->  an item called "pc of eggs", quantity "1"
+ *     "- 1 bottle of milk"  ->  an item called "bottle of milk", quantity "1"
+ *
+ * The unit ends up in the item's NAME, and stock matching is exact, so the row
+ * the household shops from and the row on the shelf are two different things.
  */
 const UNIT_WORDS =
   'cups?|tbsp|tsps?|tablespoons?|teaspoons?|kgs?|grams?|g|ml|l|liters?|litres?' +
-  '|pcs|pieces?|packs?|packets?|dozens?|cloves?|pinch(?:es)?|dash(?:es)?' +
-  '|bunch(?:es)?|handfuls?';
+  '|pcs|pc|pieces?|packs?|packets?|dozens?|cloves?|bottles?' +
+  '|pinch(?:es)?|dash(?:es)?|bunch(?:es)?|handfuls?';
 
 /**
  * Write the quantity the way the app writes every quantity.
