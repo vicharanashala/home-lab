@@ -1,6 +1,32 @@
 /**
  * Regression test: a preparation note is not the ingredient.
  *
+ * AND: the quantity the catalogue writes comes off the front of the name.
+ *
+ * THE SECOND BUG
+ *
+ * The catalogue writes a mixed number with a hyphen, not with a decimal
+ * point:
+ *
+ *     "1-1/2 cups All Purpose Flour"   "2-1/4 cups Water"
+ *     "1-1 / 2 cups rice - cooked"      "1-3/4 teaspoon Salt"
+ *
+ * 933 of its 10,925 distinct ingredient strings are written that way, and the
+ * House Bot is fed those strings verbatim in its RECIPES context block — so it
+ * writes its grocery list in the same shape.
+ *
+ * The parser's number knew "1/2" and "1.5" and nothing else, so the leading
+ * quantity was not a quantity at all: no pattern matched it, the bare-number
+ * rule could not match it either, and the line fell through to be a NAME.
+ * Then the rule that strips a trailing quantity took the dash INSIDE the
+ * number for a separator and ate the rest of the line with it:
+ *
+ *     "1-1/2 cups All Purpose Flour"   ->   "1"
+ *
+ * One character is under the two-character minimum, so the ingredient was
+ * thrown away. 1,390 of the catalogue's 70,093 ingredient strings were lost
+ * that way — not written with a wrong quantity, not written at all.
+ *
  * THE BUG
  *
  * A rule was added to the grocery-list parser to keep a bullet that names a
@@ -38,6 +64,10 @@
  * A note that names OTHER things to buy — it lists them, or it says the line
  * needs them — means the line is a dish, and a dish is not an item. That
  * case still drops the line.
+ *
+ * And a dash that is part of a NUMBER is not a separator at all: "1-1/2 cups
+ * All Purpose Flour" is a quantity and a name, not a name with a quantity
+ * stripped off it.
  *
  * THE PROOF
  *
@@ -200,6 +230,88 @@ console.log('\nthe rules that were already here still hold');
   ok(items[0]?.quantity === '2', 'and the quantity is kept', items[0]?.quantity);
 }
 
+console.log('\nthe quantity the catalogue writes comes off the front of the name');
+{
+  // THE CATALOGUE WRITES A MIXED NUMBER WITH A HYPHEN.
+  //
+  //     "1-1/2 cups All Purpose Flour"   "2-1/4 cups Water"
+  //     "1-1 / 2 cups rice - cooked"      "1-3/4 teaspoon Salt"
+  //
+  // 933 of the catalogue's 10,925 distinct ingredient strings are written this
+  // way, and the House Bot is fed those strings verbatim in its RECIPES block,
+  // so it writes its grocery list in the same shape.
+  //
+  // The parser's number knew "1/2" and "1.5" and nothing else, so the leading
+  // quantity was not a quantity at all — no pattern matched it, and the
+  // bare-number rule could not match it either. The line fell through to be a
+  // NAME, and then the rule that strips a trailing quantity took the dash
+  // INSIDE the number for a separator and ate the rest of the line with it:
+  //
+  //     "1-1/2 cups All Purpose Flour"   ->   "1"   ->   the ingredient
+  //                                                            thrown away
+  //
+  // 1,390 of the catalogue's 70,093 ingredient strings were lost that way.
+  // They were not written with a wrong quantity. They were not written at all.
+  const cases = [
+    {
+      bullet: '- 1-1/2 cups All Purpose Flour',
+      name: 'All Purpose Flour',
+      quantity: '1-1/2 cups',
+    },
+    {
+      bullet: '- 1-1/4 cups Lukewarm Water',
+      name: 'Lukewarm Water',
+      quantity: '1-1/4 cups',
+    },
+    {
+      bullet: '- 1-1 / 2 cup brown rice',
+      name: 'brown rice',
+      quantity: '1-1 / 2 cup',
+    },
+    {
+      bullet: '- 2-3 Curry leaves',
+      name: 'Curry leaves',
+      quantity: '2-3',
+    },
+  ];
+
+  for (const c of cases) {
+    const item = itemsOf(c.bullet)[0];
+    ok(item !== undefined, `"${c.bullet}" is an item at all`, JSON.stringify(item));
+    ok(
+      item?.name === c.name,
+      `the quantity comes off the name of "${c.bullet}"`,
+      `the name is ${JSON.stringify(item?.name)}`,
+    );
+    ok(
+      item?.quantity === c.quantity,
+      `and it reads back as "${c.quantity}"`,
+      `the parser wrote ${JSON.stringify(item?.quantity)}`,
+    );
+  }
+
+  // A dash inside a number is not a separator, and a preparation note after
+  // the quantity still comes off the name.
+  const noted = itemsOf('- 1-1/2 cups Green peas - steamed and mashed')[0];
+  ok(
+    noted?.name === 'Green peas' && noted?.quantity === '1-1/2 cups',
+    'a note after a mixed quantity still comes off the name',
+    JSON.stringify(noted),
+  );
+
+  // A name the kitchen can match is the whole point of taking the quantity
+  // off it — stock matching is exact.
+  const matched = findCandidatesForIngredient(
+    { name: noted?.name ?? '', quantity: 1.5, unit: 'cups', category: 'vegetables' },
+    [{ id: 's1', name: 'Green peas', quantity: 500, unit: 'g', category: 'vegetables' }],
+  );
+  ok(
+    noted !== undefined && matched.length === 1 && matched[0].id === 's1',
+    'and the name it made is still findable on the shelf',
+    `the name was ${JSON.stringify(noted?.name)}`,
+  );
+}
+
 console.log('\nevery ingredient in the real catalogue survives');
 {
   const data = JSON.parse(fs.readFileSync(path.join(REPO, 'src/data/csvRecipes.json'), 'utf8'));
@@ -208,20 +320,24 @@ console.log('\nevery ingredient in the real catalogue survives');
   // A catalogue name that already begins with a bullet IS the bullet.
   const asLine = (raw) => (/^\s*[-*•·]\s+/.test(raw) ? raw : `- ${raw}`);
 
-  // Two rules this test does NOT cover, because they are older than the
-  // preparation-note rule and are not caused by it:
+  // One rule this test does NOT cover, because it is older than the
+  // preparation-note rule and is not caused by it:
   //
-  //   - a bullet of more than eight words is read as a sentence and skipped;
-  //   - a dash with no space before it is read as a separator even when it is
-  //     part of the name, so "1-1/2 cups rice" is read as the name "1".
+  //   - a bullet of more than eight words is read as a sentence and skipped.
   //
-  // Both are reported on their own. Neither is what this test is about.
+  // It is reported on its own. It is not what this test is about.
+  //
+  // THE OTHER EXCLUSION THAT WAS HERE IS GONE: "a dash with no space before
+  // it is read as a separator even when it is part of the name, so
+  // '1-1/2 cups rice' is read as the name '1'". That was a real rule, and it
+  // threw 1,390 of the catalogue's ingredient strings away. The dash inside a
+  // number is not a separator now, and the mixed number the catalogue writes
+  // is a quantity.
   const READS_AS_A_SENTENCE = (n) => n.trim().split(/\s+/).length > 8;
-  const DASH_INSIDE_THE_NAME = (n) => /(?:^|\S)-\s*\d/.test(n.trim());
 
   const lost = [];
-  const skipped = { sentence: 0, dashInName: 0 };
   let total = 0;
+  let sentence = 0;
 
   for (const recipe of recipes) {
     for (const ing of recipe.ingredients || []) {
@@ -231,11 +347,7 @@ console.log('\nevery ingredient in the real catalogue survives');
       // The House Bot writes the catalogue's strings back as bullets.
       if (itemsOf(asLine(raw)).length > 0) continue;
       if (READS_AS_A_SENTENCE(raw)) {
-        skipped.sentence += 1;
-        continue;
-      }
-      if (DASH_INSIDE_THE_NAME(raw)) {
-        skipped.dashInName += 1;
+        sentence += 1;
         continue;
       }
       lost.push(raw);
@@ -248,7 +360,7 @@ console.log('\nevery ingredient in the real catalogue survives');
     'no catalogue ingredient is dropped',
     lost.length
       ? `${lost.length} lost, e.g. ${lost.slice(0, 3).map((s) => JSON.stringify(s)).join(', ')}`
-      : `all kept (${skipped.sentence} long lines and ${skipped.dashInName} names with a dash inside them are the two older rules)`,
+      : `all kept (${sentence} long lines are read as sentences and skipped)`,
   );
 }
 

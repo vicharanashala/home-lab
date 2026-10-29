@@ -188,6 +188,55 @@ function writeQuantity(qty: string, unit: string): string {
 }
 
 /**
+ * A number, in every shape the recipe catalogue writes one.
+ *
+ * WHY THE HYPHENATED MIXED NUMBER IS IN IT: the catalogue writes a mixed
+ * number with a hyphen, not with a decimal point —
+ *
+ *     "1-1/2 cups All Purpose Flour"
+ *     "2-1/4 cups Water"
+ *     "1-1 / 2 cups rice - cooked"
+ *
+ * — and the House Bot is fed those ingredient strings VERBATIM in its RECIPES
+ * block, so it writes its grocery list in the same shape. The number this
+ * rule knew was "1/2" and "1.5" and nothing else, so the leading quantity
+ * was not a quantity at all: no pattern matched it, the bare-number rule
+ * could not match it either, and the line fell through to be a NAME:
+ *
+ *     "- 1-1/2 cups All Purpose Flour"   ->   an item called
+ *                                              "1-1/2 cups All Purpose Flour"
+ *
+ * and then the rule that strips a trailing quantity took the dash inside the
+ * number for a separator and ate the rest of the line, so what was left was
+ * "1" — under two characters, and the INGREDIENT WAS THROWN AWAY.
+ *
+ * 882 of the catalogue's 10,925 distinct ingredient strings are written in
+ * that shape. They were not written with a wrong quantity. They were not
+ * written at all.
+ *
+ * WHY A RANGE IS IN IT TOO: "2-3 Curry leaves" is written the same shape as
+ * "1-1/2 cups" — a number, a hyphen, a number — and the catalogue writes
+ * both, so one rule reads both. A range is not a number the app can write,
+ * and the app's own rule leaves a quantity it cannot write exactly as it was
+ * written, which is the right thing to do with a range too.
+ *
+ * HOW MANY: 933 of the catalogue's 10,925 distinct ingredient strings start
+ * with a number written in one of these shapes, and 1,390 of its 70,093
+ * ingredient strings were thrown away because of it.
+ *
+ * WHY ONE LIST AND NOT A COPY IN EVERY PATTERN: the patterns below were
+ * built from two different numbers, and the copies had drifted the way the
+ * unit copies had drifted. One list is the only way to be sure every
+ * pattern reads the same number.
+ */
+const NUMBER =
+  // A number written as two parts joined by a sign: "1-1/2", "1+1/3",
+  // "1/2-1/2", "2-3". The first part may itself be a fraction.
+  '\\d+(?:\\s*\\/\\s*\\d+)?(?:\\s*[-+]\\s*\\d+(?:\\s*\\/\\s*\\d+)?)?' +
+  // A decimal: "1.5".
+  '|\\d+(?:\\.\\d+)?';
+
+/**
  * Try to pull a quantity+unit prefix out of a line so we can capture
  * "1 cup of tomatoes" -> { name: "tomatoes", quantity: "1 cup" }.
  *
@@ -203,25 +252,25 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
   // another knew only "clove", and one knew "grams" and another did not. One
   // list is also the only way to be sure every pattern knows the same units.
   const patterns: RegExp[] = [
-    // "1/2 cup", "1.5 kg", "2 tbsp" with unit
+    // "1/2 cup", "1.5 kg", "1-1/2 cups", "2 tbsp" with unit
     new RegExp(
-      `^(\\d+\\s*/\\s*\\d+|\\d+(?:\\.\\d+)?)\\s*(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`,
+      `^(${NUMBER})\\s*(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`,
       'i',
     ),
     // "1 cup of", "2 tablespoons of"
     new RegExp(
-      `^(\\d+(?:\\.\\d+)?)\\s+(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`,
+      `^(${NUMBER})\\s+(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`,
       'i',
     ),
     // "500 g", "1.5 kg" with unit — no space on either side of the unit
     new RegExp(
-      `^(\\d+(?:\\.\\d+)?)\\s*(${UNIT_WORDS})\\b\\s*(?:of\\s+)?(.+)$`,
+      `^(${NUMBER})\\s*(${UNIT_WORDS})\\b\\s*(?:of\\s+)?(.+)$`,
       'i',
     ),
     // "1 medium", "2 large", "1 small" (size adjectives)
     /^(\d+)\s+(medium|large|small|big|whole)\s+(.+)$/i,
     // "3 cloves", "2 pieces", "1 bunch"
-    new RegExp(`^(\\d+)\\s+(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`, 'i'),
+    new RegExp(`^(${NUMBER})\\s+(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`, 'i'),
   ];
 
   for (const re of patterns) {
@@ -250,14 +299,20 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
     }
   }
 
-  // Bare integer prefix like "1 onion" / "2 onions" — there is no unit
+  // Bare number prefix like "1 onion" / "2 onions" — there is no unit
   // word, so the name is the SECOND group and there is no third one. This
   // used to sit in the pattern list above, where the code read the unit from
   // group 2 and the name from group 3: group 3 was empty, so the match was
   // thrown away and the line fell through with the count still glued to the
   // name — "2 onions" became an item literally called "2 onions", quantity 1,
   // which then never matched a stock item called "Onion".
-  const bare = line.match(/^(\d+)\s+([a-z].{2,})$/i);
+  //
+  // WHY IT READS THE SAME NUMBERS THE PATTERNS ABOVE DO: the catalogue
+  // writes a range with no unit at all — "2-3 Curry leaves", "3-4 grams of
+  // something" — and the rule that read a bare integer could not read those,
+  // so the number stayed in the name and the item could never match the
+  // kitchen's row. One number, read the same way everywhere.
+  const bare = line.match(new RegExp(`^(${NUMBER})\\s+([a-z].{2,})$`, 'i'));
   if (bare) {
     const rest = bare[2].trim();
     if (rest.length >= 2) return { quantity: bare[1], rest };
@@ -336,6 +391,34 @@ function noteListsThingsToBuy(tail: string): boolean {
 }
 
 /**
+ * A quantity written after a separator — "Onion - 1 pc", "Salt: 2 tsp".
+ *
+ * WHY THE SEPARATOR HAS TO HAVE A NAME IN FRONT OF IT: the catalogue's own
+ * ingredient strings sometimes start with a bullet of their own — "- 3
+ * Saffron strands" — and the House Bot writes them under a bullet of its
+ * own, so one dash is left at the front of the line. The old rule took that
+ * dash for a separator and stripped the rest of the line with it:
+ *
+ *     "- 3 Saffron strands"   ->   ""   ->   the ingredient thrown away
+ *
+ * WHY IT MUST NOT BE INSIDE A NUMBER: the dash in "1-1/2 cups All Purpose
+ * Flour" is part of the QUANTITY, and the old rule took it for a separator
+ * too, and stripped the rest of the line:
+ *
+ *     "1-1/2 cups All Purpose Flour"   ->   "1"   ->   the ingredient thrown away
+ *
+ * WHY THE NAME IN FRONT OF IT CANNOT END IN A DIGIT: that is the same
+ * sentence — a dash between two digits is a dash inside a number, whether
+ * the number is a mixed fraction ("1-1/2") or a range ("2-3"), and not a
+ * separator between a name and a quantity.
+ *
+ * A trailing quantity is only a trailing quantity when a NAME stands in
+ * front of the separator and that name is not a number.
+ */
+const TRAILING_QUANTITY =
+  /^(.+?[^0-9])\s*[—–:-]\s*(?:\d.*|a pinch|a handful|to taste|as needed|as required)\s*$/i;
+
+/**
  * Extract a clean display name from a line, stripping trailing
  * quantity/unit annotations like "(about 2 cups)" or "— 1 tbsp" so the
  * grocery item shows up as just "Onion" instead of "Onion — 1 tbsp".
@@ -345,7 +428,7 @@ function extractName(line: string): string {
   // Strip trailing parenthetical hints.
   s = s.replace(/\s*\([^)]*\)\s*$/, '');
   // Strip trailing "— quantity" / "- quantity" / ", quantity".
-  s = s.replace(/\s*[—\-:]\s*(?:\d.*|a pinch|a handful|to taste|as needed|as required)\s*$/i, '');
+  s = s.replace(TRAILING_QUANTITY, '$1');
   s = s.replace(/\s*,\s*(?:\d.*|a pinch|a handful|to taste|as needed|as required)\s*$/i, '');
 
   // A note after a dash is not part of the name.
