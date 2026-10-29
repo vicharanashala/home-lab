@@ -15,6 +15,7 @@
 import type { CategoryId, StockItem } from '../types';
 import type { UseStore } from '../store/useStore';
 import { formatQuantity } from './date';
+import { spellQuantity } from './groceryQuantity';
 
 const CATEGORIES = new Set<string>([
   'vegetables', 'fruits', 'dairy', 'meat', 'seafood', 'bakery', 'grains',
@@ -154,7 +155,12 @@ export function applyAgentActions(
         case 'add_grocery': {
           const item = store.addGrocery({
             name,
-            quantity: clean(a.quantity, 40) || '1',
+            // WHY THE APP'S OWN RULE: the shopping list is ONE list, and the
+            // Stock row, the Alerts screen and the Meal Plan write "1 pc"
+            // onto it. The model writes its quantity as free text, so it can
+            // write "1 pcs" — and the list then carried the same quantity two
+            // ways. Free text that is not a number and a unit is left alone.
+            quantity: spellQuantity(clean(a.quantity, 40)) || '1',
             category: asCategory(a.category),
           });
           result.touchedGroceryIds.push(item.id);

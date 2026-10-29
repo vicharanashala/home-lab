@@ -1,5 +1,6 @@
 import type { CategoryId } from '../types';
 import { suggestCategory } from './categorySuggest';
+import { spellQuantity } from './groceryQuantity';
 
 // A small keyword map that mirrors categorySuggest but is plural-aware so
 // "tomatoes" / "potatoes" / "lentils" don't fall back to 'other'.
@@ -83,6 +84,57 @@ function cleanBullet(raw: string): string {
 }
 
 /**
+ * The units the parser recognises, each carrying its own plural.
+ *
+ * WHY EACH ONE CARRIES ITS OWN PLURAL AND NOT ONE "s?" AFTER THE LIST: the
+ * old list put the "s?" outside the group that captures the word, so the
+ * group took the SINGULAR and the "s?" ate the rest — "2 cloves" was written
+ * "2 clove" and "200 grams" was written "200 gram". The plural is part of
+ * the word, so it belongs inside the group.
+ *
+ * WHY THE PLURAL IS KEPT AT ALL: the app has one rule for writing a
+ * quantity — `formatQuantity` — and that rule decides whether the unit reads
+ * as singular from the NUMBER and the unit together: "1 pc" but "2 pcs",
+ * "1 clove" but "2 cloves". A parser that throws the plural away cannot ask
+ * that rule the question, and so writes a word the app never writes.
+ *
+ * WHY "bunch", "dash" AND "pinch" CARRY AN "es" OF THEIR OWN: English
+ * plurals are not always the stem plus an "s" — a bunch is "bunches", a dash
+ * is "dashes" and a pinch is "pinches" — so each of those three has to be
+ * written as the stem on its own OR the stem plus "es". Writing them as
+ * "bunches?" alone would leave the singular form of the word unrecognised.
+ */
+const UNIT_WORDS =
+  'cups?|tbsp|tsps?|tablespoons?|teaspoons?|kgs?|grams?|g|ml|l|liters?|litres?' +
+  '|pcs|pieces?|packs?|packets?|dozens?|cloves?|pinch(?:es)?|dash(?:es)?' +
+  '|bunch(?:es)?|handfuls?';
+
+/**
+ * Write the quantity the way the app writes every quantity.
+ *
+ * WHY THE APP'S OWN RULE: the shopping list is ONE list, and the Stock row,
+ * the Alerts screen, the Meal Plan and the House Bot all write into it.
+ * Every line on that list has to be written the same way, or the list reads
+ * as though it were two lists. The Stock row writes "1 pc" (see
+ * `groceryQuantityForStock`), and this used to write "1 pcs" — the same
+ * quantity, one number, two spellings, on one list. "pcs" is the default unit
+ * for a new item, so a quantity of one is the commonest quantity in the
+ * kitchen and this was the commonest way for the list to contradict itself.
+ *
+ * WHY THE UNIT IS LOWER-CASED HERE: the unit is a word the kitchen types and
+ * the model writes, and the app writes its units in lower case — "kg", "tbsp",
+ * "pcs". The rule is told the unit the way the app writes it.
+ *
+ * @param qty the number as the bullet wrote it
+ * @param unit the unit as the bullet wrote it
+ * @returns the quantity — "1 pc", "2 pcs", "1/2 cup"
+ */
+function writeQuantity(qty: string, unit: string): string {
+  if (!unit) return qty;
+  return spellQuantity(`${qty} ${unit.toLowerCase()}`);
+}
+
+/**
  * Try to pull a quantity+unit prefix out of a line so we can capture
  * "1 cup of tomatoes" -> { name: "tomatoes", quantity: "1 cup" }.
  *
@@ -92,17 +144,31 @@ function cleanBullet(raw: string): string {
  */
 function extractQuantity(line: string): { quantity: string; rest: string } {
   // Common quantity + unit patterns at start of line.
+  //
+  // WHY THE PATTERNS ARE BUILT FROM ONE LIST OF UNITS: the old code wrote the
+  // list out five times and the copies had drifted — one knew "cloves" and
+  // another knew only "clove", and one knew "grams" and another did not. One
+  // list is also the only way to be sure every pattern knows the same units.
   const patterns: RegExp[] = [
     // "1/2 cup", "1.5 kg", "2 tbsp" with unit
-    /^(\d+\s*\/\s*\d+|\d+(?:\.\d+)?)\s*(cup|tbsp|tsp|tablespoon|teaspoon|kg|g|gram|grams|ml|l|liter|litre|pcs|piece|pieces|packets?|dozen|clove|cloves|pinch|dash|bunch|handful)s?\b\s+(?:of\s+)?(.+)$/i,
+    new RegExp(
+      `^(\\d+\\s*/\\s*\\d+|\\d+(?:\\.\\d+)?)\\s*(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`,
+      'i',
+    ),
     // "1 cup of", "2 tablespoons of"
-    /^(\d+(?:\.\d+)?)\s+(cup|tbsp|tsp|tablespoon|teaspoon|kg|g|gram|grams|ml|l|liter|litre|pcs|piece|pieces|packets?|dozen|clove|cloves|pinch|dash|bunch|handful)s?\s+(?:of\s+)?(.+)$/i,
-    // "500 g", "1.5 kg" with unit
-    /^(\d+(?:\.\d+)?)\s*(kg|g|ml|l|gram|grams|liter|litre)s?\b\s*(?:of\s+)?(.+)$/i,
+    new RegExp(
+      `^(\\d+(?:\\.\\d+)?)\\s+(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`,
+      'i',
+    ),
+    // "500 g", "1.5 kg" with unit — no space on either side of the unit
+    new RegExp(
+      `^(\\d+(?:\\.\\d+)?)\\s*(${UNIT_WORDS})\\b\\s*(?:of\\s+)?(.+)$`,
+      'i',
+    ),
     // "1 medium", "2 large", "1 small" (size adjectives)
     /^(\d+)\s+(medium|large|small|big|whole)\s+(.+)$/i,
     // "3 cloves", "2 pieces", "1 bunch"
-    /^(\d+)\s+(clove|cloves|piece|pieces|pcs|packets?|pack|dozen|bunch|bunches|handful)s?\s+(?:of\s+)?(.+)$/i,
+    new RegExp(`^(\\d+)\\s+(${UNIT_WORDS})\\b\\s+(?:of\\s+)?(.+)$`, 'i'),
   ];
 
   for (const re of patterns) {
@@ -112,9 +178,21 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
       const unitWord = m[2] || '';
       const rest = (m[3] || '').trim();
       // If the rest looks like another ingredient (not a verb), accept it.
-      if (rest.length >= 2 && /^[a-z]/.test(rest)) {
-        const q = unitWord ? `${qty} ${unitWord.toLowerCase()}` : `${qty}`;
-        return { quantity: q, rest };
+      //
+      // WHY A CAPITAL LETTER IS ACCEPTED NOW: the kitchen writes its
+      // ingredients in capitals — the catalogue's own strings are "Onion -
+      // sliced", "Fresh coconut - grated", "Green Chillies - slit" — and so
+      // does the House Bot. The old rule asked for a lower-case letter, so it
+      // did not fire for them, the bullet fell through to the bare-number
+      // rule, and the unit stayed in the item's NAME:
+      //
+      //     "- 1 kg Rice"    ->    an item called "kg Rice", quantity "1"
+      //
+      // The shopping list showed "kg Rice · 1" instead of "Rice · 1 kg", and
+      // an item called "kg Rice" can never match the kitchen's "Rice" — stock
+      // matching is exact.
+      if (rest.length >= 2 && /^[a-z]/i.test(rest)) {
+        return { quantity: writeQuantity(qty, unitWord), rest };
       }
     }
   }

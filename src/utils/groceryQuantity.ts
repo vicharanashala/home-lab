@@ -5,15 +5,18 @@ import { formatQuantity } from './date';
  * How much of something to put on the shopping list, written by ONE rule.
  *
  * WHY THE SHOPPING LIST NEEDS A RULE OF ITS OWN: the shopping list is one
- * list, and four screens write into it — the Stock row, the Alerts screen
- * (once per item and once for all of them), the Meal Plan and the automatic
- * grocery list. Every line on that list has to be written the same way, or
- * the list reads as though it were two lists.
+ * list, and six writers put lines on it — the Stock row, the Alerts screen
+ * (once per item and once for all of them), the Meal Plan, the automatic
+ * grocery list, the House Bot's bullet parser and the House Bot's own action.
+ * Every line on that list has to be written the same way, or the list reads
+ * as though it were two lists.
  *
- * It was not. The two rules that produced the lines were:
+ * It was not. The rules that produced the lines were:
  *
  *     the Alerts screen and the Stock row   formatQuantity(threshold, unit)
  *     the Meal Plan and the automatic list  `${needed}${unit}`
+ *     the House Bot's bullet parser         `${qty} ${unit}`
+ *     the House Bot's own action            whatever the model wrote
  *
  * — the second one splicing the number into the unit with nothing between
  * them, which is the spelling `formatQuantity` exists to prevent. So the
@@ -28,6 +31,11 @@ import { formatQuantity } from './date';
  *     from the Alerts screen    "1 pc"
  *     from the Meal Plan       "1pcs"
  *
+ * and the two House Bot writers spelled it a third and a fourth way:
+ *
+ *     from the House Bot's parser   "1 pcs"
+ *     from the House Bot's action   "1 pcs"
+ *
  * WHY IT IS NOT THE SCREENS' OWN JOB: `formatQuantity` is the rule that
  * writes a quantity, and these two functions decide WHICH quantity a screen
  * means — the restock level of an item, or the shortfall a plan needs. That
@@ -38,6 +46,39 @@ import { formatQuantity } from './date';
  * about what the shopping list should SAY, and they are about the kitchen,
  * not about a date.
  */
+
+/**
+ * Spell a quantity the way the app spells every quantity.
+ *
+ * WHY IT TAKES FREE TEXT: the shopping list's writers do not all hold a
+ * quantity the same way. The Stock row and the Alerts screen have a NUMBER
+ * and a UNIT; the House Bot's bullet parser has a number and a unit it has
+ * just lifted off the front of a line; and the House Bot's own action puts
+ * the quantity in as ONE string — "2 packets" — because the bridge tells the
+ * model it may write free text. Three shapes, one list.
+ *
+ * So this rule takes the string and writes it the app's way, and all of them
+ * agree: "1 pc" beside "1 pc", not "1 pc" beside "1 pcs".
+ *
+ * WHY ONLY THE "<number> <word>" SHAPE IS RE-SPELLED: free text is free
+ * text. The model may write "a pinch of salt" or "2 big packets", and those
+ * are not quantities the app has a rule for — they are left exactly as they
+ * were written. Only a quantity that is already a number and a unit is one.
+ *
+ * WHY A FRACTION IS LEFT ALONE: `formatQuantity` writes a NUMBER, and "1/2"
+ * is not one. The household wrote "1/2 cup of sugar", and turning that into
+ * "0.5 cup" would put a number the household never said on their shopping
+ * list.
+ *
+ * @param text the quantity as it was written
+ * @returns the quantity, spelled the app's way
+ */
+export const spellQuantity = (text: string): string => {
+  const trimmed = text.trim();
+  const m = /^(\d+(?:\.\d+)?)\s+(\S.*)$/.exec(trimmed);
+  if (!m) return trimmed;
+  return formatQuantity(Number(m[1]), m[2]);
+};
 
 /**
  * The line for a stock item the household is running low on.
