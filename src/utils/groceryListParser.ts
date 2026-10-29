@@ -288,11 +288,36 @@ const NUMBER =
  * inside a name is part of the name ("Semi-dried tomatoes"). Only a mark at
  * the very front, in front of a space or a number, is a mark and not a word.
  *
+ * WHY THE NUMBER AFTER THE MARK IS NOT SWALLOWED WITH IT: the rule above
+ * says the mark is not part of the quantity — so the number after the mark
+ * IS the quantity, and it has to be left there for the number rules to
+ * read:
+ *
+ *     "-3 Green Chillies - sliced"    the mark is "-", the quantity is "3"
+ *     "-1/2 turmeric powder"          the mark is "-", the quantity is "1/2"
+ *
+ * The rule used to take the digit along with the mark, because it matched
+ * the digit as part of the mark. The NAME came out right — "Green Chillies"
+ * is the kitchen's own word — and the QUANTITY came out wrong, and the
+ * wrong one is the number the household shops from:
+ *
+ *     "- -3 Green Chillies - sliced"   ->   "Green Chillies" x "1"
+ *     "- -3 Green Chillies - sliced"   ->   "Green Chillies" x "3"   (now)
+ *
+ * Two of the catalogue's 10,925 distinct ingredient strings are written with
+ * the mark against the number. Every other one has a space after the mark,
+ * which is why the mistake sat there unnoticed: the shapes the catalogue
+ * mostly writes were all read right.
+ *
+ * WHY THE DIGIT IS A LOOKAHEAD AND NOT PART OF THE MARK: the digit is the
+ * quantity, so it has to still be there when the number rules run. The mark
+ * is what comes off.
+ *
  * WHY THE SLASH IS IN THE LIST: the catalogue writes "/ 4 tsp cinnamon
  * powder" in the same recipe as "Tsp cumin powder" — the slash is where the
  * bullet went, and the number after it is the quantity.
  */
-const LEADING_MARK = /^(?:[-*•·+/](?:\s+|\d))+/;
+const LEADING_MARK = /^(?:[-*•·+/](?:\s+|(?=\d)))+/;
 
 /**
  * Try to pull a quantity+unit prefix out of a line so we can capture

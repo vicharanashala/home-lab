@@ -345,6 +345,21 @@ console.log('\nthe mark in front of the quantity is not part of it');
     { bullet: '- / 4 tsp cinnamon powder', name: 'cinnamon powder', quantity: '4 tsp' },
     { bullet: '- - 1-1 1/2 cups Water', name: 'Water', quantity: '1-1 1/2 cups' },
     { bullet: '- - 1//4 cups Sugar', name: 'Sugar', quantity: '1//4 cups' },
+    // THE MARK AGAINST THE NUMBER, WITH NO SPACE BETWEEN THEM.
+    //
+    // The rule above strips a mark, and the number after it is the quantity —
+    // so the number has to be left there. These are the two catalogue
+    // strings written that way, and every other one has a space after the
+    // mark, which is why the mark used to take the number with it and only
+    // these two went wrong:
+    //
+    //     "-3 Green Chillies - sliced"   ->   "Green Chillies" x "1"
+    //     "-3 Green Chillies - sliced"   ->   "Green Chillies" x "3"   (now)
+    //
+    // The name was right either way. The QUANTITY is what the household
+    // shops from, and "1" is a number nobody asked for.
+    { bullet: '- -3 Green Chillies - sliced', name: 'Green Chillies', quantity: '3' },
+    { bullet: '- -1/2 turmeric powder', name: 'turmeric powder', quantity: '1/2' },
   ];
 
   for (const c of cases) {
@@ -397,8 +412,20 @@ console.log('\nevery ingredient in the real catalogue survives');
 
   const lost = [];
   const stuck = [];
+  const misplaced = [];
   let total = 0;
   let sentence = 0;
+
+  // THE NUMBER THE CATALOGUE WRITES IN FRONT OF THE INGREDIENT.
+  //
+  //     "- 3 Saffron strands"        the mark, a space, the number
+  //     "-3 Green Chillies - sliced"  the mark, NO space, the number
+  //
+  // Both carry the number, and the number is the quantity. When the mark was
+  // taken with the number, the NAME still came out right and the QUANTITY
+  // came out as "1" — and this test did not see it, because it only asked
+  // whether the number came off the name. The number has to LAND as well.
+  const NUMBER_IN_FRONT = /^\s*[-*•·+/]\s*(\d+(?:\/\d+)?)/;
 
   for (const recipe of recipes) {
     for (const ing of recipe.ingredients || []) {
@@ -415,6 +442,17 @@ console.log('\nevery ingredient in the real catalogue survives');
         // the kitchen asked for by a count.
         if (/^\s*\d/.test(items[0].name)) {
           if (stuck.length < 5) stuck.push(raw);
+        }
+        // AND COMING OFF THE NAME IS NOT ENOUGH: the number has to be the
+        // QUANTITY the shopping list carries, and not a "1" that nobody
+        // asked for.
+        const front = NUMBER_IN_FRONT.exec(raw);
+        if (front && !String(items[0].quantity).startsWith(front[1])) {
+          if (misplaced.length < 5) {
+            misplaced.push(
+              `${JSON.stringify(raw)} -> quantity ${JSON.stringify(items[0].quantity)}`,
+            );
+          }
         }
         continue;
       }
@@ -440,6 +478,13 @@ console.log('\nevery ingredient in the real catalogue survives');
     stuck.length
       ? `${stuck.length} stuck, e.g. ${stuck.map((s) => JSON.stringify(s)).join(', ')}`
       : 'the quantity comes off every one of them',
+  );
+  ok(
+    misplaced.length === 0,
+    "and the catalogue's number is the quantity on the shopping list",
+    misplaced.length
+      ? `${misplaced.length} misplaced, e.g. ${misplaced.join(', ')}`
+      : 'every one of them carries the number the catalogue wrote',
   );
 }
 
