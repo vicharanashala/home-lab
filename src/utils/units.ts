@@ -69,6 +69,14 @@ const SCOOP: Record<string, number> = {
   teaspoons: 5,
   tbsp: 15,
   tbs: 15,
+  // WHY "tb" IS HERE: the app's own rule writes a quantity of one "tbs" as
+  // "1 tb" — it takes the singular of the unit, and the singular of "tbs" is
+  // "tb" (see `singularUnit` in date.ts). So "tb" is a word the app writes on
+  // the shopping list and the House Bot's parser reads back, and a household
+  // can type it into the free-text stock unit field. Without it in this
+  // table it converted to nothing: a stock row held in "tb" matched no
+  // recipe and `toDisplayUnit` divided it by 1 instead of 15.
+  tb: 15,
   tablespoon: 15,
   tablespoons: 15,
   cup: 240,
