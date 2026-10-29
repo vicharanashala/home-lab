@@ -26,7 +26,8 @@ import type { MealPlanDay, MealPlanEntry, MealSlot, Recipe, ShoppingNeed } from 
 import { dayMode, recipeAllowed, recipeViolations, violationPhrase } from '../utils/dayModes';
 import { DayModeSheet } from '../components/DayModeSheet';
 import { recipesUsingExpiringStock, urgencyLabel } from '../utils/expiryRecipes';
-import { formatDays, itemsExpiringSoon } from '../utils/date';
+import { formatDays, formatQuantity, itemsExpiringSoon } from '../utils/date';
+import { groceryQuantityForNeed } from '../utils/groceryQuantity';
 import { suggestMeals, buildTasteVector } from '../utils/mealSuggest';
 import type { MealSuggestion } from '../utils/mealSuggest';
 import { SuggestSheet } from '../components/SuggestSheet';
@@ -473,7 +474,16 @@ export default function MealPlanPage() {
     for (const item of toBuy) {
       const key = item.name.trim().toLowerCase();
       if (existing.has(key)) continue;
-      addGrocery({ name: item.name, quantity: `${item.needed}${item.unit}`, category: item.category });
+      addGrocery({
+        name: item.name,
+        // WHY THE SHARED RULE: the shopping list is one list, and this line
+        // used to be built by splicing the number into the unit with nothing
+        // between them — "2kg" — where the rest of the app says "2 kg". A
+        // quantity of one ran together as well: "1pcs" where the Alerts
+        // screen says "1 pc". See `groceryQuantityForNeed`.
+        quantity: groceryQuantityForNeed(item),
+        category: item.category,
+      });
       existing.add(key);
       n++;
     }
@@ -866,7 +876,7 @@ export default function MealPlanPage() {
                                     <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', inStock ? 'bg-sage-500' : 'bg-tomato-400')} />
                                     <span className="truncate">{ing.name}</span>
                                     <span className="text-sage-400 dark:text-ink-500 ml-auto shrink-0">
-                                      {ing.quantity}{ing.unit}
+                                      {formatQuantity(ing.quantity, ing.unit)}
                                     </span>
                                   </li>
                                 );
@@ -1192,8 +1202,8 @@ function ShoppingListSheet({
                       {n.name}
                     </span>
                     <span className="block text-[11px] text-sage-500 dark:text-ink-400">
-                      need {n.needed}{n.unit}
-                      {n.inStock && n.have ? ` · have ${n.have}${n.unit}` : ''}
+                      need {formatQuantity(n.needed, n.unit)}
+                      {n.inStock && n.have ? ` · have ${formatQuantity(n.have, n.unit)}` : ''}
                     </span>
                   </span>
                   <a
@@ -1242,7 +1252,7 @@ function ShoppingListSheet({
                     <CircleCheck size={14} className="text-sage-500 shrink-0" />
                     <span className="truncate">{n.name}</span>
                     <span className="ml-auto text-xs text-sage-400 shrink-0">
-                      {n.needed}{n.unit}
+                      {formatQuantity(n.needed, n.unit)}
                     </span>
                   </li>
                 ))}

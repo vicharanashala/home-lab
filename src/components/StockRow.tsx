@@ -6,6 +6,7 @@ import { getCategory } from '../utils/categories';
 import { CategoryIcon } from './icons/AppIcons';
 import { useStore } from '../store/useStore';
 import { daysUntil, expiryBucket, formatExpiry, formatQuantity } from '../utils/date';
+import { groceryQuantityForStock } from '../utils/groceryQuantity';
 import { conflictsDiet, detectAllergensInName } from '../utils/diet';
 import { ConfirmModal } from './ConfirmModal';
 import { hapticSelect, hapticDanger } from '../utils/haptics';
@@ -51,21 +52,27 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
    * sensible quantity — roughly what you'd buy to replace what's on hand, so
    * the list says "2 kg" rather than a bare name.
    *
-   * WHY THE QUANTITY IS WRITTEN BY THE APP'S OWN RULE: the Alerts screen
-   * seeds the same grocery line with `formatQuantity`, and the shopping list
-   * is one list. Two screens writing the same kind of line must write it the
-   * same way, and this one did not: it spelled the unit into a template of
-   * its own, which said "1 pcs" where the Alerts screen said "1 pc" — and
-   * which left a trailing space where the unit should have been for an item
-   * that has no unit at all. "pcs" is the default unit for a new item and a
-   * threshold of zero is the default threshold, so "1 pcs" is what the list
-   * usually said.
+   * WHY THE QUANTITY COMES FROM THE SHARED RULE: the Alerts screen seeds the
+   * same grocery line for the same item, and the shopping list is one list.
+   * Two screens writing the same kind of line must write it the same way, and
+   * this one used not to: it spelled the unit into a template of its own,
+   * which said "1 pcs" where the Alerts screen said "1 pc" — and which left a
+   * trailing space where the unit should have been for an item that has no
+   * unit at all. "pcs" is the default unit for a new item and a threshold of
+   * zero is the default threshold, so "1 pcs" was what the list usually said.
+   * The rule that decides the amount now lives in one place:
+   * `groceryQuantityForStock`.
    */
   const addToGrocery = () => {
-    const qty = Math.max(1, Math.ceil(item.lowStockThreshold || 1));
     addGrocery({
       name: item.name,
-      quantity: formatQuantity(qty, item.unit),
+      // WHY THE SHARED RULE AND NOT A ROUNDING OF ITS OWN: the Alerts
+      // screen writes the same line for the same item, and the shopping list
+      // is one list. This used to round the threshold up — so a household
+      // that set "low at 2.5 kg" got "3 kg" from this row and "2.5 kg" from
+      // the Alerts screen, for the same item on the same list. The rule
+      // that decides the amount is now one rule, in one place.
+      quantity: groceryQuantityForStock(item),
       category: item.category,
     });
     toast(`Added ${item.name} to your list`, 'success');

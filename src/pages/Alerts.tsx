@@ -14,6 +14,7 @@ import {
 import clsx from 'clsx';
 import { daysUntil, expiryBucket, formatDays, formatQuantity, itemsExpiringSoon } from '../utils/date';
 import { formatAttentionCount } from '../utils/attention';
+import { groceryQuantityForStock } from '../utils/groceryQuantity';
 import type { StockItem } from '../types';
 
 export function AlertsPage() {
@@ -123,7 +124,12 @@ export function AlertsPage() {
   const addToGrocery = (it: StockItem) => {
     const item = addGrocery({
       name: it.name,
-      quantity: formatQuantity(Math.max(1, it.lowStockThreshold), it.unit) || '1',
+      // WHY THE SHARED RULE: the shopping list is one list, and the Stock
+      // screen writes the same line for the same item. The two used to
+      // round the threshold differently, so the same item could carry two
+      // different amounts on the one list depending on where it was added
+      // from. See `groceryQuantityForStock`.
+      quantity: groceryQuantityForStock(it),
       category: it.category,
     });
     toast(`Added “${it.name}” to grocery list`, 'success');
@@ -135,7 +141,7 @@ export function AlertsPage() {
     for (const it of lowStock) {
       addGrocery({
         name: it.name,
-        quantity: formatQuantity(Math.max(1, it.lowStockThreshold), it.unit) || '1',
+        quantity: groceryQuantityForStock(it),
         category: it.category,
       });
       n += 1;

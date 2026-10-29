@@ -5,6 +5,7 @@ import {
   TOTAL_SLOTS, TOTAL_DAYS, plannedDayLabels,
 } from '../utils/portions';
 import type { Recipe, ShoppingNeed } from '../types';
+import { groceryQuantityForNeed } from '../utils/groceryQuantity';
 
 /** Lazily load the big parsed catalogue. Same pattern as Discover / MealPlan. */
 export function useCsvRecipes(): Recipe[] | null {
@@ -82,7 +83,12 @@ export function useAutoGrocery() {
       }
       addGrocery({
         name: item.name,
-        quantity: `${item.needed}${item.unit}`,
+        // WHY THE SHARED RULE: the shopping list is one list, and this line
+        // used to be built by splicing the number into the unit with nothing
+        // between them — "2kg" — where the rest of the app says "2 kg". A
+        // quantity of one ran together as well: "1pcs" where the Alerts
+        // screen says "1 pc". See `groceryQuantityForNeed`.
+        quantity: groceryQuantityForNeed(item),
         category: item.category,
       });
       existing.add(key);

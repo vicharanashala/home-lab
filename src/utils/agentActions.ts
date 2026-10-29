@@ -14,6 +14,7 @@
 
 import type { CategoryId, StockItem } from '../types';
 import type { UseStore } from '../store/useStore';
+import { formatQuantity } from './date';
 
 const CATEGORIES = new Set<string>([
   'vegetables', 'fruits', 'dairy', 'meat', 'seafood', 'bakery', 'grains',
@@ -142,7 +143,11 @@ export function applyAgentActions(
 
           result.touchedStockIds.push(created.id);
           result.applied += 1;
-          done.push(`${quantity}${unit} ${name}`);
+          // WHY THE APP'S OWN RULE: the confirmation is the household's proof
+          // of what was written, and the stock row it just wrote says "2 kg".
+          // Splicing the number into the unit here said "2kg" — and a
+          // quantity of one said "1pcs" where the row says "1 pc".
+          done.push(`${formatQuantity(quantity, unit)} ${name}`);
           break;
         }
 
@@ -181,7 +186,7 @@ export function applyAgentActions(
           store.updateStock(target.id, { quantity: Math.min(quantity, 10000) });
           result.touchedStockIds.push(target.id);
           result.applied += 1;
-          done.push(`${target.name} → ${quantity}${target.unit}`);
+          done.push(`${target.name} → ${formatQuantity(quantity, target.unit)}`);
           break;
         }
 

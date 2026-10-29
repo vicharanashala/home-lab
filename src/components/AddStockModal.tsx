@@ -12,6 +12,7 @@ import { AutocompleteInput, type Suggestion } from './AutocompleteInput';
 import { COMMON_ITEMS } from '../utils/commonItems';
 import { classifyFoodImageDetailed, extractImageEmbedding, readOverwatchUrl, type Prediction } from '../utils/foodClassifier';
 import { uid } from '../utils/uid';
+import { formatQuantity } from '../utils/date';
 import { saveTrainingExample } from '../utils/foodTrainer';
 
 interface Props {
@@ -1284,7 +1285,7 @@ function SuccessView({
           <div className="font-semibold text-sage-900 dark:text-cream-50 truncate">{item.name}</div>
           <div className="text-xs text-sage-500 mt-0.5 truncate">
             <span className="font-semibold text-sage-700">
-              {item.quantity} {item.unit}
+              {formatQuantity(item.quantity, item.unit)}
             </span>
             {' · '}
             {cat.label}

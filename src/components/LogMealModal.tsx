@@ -20,6 +20,7 @@ import clsx from 'clsx';
 import type { MealType } from '../types';
 import { planRecipeDeduction } from '../utils/recipeMatch';
 import { formatInUnit } from '../utils/units';
+import { formatQuantity } from '../utils/date';
 import { AutocompleteInput, type Suggestion } from './AutocompleteInput';
 import { MealPhotoButton } from './MealPhotoButton';
 import { DishIcon } from './icons/DishIcons';
@@ -415,12 +416,12 @@ export function LogMealModal({ open, onClose, initialMealType }: Props) {
                                           ? 'bg-sage-600 text-white border-sage-600'
                                           : 'bg-white dark:bg-ink-800 text-sage-700 dark:text-cream-50 border-sage-200 dark:border-ink-700 hover:bg-sage-50 dark:hover:bg-ink-700',
                                       )}
-                                      title={`${c.quantity} ${c.unit} on hand`}
+                                      title={`${formatQuantity(c.quantity, c.unit)} on hand`}
                                     >
                                       {isPickedDifferent && !active ? null : null}
                                       <span>{c.name}</span>
                                       <span className="opacity-70 text-[10px] tabular-nums">
-                                        ({c.quantity} {c.unit})
+                                        ({formatQuantity(c.quantity, c.unit)})
                                       </span>
                                     </button>
                                   );
