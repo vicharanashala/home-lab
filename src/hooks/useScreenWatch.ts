@@ -87,6 +87,8 @@ export function useScreenSharer() {
    * the answer is still wanted.
    */
   const attemptRef = useRef(0);
+  /** The timer that opens the store if the browser never answers. */
+  const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const post = useCallback((msg: WatchMessage) => {
     try {
@@ -169,14 +171,20 @@ export function useScreenSharer() {
   /**
    * Ask the browser for a share, and start watching it.
    *
-   * WHY THE STORE IS OPENED FIRST: the browser's picker lists the windows
-   * that can be shared, and the person picks the one the store opened in. If
-   * the store is not open yet, the window they would share is not showing it,
-   * and there is nothing to ask about.
+   * WHY THE ASK COMES FIRST, AND THE STORE OPENS AFTER: Chrome only puts
+   * the capture picker up for a page that is in front. Opening the store's
+   * tab first took the focus away and hid this page, and the request went
+   * out to a browser that had no reason to show anything — so nothing
+   * happened, and nothing said why.
+   *
+   * So the request is made while this page is still in front, and the store
+   * opens once the browser has answered. Because the capture is of the
+   * WINDOW and not of one tab, the window is filmed from the moment it is
+   * granted, so the store is already on the screen House Bot is watching.
    *
    * WHY getDisplayMedia IS STILL CALLED IN THE SAME HANDLER: the browser
    * only allows a screen share to be asked for in response to something the
-   * person did — a click. Opening a tab does not spend the click.
+   * person did — a click.
    */
   const start = useCallback(
     async (label: string, openTab: () => void) => {
@@ -208,11 +216,26 @@ export function useScreenSharer() {
       // once the share has started, so a failure in between would leave a
       // capture running that nothing in the app holds.
       let granted: MediaStream | null = null;
-      try {
-        // Opened first, and not awaited: the picker has to be able to see
-        // the tab it is asking about.
-        openTab();
 
+      // THE STORE IS OPENED EXACTLY ONCE, however this ends.
+      //
+      // It is opened once the browser has answered, and also after a few
+      // seconds in case the answer never comes — a person who walks away
+      // from the picker should still get the store they asked for.
+      let storeOpened = false;
+      const openTheStore = () => {
+        if (storeOpened) return;
+        storeOpened = true;
+        try { openTab(); } catch { /* the popup was blocked */ }
+      };
+      //
+      // WHY THE GLOBAL TIMER AND NOT window's: the browser is the same
+      // object, but a test's fake window need not have one, and a hook that
+      // only works in the browser is a hook that cannot be tested.
+      const fallback = setTimeout(openTheStore, 4000);
+      fallbackRef.current = fallback;
+
+      try {
         if (!navigator.mediaDevices?.getDisplayMedia) {
           setState({
             watching: false,
@@ -221,6 +244,8 @@ export function useScreenSharer() {
             asking: false,
             sentFrame: false,
           });
+          // The store is still what was asked for.
+          openTheStore();
           return false;
         }
 
@@ -284,6 +309,24 @@ export function useScreenSharer() {
           ...({ monitorTypeSurfaces: SHARE_MONITOR_SURFACES } as Record<string, unknown>),
         });
         granted = stream;
+        // The answer is in, so the fallback is no longer needed.
+        clearTimeout(fallback);
+        fallbackRef.current = null;
+
+        // THE STORE IS OPENED AFTER THE ASK, AND NOT BEFORE.
+        //
+        // WHY IT WAS WRONG BEFORE: the tab was opened first, which took the
+        // focus and hid this page — and Chrome does not put the capture
+        // picker up for a page that is not in front. The request went out,
+        // nothing came back, and the app sat waiting for an answer that was
+        // never going to arrive. Nothing happened, and nothing said why.
+        //
+        // WHY IT IS RIGHT NOW: the request is made while this page is still
+        // in front, so the picker appears. And because the capture is of the
+        // WINDOW and not of one tab, the window is filmed from the moment it
+        // is granted — so the store, which opens just afterwards, is already
+        // on the screen House Bot is watching.
+        openTheStore();
 
         // THE ANSWER CAME LATE, AND THE PAGE HAS MOVED ON.
         //
@@ -402,6 +445,9 @@ export function useScreenSharer() {
         post({ kind: 'status', watching: true, label });
         return true;
       } catch (err) {
+        // The picker was refused, or the browser would not give a capture.
+        // Either way the person asked for a STORE, so the store opens.
+        openTheStore();
         // WHY THE GRANTED CAPTURE IS GIVEN BACK HERE
         //
         // The browser granted the capture and will keep filming until
@@ -473,6 +519,14 @@ export function useScreenSharer() {
       attemptRef.current += 1;
       sharingRef.current = false;
       releasePreviousShare();
+
+      // The timer that opens the store if the browser never answers must not
+      // outlive the page: a store opening in a tab after the person has gone
+      // is worse than a store that did not open.
+      if (fallbackRef.current !== null) {
+        clearTimeout(fallbackRef.current);
+        fallbackRef.current = null;
+      }
 
       // TELL THE OTHER TABS, BEFORE THE CHANNEL IS CLOSED.
       //

@@ -229,7 +229,10 @@ export const SHARE_SELF_BROWSER_SURFACE = 'include';
  * with "on that tab". The sentence that says what is about to happen to the
  * person is written once, here, where the surface it names is decided.
  */
-export const SHARE_ASKING_TEXT = `${SHARE_PICKER_HINT} HomeHub will then be able to answer questions about what is on that window.`;
+export const SHARE_ASKING_TEXT =
+  `Chrome is asking whether you want to share your window — look for the ` +
+  `prompt at the top of the browser. Say yes, and HomeHub can answer ` +
+  `questions about what is on that window.`;
 
 /**
  * What the stores screen says while the share is running.

@@ -862,5 +862,68 @@ console.log('\nthe share asks the browser the question the browser answers');
   harness.unmount();
 }
 
+
+console.log('\nthe store is opened AFTER the browser is asked, not before');
+{
+  // WHY THE ORDER MATTERS: Chrome only puts the capture picker up for a
+  // page that is in front. Opening the store's tab first took the focus and
+  // hid this page, so the request went out and nothing came back — the
+  // picker never appeared and the app waited for an answer that was never
+  // going to arrive. The person saw nothing happen at all.
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  const order = [];
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    order.push('asked');
+    const stream = makeStream();
+    streams.push(stream);
+    return stream;
+  };
+
+  const harness = mountHook(() => useScreenSharer());
+  await harness.value.start('Amazon Fresh', () => {
+    order.push('opened');
+  });
+
+  ok(
+    order[0] === 'asked',
+    'the browser is asked while the page is still in front',
+    order.join(' then '),
+  );
+  ok(
+    order.includes('opened'),
+    'and the store opens once the browser has answered',
+    order.join(' then '),
+  );
+}
+
+console.log('\nthe store opens even when the browser refuses the share');
+{
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  const order = [];
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    order.push('asked');
+    const err = new Error('Permission denied');
+    err.name = 'NotAllowedError';
+    throw err;
+  };
+
+  const harness = mountHook(() => useScreenSharer());
+  await harness.value.start('Amazon Fresh', () => {
+    order.push('opened');
+  });
+
+  ok(
+    order.includes('opened'),
+    'the person asked for a STORE, so the store opens',
+    order.join(' then '),
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
