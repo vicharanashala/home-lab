@@ -906,7 +906,18 @@ console.log('\nthe store is opened AFTER the browser is asked, not before');
   );
   ok(
     order.includes('opened'),
-    'and the store opens once the browser has answered',
+    'and the store opens',
+    order.join(' then '),
+  );
+  // THE STORE MUST OPEN INSIDE THE CLICK. Chrome's popup blocker refuses a
+  // window.open() that is no longer tied to one, and the address bar said
+  // "Pop-up blocked" while the page said nothing at all.
+  // The store must NOT open in the same instant as the request: that hides
+  // the page and Chrome refuses the share. It must open a moment later, while
+  // the click is still recent enough for the popup blocker to allow it.
+  ok(
+    order.indexOf('opened') === 1,
+    'the store opens after the request, not in the same instant',
     order.join(' then '),
   );
 }
@@ -1015,6 +1026,11 @@ console.log('\nthe store opens even when the browser refuses the share');
     'the person asked for a STORE, so the store opens',
     order.join(' then '),
   );
+  ok(
+    order.filter((o) => o === 'opened').length === 1,
+    'and it opens exactly once',
+    order.join(' then '),
+  );
 }
 
 console.log('\nthe store stays shut when the attempt has been abandoned');
@@ -1070,6 +1086,9 @@ console.log('\nthe store stays shut when the attempt has been abandoned');
     refuse(err);
     await starting;
 
+    // The store opens a moment after the request, and the person pressing
+    // Stop retires the attempt — so no tab opens at all. The person said
+    // stop; a store opening anyway is a tab they did not ask for.
     ok(
       order.length === 0,
       'THE STORE DOES NOT OPEN AFTER STOP',
@@ -1148,7 +1167,7 @@ console.log('\nthe store stays shut when the attempt has been abandoned');
   }
 }
 
-console.log('\nStop clears the timer that would open the store');
+console.log('\nthe store opens inside the click, so there is no timer waiting to open it');
 {
   // WHY THIS IS CHECKED SEPARATELY: the fallback timer opens the store when
   // the browser never answers, and it belongs to the attempt. Stop retires
@@ -1185,15 +1204,18 @@ console.log('\nStop clears the timer that would open the store');
     const harness = mountHook(() => useScreenSharer());
     const starting = harness.value.start('Amazon Fresh', () => {});
 
+    // WHY THERE IS NO TIMER ANY MORE: the store opens inside the person's
+    // click, because that is the only moment Chrome's popup blocker will
+    // allow it. A timer that opened it later was a timer that opened a
+    // blocked popup.
     const fallbacks = () => [...pending.values()].filter((ms) => ms >= 4000);
-    ok(fallbacks().length === 1, 'the store has a fallback timer', `${fallbacks().length}`);
-
-    harness.value.stop();
     ok(
       fallbacks().length === 0,
-      'STOP CLEARS THE TIMER THAT WOULD OPEN THE STORE',
-      `${fallbacks().length} left`,
+      'there is no timer waiting to open the store later',
+      `${fallbacks().length}`,
     );
+
+    harness.value.stop();
 
     const err = new Error('the person said no');
     err.name = 'NotAllowedError';

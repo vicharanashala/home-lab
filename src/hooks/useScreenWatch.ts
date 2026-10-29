@@ -87,8 +87,6 @@ export function useScreenSharer() {
    * the answer is still wanted.
    */
   const attemptRef = useRef(0);
-  /** The timer that opens the store if the browser never answers. */
-  const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const post = useCallback((msg: WatchMessage) => {
     try {
@@ -165,15 +163,6 @@ export function useScreenSharer() {
    */
   const stop = useCallback(() => {
     attemptRef.current += 1;
-    // The timer that opens the store if the browser never answers must not
-    // outlive the Stop either: the attempt it belonged to is over, and the
-    // person who pressed Stop did not ask for a store to open a moment
-    // later. The page going away already says this; Stop says the same
-    // thing, only the person says it.
-    if (fallbackRef.current !== null) {
-      clearTimeout(fallbackRef.current);
-      fallbackRef.current = null;
-    }
     endCurrentShare();
   }, [endCurrentShare]);
 
@@ -228,43 +217,23 @@ export function useScreenSharer() {
 
       // THE STORE IS OPENED AT MOST ONCE, and only while the attempt lives.
       //
-      // It is opened once the browser has answered, and also after a few
-      // seconds in case the answer never comes — a person who walks away
-      // from the picker should still get the store they asked for.
+      // It is opened inside the person's click, which is what keeps Chrome's
+      // popup blocker away — a window.open() that is no longer tied to a
+      // click is a popup, and a popup is blocked. It was opened after the
+      // answer, which is exactly that, and the address bar said "Pop-up
+      // blocked" while the page said nothing at all.
       let storeOpened = false;
       const openTheStore = () => {
         if (storeOpened) return;
         storeOpened = true;
-        // WHY THE ATTEMPT IS CHECKED HERE AND NOT AT EACH CALL SITE: the
-        // store is opened from three places — the browser's answer, the
-        // refusal, and the fallback timer — and the attempt can die between
-        // the question and the answer. The person pressed Stop, or the page
-        // went away, and the store opened anyway:
-        //
-        //     the person presses Stop, then dismisses Chrome's picker
-        //       -> a store opens in a tab, after the person said stop
-        //
-        // The attempt number is the hook's own answer to "is this still the
-        // question the page is asking?", and every OTHER side effect of the
-        // answer already asks it — the capture is given back, no frame timer
-        // is left running, the other tabs are not told a share is live. The
-        // store was the one side effect that did not, and a store opening
-        // after the person has gone is worse than a store that did not open:
-        // the person is left with a tab they did not ask for, and nothing on
-        // screen says it is there. They can always ask for the store again.
-        //
-        // AND WHY IT MATTERS WHEN A SECOND STORE IS ASKED FOR: the older
-        // attempt's store would open as well, and only the newer one was
-        // asked for. One store, the one the person asked for last.
+        // WHY THE ATTEMPT IS CHECKED HERE: the attempt can die between the
+        // question and the answer — the person pressed Stop, or the page went
+        // away — and a store opening after the person has gone is worse than
+        // a store that did not open: the person is left with a tab they did
+        // not ask for, and nothing on screen says it is there.
         if (attemptRef.current !== attempt) return;
         try { openTab(); } catch { /* the popup was blocked */ }
       };
-      //
-      // WHY THE GLOBAL TIMER AND NOT window's: the browser is the same
-      // object, but a test's fake window need not have one, and a hook that
-      // only works in the browser is a hook that cannot be tested.
-      const fallback = setTimeout(openTheStore, 4000);
-      fallbackRef.current = fallback;
 
       try {
         if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -280,7 +249,20 @@ export function useScreenSharer() {
           return false;
         }
 
-        const stream = await navigator.mediaDevices.getDisplayMedia({
+        // THE REQUEST IS MADE FIRST, AND THE STORE IS OPENED IN THE SAME TICK.
+        //
+        // WHY THE ORDER MATTERS, TWICE OVER.
+        //
+        // Chrome only puts the capture picker up for a page that is IN
+        // FRONT. Asking before the store's tab takes the focus is what makes
+        // the picker appear at all.
+        //
+        // And the store's tab has to be opened inside the person's CLICK,
+        // because Chrome's popup blocker refuses a window.open() that is no
+        // longer tied to one. Opened a moment later — after the answer — the
+        // browser blocked it as a popup and the store never opened at all.
+        // The address bar said "Pop-up blocked" and the page said nothing.
+        const request = navigator.mediaDevices.getDisplayMedia({
           video: {
             frameRate: 5,
             // ASK FOR A WINDOW, NOT THE SCREEN.
@@ -339,10 +321,37 @@ export function useScreenSharer() {
           // project type-checks against.
           ...({ monitorTypeSurfaces: SHARE_MONITOR_SURFACES } as Record<string, unknown>),
         });
+
+        // THE STORE IS OPENED A MOMENT LATER — NOT IN THE SAME INSTANT, AND
+        // NOT AFTER THE ANSWER.
+        //
+        // WHY NOT IN THE SAME INSTANT: opening the tab takes the focus and
+        // hides this page, and Chrome refuses a share from a page that is no
+        // longer in front.
+        //
+        // WHY NOT AFTER THE ANSWER: by then the person's click is old. Chrome
+        // only allows a window.open() that is still tied to a click, and five
+        // seconds is how long that lasts. Opened after the answer, Chrome
+        // blocked it — the address bar said "Pop-up blocked" and the page
+        // said nothing at all.
+        //
+        // A moment later is the middle of the two: Chrome has taken the
+        // request and put the picker up, and the click is still recent
+        // enough for the tab to open.
+        const openTimer = setTimeout(openTheStore, 350);
+
+        let stream: MediaStream;
+        try {
+          stream = await request;
+        } catch (err) {
+          // The picker was refused, or the browser would not give a capture.
+          // The store is what the person pressed for, so it opens anyway.
+          openTheStore();
+          throw err;
+        } finally {
+          clearTimeout(openTimer);
+        }
         granted = stream;
-        // The answer is in, so the fallback is no longer needed.
-        clearTimeout(fallback);
-        fallbackRef.current = null;
 
         // THE STORE IS OPENED AFTER THE ASK, AND NOT BEFORE.
         //
@@ -477,8 +486,7 @@ export function useScreenSharer() {
         return true;
       } catch (err) {
         // The picker was refused, or the browser would not give a capture.
-        // Either way the person asked for a STORE, so the store opens.
-        openTheStore();
+        // The store was opened in the click either way.
         // WHY THE GRANTED CAPTURE IS GIVEN BACK HERE
         //
         // The browser granted the capture and will keep filming until
@@ -550,14 +558,6 @@ export function useScreenSharer() {
       attemptRef.current += 1;
       sharingRef.current = false;
       releasePreviousShare();
-
-      // The timer that opens the store if the browser never answers must not
-      // outlive the page: a store opening in a tab after the person has gone
-      // is worse than a store that did not open.
-      if (fallbackRef.current !== null) {
-        clearTimeout(fallbackRef.current);
-        fallbackRef.current = null;
-      }
 
       // TELL THE OTHER TABS, BEFORE THE CHANNEL IS CLOSED.
       //
