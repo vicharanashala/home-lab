@@ -2,10 +2,16 @@ import { useMemo, useState } from 'react';
 import { Globe, ChevronRight, MonitorPlay, Square, Loader2, Bot } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { ShoppingListPanel } from '../components/ShoppingListPanel';
+import { StoreTabNotice } from '../components/StoreTabNotice';
 import { useStore } from '../store/useStore';
 import { useScreenSharer } from '../hooks/useScreenWatch';
 import { DIGITAL_STORES, DIGITAL_STORE_KIND_LABEL } from '../utils/digitalStores';
-import { SHARE_ASKING_TEXT, SHARE_CONSENT_TEXT, shareRunningText } from '../utils/screenWatch';
+import {
+  SHARE_ASKING_TEXT,
+  SHARE_CONSENT_TEXT,
+  openStoreTab,
+  shareRunningText,
+} from '../utils/screenWatch';
 
 /**
  * The online stores you can order from, with the shopping list beside them.
@@ -53,6 +59,9 @@ export function DigitalStoresPage() {
   const { grocery } = useStore();
   const share = useScreenSharer();
   const [opening, setOpening] = useState<string | null>(null);
+  // The store whose tab the browser refused, so the person can be told and
+  // given a way to open it. See `openStoreTab`.
+  const [blockedStore, setBlockedStore] = useState<{ name: string; url: string } | null>(null);
 
   const toBuyCount = useMemo(
     () => grocery.filter((g) => !g.purchased).length,
@@ -76,11 +85,20 @@ export function DigitalStoresPage() {
    *
    * WHERE THE RULE LIVES: `useScreenSharer` in src/hooks/useScreenWatch.ts,
    * and the test "the store is opened AFTER the browser is asked, not before".
+   *
+   * WHY THE TAB IS OPENED BY `openStoreTab` AND NOT BY `window.open` HERE: a
+   * pop-up is only allowed while the page still holds the person's gesture,
+   * and the tab is opened after the capture picker has been answered — which
+   * is long after the gesture is gone, so the browser stops the tab from
+   * opening. The page cannot tell that from the return value (`noopener`
+   * makes `window.open` return null either way), so the question is asked
+   * before the tab is opened, and the person is told when it was refused.
    */
   const openAndWatch = (id: string, name: string, url: string) => {
     setOpening(id);
+    setBlockedStore(null);
     void share.start(name, () => {
-      window.open(url, '_blank', 'noopener,noreferrer');
+      if (!openStoreTab(url)) setBlockedStore({ name, url });
     }).finally(() => setOpening(null));
   };
 
@@ -193,11 +211,7 @@ export function DigitalStoresPage() {
               </div>
             )}
 
-            {share.state.error && (
-              <p className="text-[11px] text-tomato-600 dark:text-tomato-300">
-                {share.state.error} The store still opened.
-              </p>
-            )}
+            <StoreTabNotice error={share.state.error} blockedStore={blockedStore} />
 
             <p className="text-[11px] text-sage-500 dark:text-ink-400 leading-relaxed flex items-start gap-1.5">
               <Globe size={12} className="shrink-0 mt-0.5" />

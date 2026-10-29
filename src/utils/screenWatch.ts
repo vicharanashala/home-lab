@@ -253,6 +253,85 @@ export function shareRunningText(store: string | null): string {
 }
 
 /**
+ * Whether the browser will let this page open a pop-up right now.
+ *
+ * WHY THIS IS ASKED ABOUT AT ALL: a pop-up is only allowed while the page
+ * still holds the person's gesture, and the gesture is short-lived — about
+ * five seconds in Chrome, about one in Safari. The store's tab is opened
+ * AFTER the browser has answered the capture request, and the person has to
+ * pick a window in a picker before that answer comes, so the tab is opened
+ * long after the gesture is gone:
+ *
+ *     the person pressed the store    the gesture starts
+ *     the person picks a window       ... five seconds, or ten, or a minute
+ *     the browser answers             the gesture is gone
+ *     the store's tab opens           the browser stops it
+ *
+ * So the tab the person asked for is the tab the browser takes away, and
+ * nothing on the screen says so.
+ *
+ * WHY THE ACTIVATION AND NOT A TRY: `window.open` cannot say whether it was
+ * blocked. This app passes `noopener` — so the store's site cannot reach back
+ * into this one — and the browser then returns null whether the tab opened or
+ * not. The one thing that does say is the activation itself.
+ *
+ * WHY A MISSING API MEANS "ALLOWED": a browser without the API is an older
+ * one, and the app's behaviour there is what it always was. Claiming a tab
+ * was blocked when it opened would be worse than the silence this replaces.
+ *
+ * @returns true when a pop-up opened right now would be allowed
+ */
+export function popUpAllowedNow(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  const activation: UserActivation | undefined = navigator.userActivation;
+  if (!activation || typeof activation.isActive !== 'boolean') return true;
+  return activation.isActive;
+}
+
+/**
+ * Open the store's tab, and say whether the browser allowed it.
+ *
+ * WHY THE GESTURE IS ASKED ABOUT BEFORE THE TAB IS OPENED AND NOT AFTER:
+ * `window.open` CONSUMES the transient activation, so a page that asked
+ * afterwards would always be told "blocked" — including on the runs where the
+ * tab opened perfectly well.
+ *
+ * WHY THE TAB IS OPENED ANYWAY: the browser may still allow it (some do not
+ * block at all), and a tab that opens is what the person asked for. The
+ * answer is about what to SAY, not about whether to try.
+ *
+ * @param url the store's address
+ * @returns true when the browser allowed the tab to open
+ */
+export function openStoreTab(url: string): boolean {
+  const allowed = popUpAllowedNow();
+  if (typeof window !== 'undefined') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+  return allowed;
+}
+
+/**
+ * What the stores screen says when the store's tab opened.
+ *
+ * WHY IT IS SAID ONLY WHEN THE TAB REALLY OPENED: the screen used to say
+ * "The store still opened." after every failed share, whatever the browser
+ * had actually done with the tab. The browser may well have taken the tab
+ * away — see `popUpAllowedNow` — and a sentence the app cannot stand behind
+ * is worse than no sentence at all.
+ */
+export const STORE_TAB_OPENED_TEXT = 'The store opened in a new tab.';
+
+/**
+ * What the stores screen says when the browser blocked the store's tab.
+ *
+ * WHY IT IS NAMED AND NOT JUST "blocked": the person has to know WHICH tab
+ * did not open, because there are several stores on the screen and the share
+ * they are watching is of a window they cannot see into.
+ */
+export const STORE_TAB_BLOCKED_TEXT = 'Your browser blocked the store tab.';
+
+/**
  * What House Bot says when it can see the shared window.
  *
  * WHY IT IS HERE AND NOT IN THE PAGE: it is a promise about what the bot
