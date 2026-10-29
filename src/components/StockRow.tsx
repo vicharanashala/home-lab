@@ -5,7 +5,7 @@ import type { StockItem } from '../types';
 import { getCategory } from '../utils/categories';
 import { CategoryIcon } from './icons/AppIcons';
 import { useStore } from '../store/useStore';
-import { daysUntil, expiryBucket, formatExpiry, formatQuantity, singularUnit } from '../utils/date';
+import { daysUntil, expiryBucket, formatExpiry, formatQuantity } from '../utils/date';
 import { conflictsDiet, detectAllergensInName } from '../utils/diet';
 import { ConfirmModal } from './ConfirmModal';
 import { hapticSelect, hapticDanger } from '../utils/haptics';
@@ -50,12 +50,22 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
    * Put this item on the shopping list without hunting for it. Seeds a
    * sensible quantity — roughly what you'd buy to replace what's on hand, so
    * the list says "2 kg" rather than a bare name.
+   *
+   * WHY THE QUANTITY IS WRITTEN BY THE APP'S OWN RULE: the Alerts screen
+   * seeds the same grocery line with `formatQuantity`, and the shopping list
+   * is one list. Two screens writing the same kind of line must write it the
+   * same way, and this one did not: it spelled the unit into a template of
+   * its own, which said "1 pcs" where the Alerts screen said "1 pc" — and
+   * which left a trailing space where the unit should have been for an item
+   * that has no unit at all. "pcs" is the default unit for a new item and a
+   * threshold of zero is the default threshold, so "1 pcs" is what the list
+   * usually said.
    */
   const addToGrocery = () => {
     const qty = Math.max(1, Math.ceil(item.lowStockThreshold || 1));
     addGrocery({
       name: item.name,
-      quantity: `${qty} ${item.unit}`,
+      quantity: formatQuantity(qty, item.unit),
       category: item.category,
     });
     toast(`Added ${item.name} to your list`, 'success');
@@ -171,7 +181,7 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
               hapticSelect();
               incrementStock(item.id, -1);
               setBumpKey((k) => k + 1);
-              toast(`Used 1 ${singularUnit(item.unit) || ''} of ${item.name}`.trim(), 'info');
+              toast(`Used ${formatQuantity(1, item.unit)} of ${item.name}`, 'info');
             }}
             disabled={item.quantity <= 0}
             aria-label="Decrease quantity"
@@ -190,7 +200,21 @@ export function StockRow({ item, compact, showActions = true, onEdit }: Props) {
               hapticSelect();
               incrementStock(item.id, 1);
               setBumpKey((k) => k + 1);
-              toast(`Added 1 ${singularUnit(item.unit) || ''} of ${item.name}`.trim(), 'success');
+              // WHY THE QUANTITY IS WRITTEN BY THE APP'S OWN RULE: this toast
+              // and the quantity printed beside these buttons are two answers
+              // to one question, and the rule that answers it — `formatQuantity`
+              // — already exists. The toast used to build its own phrase with
+              // the unit spliced into a template, so an item with NO unit left
+              // a hole where the unit should have been:
+              //
+              //     the quantity beside the buttons says   "2"
+              //     the toast after tapping "+" says       "Added 1  of Milk"
+              //
+              // Two spaces where a word should be, in the one line the person
+              // reads back as proof the tap did what they meant. The unit
+              // field is free text and nothing checks it, so an item with no
+              // unit is one field-clearing away.
+              toast(`Added ${formatQuantity(1, item.unit)} of ${item.name}`, 'success');
             }}
             aria-label="Increase quantity"
             className="btn-icon bg-sage-50 text-sage-700 hover:bg-sage-100"

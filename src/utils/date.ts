@@ -106,13 +106,15 @@ export const formatDays = (days: number): string =>
  * "dashes" into "dashe" and "pinches" into "pinche" — units people actually
  * type for a kitchen app. English plurals are not just "+s".
  *
- * WHY IT IS EXPORTED: a stock row's own toast says how much of an item was
- * used or added, and it used to spell that unit with the old one-liner while
- * the quantity printed beside it used this rule — so one row could say "2
- * glass" and then toast "Added 1 glas of Milk". The rule has to be the same
- * rule wherever a unit is written.
+ * WHY IT IS NOT EXPORTED: a caller that wants to write a quantity writes it
+ * with `formatQuantity`, which is the rule that decides whether there IS a
+ * unit, whether it is singular, and how it is spaced. A caller that spliced
+ * the unit into a phrase of its own — the way the stock row's toasts used to —
+ * could get any of those three wrong, and did: a missing unit left a hole
+ * where the unit should have been ("Added 1  of Milk"). This is the spelling
+ * rule; `formatQuantity` is the rule that writes a quantity.
  */
-export function singularUnit(unit: string): string {
+function singularUnit(unit: string): string {
   const u = unit.trim();
   if (!u) return unit;
   // -es plurals whose stem ends in a sibilant: dashes -> dash, pinches -> pinch.
@@ -123,8 +125,31 @@ export function singularUnit(unit: string): string {
   return u;
 }
 
+/**
+ * How much of something, written out.
+ *
+ * WHY THE UNIT IS TRIMMED HERE AND NOWHERE ELSE: the unit field is free text
+ * and nothing checks it — the add form only insists on a name — so a
+ * household can save an item with no unit at all, or with a unit of nothing
+ * but spaces. A unit that is not there must not leave a hole where it would
+ * have been: the row's quantity read "2   " and its toast "Added 1    of
+ * Milk", with the gap standing where the unit should be. And a unit typed
+ * with a stray space around it (" Glass ") must read as "Glass", not as the
+ * two-word "2  Glass ".
+ *
+ * WHY A BLANK UNIT IS NO UNIT: "2" is a whole quantity on its own. There is
+ * nothing for the unit to be, so it is not written at all.
+ *
+ * WHY THE SINGULAR IS STILL SPELLED OUT: one of them reads "1 glass", never
+ * "1 glasses". See `singularUnit`.
+ *
+ * @param qty how many
+ * @param unit the unit, if there is one
+ * @returns the quantity and its unit — "2 glass", "2 kg", "1", "2"
+ */
 export const formatQuantity = (qty: number, unit?: string): string => {
-  if (!unit) return `${qty}`;
-  if (qty === 1) return `${qty} ${singularUnit(unit)}`;
-  return `${qty} ${unit}`;
+  const u = unit?.trim();
+  if (!u) return `${qty}`;
+  if (qty === 1) return `${qty} ${singularUnit(u)}`;
+  return `${qty} ${u}`;
 };
