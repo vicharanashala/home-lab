@@ -76,9 +76,20 @@ export const groceryQuantityForStock = (
  * The line for an ingredient the meal plan needs and the fridge does not
  * cover.
  *
- * WHY IT IS THE SHORTFALL: the plan knows how much the week needs and the
- * fridge knows how much it has, and the list carries the difference — which
- * is what `needed` holds by the time it reaches here.
+ * WHY IT IS THE WEEK'S NEED, NOT THE SHORTFALL: the shopping list builder
+ * sums the plan's ingredients and compares THAT with the shelf, and
+ * `needed` is the sum — `src/types.ts` says so outright ("Total needed
+ * across the week, already scaled by portion size"). `have` is the part the
+ * fridge covers, and the app shows the two side by side: "need 2 kg · have
+ * 1.5 kg". So the line carries the week's need, which is not the same
+ * number as the difference.
+ *
+ * WHY THAT IS WORTH SAYING PLAINLY: an earlier version of this comment
+ * claimed `needed` held the shortfall — the difference — and it does not. A
+ * reader who believed that would expect "0.5 kg" on the list for an
+ * ingredient the fridge half covers, and would hunt for a bug in the rule
+ * below when it wrote "2 kg". The rule writes what it is given; how much a
+ * line should carry is the plan's decision, not this one's.
  *
  * WHY IT IS WRITTEN BY THE APP'S OWN RULE: this is the line that used to be
  * built as `${needed}${unit}`, so the list said "2kg" and "1pcs" where the

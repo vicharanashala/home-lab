@@ -418,8 +418,27 @@ try {
   if (!deps) {
     console.log('  SKIP the bridge is not installed here — its dependencies could not be found');
   } else if (!bridgeUp) {
-    console.log('  SKIP the bridge copy did not start');
-    console.log(bridgeErr.slice(0, 600));
+    // WHY THIS IS A FAILURE AND NOT A SKIP: the branch above it — the bridge
+    // not being installed — is a skip, because there is no bridge here to
+    // run. This branch is different: the bridge's dependencies WERE found and
+    // the copy WAS started, and it did not come up. That is a broken bridge,
+    // and this test is the only thing that would notice.
+    //
+    // WHY IT MATTERS HERE MORE THAN IN THE OTHER BRIDGE TESTS: this test is
+    // the only guard on the RECIPES block — the one that tells House Bot what
+    // is IN the recipes it is offered. A skip here prints "0 passed, 0
+    // failed" and exits 0, and the quality gate reports that as a pass, so
+    // the check that guards the block would be GONE and nothing would say so.
+    // A guard that can be switched off by breaking the thing it guards is not
+    // a guard.
+    //
+    // WHY IT MATCHES THE OTHER BRIDGE TESTS: every one of them treats a
+    // bridge that did not start as a failed check — this was the only one
+    // that did not.
+    console.log(
+      `  FAIL the bridge copy did not start${bridgeErr ? ' — ' + bridgeErr.trim().split('\n').slice(-2).join(' ') : ''}`,
+    );
+    failed += 1;
   } else {
     checkRecipes('the chat route', await recipesBlockFor('/api/housebot/chat', RECIPES));
     checkRecipes('the streaming route', await recipesBlockFor('/api/housebot/chat/stream', RECIPES));
