@@ -72,10 +72,10 @@
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpWorkDir, tmpStubFile } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -120,7 +120,7 @@ function ok(cond, label, detail = '') {
  * @returns {Promise<string>} the path of the stub module
  */
 async function stubStore(settings) {
-  const file = path.join(tmpdir(), `hh-window-store-${Math.random().toString(36).slice(2)}.mjs`);
+  const file = tmpStubFile('hh-window-store.mjs');
   await writeFile(
     file,
     `export const BACKUP_VERSION = 1;
@@ -296,7 +296,7 @@ function household(window) {
   };
 }
 
-const work = await mkdtemp(path.join(tmpdir(), 'hh-window-days-'));
+const work = tmpWorkDir('hh-window-days-');
 await symlink(path.join(REPO, 'node_modules'), path.join(work, 'node_modules'), 'dir');
 
 console.log('\nat a one-day window, no screen says "1 days"');

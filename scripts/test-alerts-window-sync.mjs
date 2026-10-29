@@ -62,10 +62,10 @@
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpWorkDir, tmpStubFile } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -101,7 +101,7 @@ function ok(cond, label, detail = '') {
  * stub's `updateSettings` writes back the way the real store does, so the
  * screen sees its own write on the next render.
  */
-const stubFile = path.join(tmpdir(), 'hh-alerts-window-store.mjs');
+const stubFile = tmpStubFile('hh-alerts-window-store.mjs');
 await writeFile(
   stubFile,
   `let windowDays = 3;
@@ -145,7 +145,7 @@ const store = await import(pathToFileURL(stubFile).href);
 /* The screen, built from the real component                                    */
 /* -------------------------------------------------------------------------- */
 
-const work = await mkdtemp(path.join(tmpdir(), 'hh-alerts-window-'));
+const work = tmpWorkDir('hh-alerts-window-');
 await symlink(path.join(REPO, 'node_modules'), path.join(work, 'node_modules'), 'dir');
 
 const tapShim = path.join(REPO, 'scripts/lib/react-tap-state.mjs');

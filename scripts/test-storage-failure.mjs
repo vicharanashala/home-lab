@@ -42,11 +42,11 @@
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -108,7 +108,7 @@ const bannerBundle = await build({
     },
   ],
 });
-const bannerDir = await mkdtemp(path.join(tmpdir(), 'hh-storage-banner-'));
+const bannerDir = tmpWorkDir('hh-storage-banner-');
 // The bundle lives outside the checkout, so it cannot find the packages the
 // banner imports on its own.
 await symlink(path.join(REPO, 'node_modules'), path.join(bannerDir, 'node_modules'));

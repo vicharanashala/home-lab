@@ -19,11 +19,11 @@
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -66,7 +66,7 @@ function eq(got, want, label) {
 /* Render the sheet for real                                                    */
 /* -------------------------------------------------------------------------- */
 
-const work = await mkdtemp(path.join(tmpdir(), 'hh-suggest-pax-'));
+const work = tmpWorkDir('hh-suggest-pax-');
 // The bundled module imports react and lucide-react by name, and react-dom
 // has to be the SAME react copy as the one that built the elements. Pointing
 // node_modules at the repo's copy gives both the same instance.

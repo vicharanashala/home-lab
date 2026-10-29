@@ -39,11 +39,11 @@
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { readFile, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -211,7 +211,7 @@ function check(label, got, expected) {
  * go to a store this test cannot see. Point it at the live state, which is the
  * same patch scripts/test-backup-not-saved.mjs uses.
  */
-const storeDir = await mkdtemp(path.join(tmpdir(), 'hh-auto-backup-store-'));
+const storeDir = tmpWorkDir('hh-auto-backup-store-');
 await symlink(path.join(REPO, 'node_modules'), path.join(storeDir, 'node_modules'));
 
 const entry = path.join(storeDir, 'entry.ts');

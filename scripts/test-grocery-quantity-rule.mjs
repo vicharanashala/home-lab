@@ -49,10 +49,10 @@
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, symlink, writeFile, readFile, readdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { symlink, writeFile, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpWorkDir, tmpStubFile } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -154,7 +154,7 @@ for (const c of NEED_CASES) {
  * @returns {string} the path of the stub module
  */
 async function stubStore() {
-  const file = path.join(tmpdir(), `hh-grocery-rule-store.mjs`);
+  const file = tmpStubFile('hh-grocery-rule-store.mjs');
   await writeFile(
     file,
     `globalThis.__hh_toasts = globalThis.__hh_toasts || [];
@@ -195,7 +195,7 @@ export function useStore() {
  * @returns {string} the path of the stub module
  */
 async function furnitureStub() {
-  const file = path.join(tmpdir(), `hh-grocery-rule-furniture.mjs`);
+  const file = tmpStubFile('hh-grocery-rule-furniture.mjs');
   await writeFile(
     file,
     `export function TopBar() {
@@ -258,7 +258,7 @@ async function screen(entry, extra = []) {
   });
   // The bundle lives outside the checkout, so it cannot find the packages the
   // screen imports on its own.
-  const dir = await mkdtemp(path.join(tmpdir(), 'hh-grocery-rule-'));
+  const dir = tmpWorkDir('hh-grocery-rule-');
   await symlink(path.join(REPO, 'node_modules'), path.join(dir, 'node_modules'));
   const file = path.join(dir, 'screen.mjs');
   await writeFile(file, bundle.outputFiles[0].text);

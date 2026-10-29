@@ -26,11 +26,11 @@
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -111,7 +111,7 @@ const preferredIds = new Set(catalogue.map((r) => r.id));
 /* Bundle the real sheet                                                        */
 /* -------------------------------------------------------------------------- */
 
-const work = await mkdtemp(path.join(tmpdir(), 'hh-spoken-edit-'));
+const work = tmpWorkDir('hh-spoken-edit-');
 await symlink(path.join(REPO, 'node_modules'), path.join(work, 'node_modules'), 'dir');
 
 const tapShim = path.join(REPO, 'scripts/lib/react-tap-state.mjs');

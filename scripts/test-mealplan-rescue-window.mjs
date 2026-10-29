@@ -48,10 +48,10 @@
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpWorkDir, tmpStubFile } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -109,7 +109,7 @@ const TODAY = localDay(0);
  * screen through the real store. The stub stands in for the store and hands
  * the screen the household under test.
  */
-const stubFile = path.join(tmpdir(), 'hh-mealplan-window-store.mjs');
+const stubFile = tmpStubFile('hh-mealplan-window-store.mjs');
 await writeFile(
   stubFile,
   `let windowDays = 3;
@@ -219,7 +219,7 @@ const store = await import(pathToFileURL(stubFile).href);
 /* The screen, built from the real component                                    */
 /* -------------------------------------------------------------------------- */
 
-const work = await mkdtemp(path.join(tmpdir(), 'hh-mealplan-window-'));
+const work = tmpWorkDir('hh-mealplan-window-');
 await symlink(path.join(REPO, 'node_modules'), path.join(work, 'node_modules'), 'dir');
 
 const tapShim = path.join(REPO, 'scripts/lib/react-tap-state.mjs');

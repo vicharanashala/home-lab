@@ -70,10 +70,10 @@
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpWorkDir, tmpStubFile } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -115,7 +115,7 @@ function ok(cond, label, detail = '') {
  * @returns {string} the path of the stub module
  */
 async function stubStore() {
-  const file = path.join(tmpdir(), `hh-stockrow-unit-store.mjs`);
+  const file = tmpStubFile('hh-stockrow-unit-store.mjs');
   await writeFile(
     file,
     `export function useStore() {
@@ -178,7 +178,7 @@ async function stockRow() {
   });
   // The bundle lives outside the checkout, so it cannot find the packages the
   // row imports on its own.
-  const dir = await mkdtemp(path.join(tmpdir(), 'hh-stockrow-unit-'));
+  const dir = tmpWorkDir('hh-stockrow-unit-');
   await symlink(path.join(REPO, 'node_modules'), path.join(dir, 'node_modules'));
   const file = path.join(dir, 'StockRow.mjs');
   await writeFile(file, bundle.outputFiles[0].text);

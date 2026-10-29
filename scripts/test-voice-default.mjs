@@ -32,11 +32,11 @@
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -125,7 +125,7 @@ const cardBundle = await build({
     },
   ],
 });
-const cardDir = await mkdtemp(path.join(tmpdir(), 'hh-voice-card-'));
+const cardDir = tmpWorkDir('hh-voice-card-');
 // The bundle lives outside the checkout, so it cannot find the packages the
 // card imports on its own.
 await symlink(path.join(REPO, 'node_modules'), path.join(cardDir, 'node_modules'));
@@ -261,7 +261,7 @@ console.log('\nand a voice the browser refused to store');
   // toast the card raises cannot be read from it. This bundle has the store
   // INSIDE, with the snapshot pointed at the live state, so the toast the
   // card raises is the one the test reads.
-  const refusingDir = await mkdtemp(path.join(tmpdir(), 'hh-voice-refused-'));
+  const refusingDir = tmpWorkDir('hh-voice-refused-');
   await symlink(path.join(REPO, 'node_modules'), path.join(refusingDir, 'node_modules'));
 
   // WHY THE ENTRY IS A FILE OF ITS OWN: the test needs the store as well as

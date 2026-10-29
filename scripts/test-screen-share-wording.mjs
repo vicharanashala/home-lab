@@ -64,10 +64,10 @@
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, symlink, writeFile, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { symlink, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -191,7 +191,7 @@ export function useScreenSharer() {
 /* -------------------------------------------------------------------------- */
 
 const tapShim = path.join(REPO, 'scripts/lib/react-tap-state.mjs');
-const work = await mkdtemp(path.join(tmpdir(), 'hh-share-wording-'));
+const work = tmpWorkDir('hh-share-wording-');
 await symlink(path.join(REPO, 'node_modules'), path.join(work, 'node_modules'), 'dir');
 
 const storeStub = path.join(work, 'store-stub.mjs');

@@ -38,11 +38,11 @@
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -198,7 +198,7 @@ console.log('\nthe rule says what came of the snapshot');
  * esbuild would otherwise keep two of them and the toast would go to a store
  * nobody is reading.
  */
-const panelDir = await mkdtemp(path.join(tmpdir(), 'hh-backup-panel-'));
+const panelDir = tmpWorkDir('hh-backup-panel-');
 await symlink(path.join(REPO, 'node_modules'), path.join(panelDir, 'node_modules'));
 
 const entry = path.join(panelDir, 'entry.ts');

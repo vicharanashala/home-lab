@@ -26,11 +26,11 @@
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpWorkDir } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -126,7 +126,7 @@ globalThis.requestAnimationFrame = (fn) => { fn(); };
 /* Render the real page                                                         */
 /* -------------------------------------------------------------------------- */
 
-const work = await mkdtemp(path.join(tmpdir(), 'hh-editor-portion-'));
+const work = tmpWorkDir('hh-editor-portion-');
 await symlink(path.join(REPO, 'node_modules'), path.join(work, 'node_modules'), 'dir');
 
 const tapShim = path.join(REPO, 'scripts/lib/react-tap.mjs');

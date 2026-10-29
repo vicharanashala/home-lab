@@ -52,10 +52,10 @@
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpWorkDir, tmpStubFile } from './lib/tmp-work.mjs';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -110,7 +110,7 @@ const inDays = (n) => localDay(new Date(Date.now() + n * dayMs));
  * @returns {Promise<string>} the path of the stub module
  */
 async function stubStore(stock, settings) {
-  const file = path.join(tmpdir(), `hh-attention-store-${Math.random().toString(36).slice(2)}.mjs`);
+  const file = tmpStubFile('hh-attention-store.mjs');
   await writeFile(
     file,
     `export const BACKUP_VERSION = 1;
@@ -310,7 +310,7 @@ const settings = {
   consents: {},
 };
 
-const work = await mkdtemp(path.join(tmpdir(), 'hh-attention-'));
+const work = tmpWorkDir('hh-attention-');
 await symlink(path.join(REPO, 'node_modules'), path.join(work, 'node_modules'), 'dir');
 
 console.log('\nONE thing to attend to');
