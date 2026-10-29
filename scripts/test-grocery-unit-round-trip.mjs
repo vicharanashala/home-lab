@@ -206,6 +206,33 @@ async function convertibleUnits() {
 }
 
 /**
+ * The units the app can WRITE, whether or not it can convert them.
+ *
+ * WHY THIS SOURCE IS HERE AS WELL AS THE CONVERTIBLE ONE: the app has TWO
+ * lists of unit words, and this test was reading only one of them. The
+ * kitchen counts in bottles, slices, packs, packets, cloves, bunches and
+ * handfuls — the app writes every one of them, and converts none of them —
+ * so they are in `WRITABLE_UNITS` and not in `KNOWN_UNITS`.
+ *
+ * WHY IT MATTERS: the parser has to tell a UNIT from the start of an
+ * ingredient's NAME, and a unit word it does not know ends up in the name:
+ *
+ *     the app writes      "- 6 slices of Bread"
+ *     the parser read      an item called "slices of Bread", quantity "6"
+ *
+ * So a unit added to `WRITABLE_UNITS` has to turn this test red until the
+ * parser can read it, exactly as a unit added to `KNOWN_UNITS` does.
+ *
+ * @returns {Promise<Set<string>>} every unit word the app writes
+ */
+async function writableUnits() {
+  const { WRITABLE_UNITS } = await import(
+    pathToFileURL(path.join(REPO, 'src/utils/units.ts')).href
+  );
+  return new Set(WRITABLE_UNITS);
+}
+
+/**
  * The units the ADD FORM offers the household.
  *
  * WHY THE FORM: a stock row writes its shopping line with the household's own
@@ -237,6 +264,7 @@ const VOCABULARY = new Set([
   ...catalogueUnits(),
   ...(await builtInCatalogueUnits()),
   ...(await convertibleUnits()),
+  ...(await writableUnits()),
   ...formUnits(),
 ]);
 

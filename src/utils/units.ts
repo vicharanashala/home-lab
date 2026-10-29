@@ -88,7 +88,14 @@ const SCOOP: Record<string, number> = {
 };
 
 /**
- * Every unit word the app understands.
+ * Every unit word the app can CONVERT.
+ *
+ * WHY IT IS THE TABLE'S KEYS AND NOT THE WORDS THE SHOP USES: this table is
+ * what the app can CONVERT, and the stock unit field is free text — a
+ * household can write any unit into it, and the app's own rule writes that
+ * unit onto the shopping list as it was typed. The units the app can convert
+ * are the ones the app can be asked about, so they are the ones the parser
+ * has to read back.
  *
  * WHY IT IS EXPORTED: the House Bot's bullet parser has to tell a UNIT from
  * the start of an ingredient's NAME, and it does that with a list of unit
@@ -98,17 +105,23 @@ const SCOOP: Record<string, number> = {
  *     the app writes      "- 6 ounces of butter"
  *     the parser read      an item called "ounces of butter", quantity "6"
  *
- * So the words are published from the one place that decides what the app
- * understands, rather than restated in a second list that can drift from it.
+ * The parser keeps its OWN list — `UNIT_WORDS` in
+ * src/utils/groceryListParser.ts — and THIS table is what keeps that list
+ * honest: the round-trip test reads the units out of here and asks the real
+ * parser to read each one back, so a unit added to this table turns the test
+ * red until the parser can read it.
  *
- * WHY IT IS THE TABLE'S KEYS AND NOT THE WORDS THE SHOP USES: this table is
- * what the app can CONVERT, and the stock unit field is free text — a
- * household can write any unit into it, and the app's own rule writes that
- * unit onto the shopping list as it was typed. The units the app can convert
- * are the ones the app can be asked about, so they are the ones the parser
- * has to read back.
+ * WHY THE PARSER DOES NOT READ THIS TABLE DIRECTLY: the parser needs the
+ * SHAPE of a unit word, not the word — "bottles?" and "pinch(?:es)?" are
+ * patterns, not words — and it needs the words the kitchen counts in that
+ * this table does not carry at all. Bottles, slices, packs, packets, cloves,
+ * bunches and handfuls are in `WRITABLE_UNITS` below, because the app writes
+ * them and cannot convert them. Reading this table in the parser would drop
+ * every one of them and put the unit back in the name — the exact failure
+ * the parser's own list exists to prevent.
  *
- * @returns every unit word, in both singular and plural as the app knows them
+ * @returns every unit word the app can convert, in both singular and plural
+ *          as the app knows them
  */
 export const KNOWN_UNITS: string[] = [
   ...Object.keys(MASS),
