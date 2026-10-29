@@ -312,6 +312,66 @@ console.log('\nthe quantity the catalogue writes comes off the front of the name
   );
 }
 
+console.log('\nthe mark in front of the quantity is not part of it');
+{
+  // THE CATALOGUE WRITES A MARK IN FRONT OF THE NUMBER.
+  //
+  //     "- 3 Saffron strands"        a bullet of the catalogue's own
+  //     "+ 1 Onion"                  a stray plus
+  //     "/ 4 tsp cinnamon powder"    a stray slash
+  //     "-3 Green Chillies - sliced" a bullet with no space after it
+  //
+  // 60 of the catalogue's 10,925 distinct ingredient strings are written with
+  // one, and the House Bot writes those strings under a bullet of its own, so
+  // the mark is still there when the parser sees the line:
+  //
+  //     "- - 6 Artichokes - roughly chopped"
+  //
+  // The mark is not part of the quantity. It has to come off BEFORE the
+  // number is read, or the number never reads as a number, every pattern
+  // fails, and the whole line stays a NAME:
+  //
+  //     "- 6 Artichokes"   ->   an item called "- 6 Artichokes", quantity "1"
+  //
+  // and the name is not the kitchen's "Artichokes". Stock matching is exact,
+  // so the row the household shops from and the row on the shelf are two
+  // different things, and the shopping list says "6" for an artichoke row the
+  // kitchen already has.
+  const cases = [
+    { bullet: '- - 3 Saffron strands', name: 'Saffron strands', quantity: '3' },
+    { bullet: '- - 6 Artichokes - roughly chopped', name: 'Artichokes', quantity: '6' },
+    { bullet: '- - 1/2 turmeric powder', name: 'turmeric powder', quantity: '1/2' },
+    { bullet: '- + 1 Onion', name: 'Onion', quantity: '1' },
+    { bullet: '- / 4 tsp cinnamon powder', name: 'cinnamon powder', quantity: '4 tsp' },
+    { bullet: '- - 1-1 1/2 cups Water', name: 'Water', quantity: '1-1 1/2 cups' },
+    { bullet: '- - 1//4 cups Sugar', name: 'Sugar', quantity: '1//4 cups' },
+  ];
+
+  for (const c of cases) {
+    const item = itemsOf(c.bullet)[0];
+    ok(item !== undefined, `"${c.bullet}" is an item at all`, JSON.stringify(item));
+    ok(
+      item?.name === c.name,
+      `the quantity comes off the name of "${c.bullet}"`,
+      `the name is ${JSON.stringify(item?.name)}`,
+    );
+    ok(
+      item?.quantity === c.quantity,
+      `and it reads back as "${c.quantity}"`,
+      `the parser wrote ${JSON.stringify(item?.quantity)}`,
+    );
+  }
+
+  // The mark has to be a MARK. A dash in the middle of a line is a
+  // preparation note, and a dash inside a name is part of the name.
+  const kept = itemsOf('- Semi-dried tomatoes - chopped')[0];
+  ok(
+    kept?.name === 'Semi-dried tomatoes',
+    'a dash inside a name is still part of the name',
+    JSON.stringify(kept),
+  );
+}
+
 console.log('\nevery ingredient in the real catalogue survives');
 {
   const data = JSON.parse(fs.readFileSync(path.join(REPO, 'src/data/csvRecipes.json'), 'utf8'));
@@ -336,6 +396,7 @@ console.log('\nevery ingredient in the real catalogue survives');
   const READS_AS_A_SENTENCE = (n) => n.trim().split(/\s+/).length > 8;
 
   const lost = [];
+  const stuck = [];
   let total = 0;
   let sentence = 0;
 
@@ -345,7 +406,18 @@ console.log('\nevery ingredient in the real catalogue survives');
       if (!raw.trim()) continue;
       total += 1;
       // The House Bot writes the catalogue's strings back as bullets.
-      if (itemsOf(asLine(raw)).length > 0) continue;
+      const items = itemsOf(asLine(raw));
+      if (items.length > 0) {
+        // Surviving is not enough: a name that still carries the number at
+        // the front of it is not the kitchen's ingredient. The quantity has to
+        // come off the name, or the shopping row and the shelf row are two
+        // different things — and the shopping row says "1" for an ingredient
+        // the kitchen asked for by a count.
+        if (/^\s*\d/.test(items[0].name)) {
+          if (stuck.length < 5) stuck.push(raw);
+        }
+        continue;
+      }
       if (READS_AS_A_SENTENCE(raw)) {
         sentence += 1;
         continue;
@@ -361,6 +433,13 @@ console.log('\nevery ingredient in the real catalogue survives');
     lost.length
       ? `${lost.length} lost, e.g. ${lost.slice(0, 3).map((s) => JSON.stringify(s)).join(', ')}`
       : `all kept (${sentence} long lines are read as sentences and skipped)`,
+  );
+  ok(
+    stuck.length === 0,
+    'no catalogue ingredient keeps its quantity in the name',
+    stuck.length
+      ? `${stuck.length} stuck, e.g. ${stuck.map((s) => JSON.stringify(s)).join(', ')}`
+      : 'the quantity comes off every one of them',
   );
 }
 

@@ -196,6 +196,12 @@ function writeQuantity(qty: string, unit: string): string {
  *     "1-1/2 cups All Purpose Flour"
  *     "2-1/4 cups Water"
  *     "1-1 / 2 cups rice - cooked"
+ *     "1-1 1/2 cups Water"
+ *
+ * — the last one with a SPACE between the whole part and the fraction, and
+ * the double slash the catalogue writes one fraction with:
+ *
+ *     "1//4 cups Sugar"
  *
  * — and the House Bot is fed those ingredient strings VERBATIM in its RECIPES
  * block, so it writes its grocery list in the same shape. The number this
@@ -220,9 +226,12 @@ function writeQuantity(qty: string, unit: string): string {
  * and the app's own rule leaves a quantity it cannot write exactly as it was
  * written, which is the right thing to do with a range too.
  *
- * HOW MANY: 933 of the catalogue's 10,925 distinct ingredient strings start
- * with a number written in one of these shapes, and 1,390 of its 70,093
- * ingredient strings were thrown away because of it.
+ * HOW MANY: 947 of the catalogue's 10,925 distinct ingredient strings start
+ * with a number written in one of these shapes — the shapes this rule
+ * already knew, and the two it did not: the mixed number written with a
+ * space ("1-1 1/2") and the fraction written with a double slash ("1//4").
+ * 1,390 of the catalogue's 70,093 ingredient strings were thrown away because
+ * of it.
  *
  * WHY ONE LIST AND NOT A COPY IN EVERY PATTERN: the patterns below were
  * built from two different numbers, and the copies had drifted the way the
@@ -230,11 +239,60 @@ function writeQuantity(qty: string, unit: string): string {
  * pattern reads the same number.
  */
 const NUMBER =
+  // A mixed number written with a SPACE between the whole part and the
+  // fraction: "1-1 1/2", "1- 1 1/4".
+  //
+  // WHY IT IS A SEPARATE SHAPE: the catalogue writes the mixed number three
+  // ways — "1-1/2", "1-1 / 2" and "1-1 1/2" — and the last one was not a
+  // number at all, so the leading quantity was not a quantity and the whole
+  // line stayed a NAME:
+  //
+  //     "1-1 1/2 cups Water"   ->   an item called "1-1 1/2 cups Water"
+  //
+  // It has to be tried FIRST: the second shape below reads "1-1" out of
+  // "1-1 1/2" and stops there, and the line then falls through to the name
+  // with the number still glued to it.
+  '\\d+\\s*[-+]\\s*\\d+\\s+\\d+\\s*\\/\\s*\\d+' +
   // A number written as two parts joined by a sign: "1-1/2", "1+1/3",
-  // "1/2-1/2", "2-3". The first part may itself be a fraction.
-  '\\d+(?:\\s*\\/\\s*\\d+)?(?:\\s*[-+]\\s*\\d+(?:\\s*\\/\\s*\\d+)?)?' +
+  // "1/2-1/2", "2-3". The first part may itself be a fraction — and the
+  // fraction may be written with a double slash: "1//4", which is how the
+  // catalogue writes it once.
+  '|\\d+(?:\\s*\\/{1,2}\\s*\\d+)?(?:\\s*[-+]\\s*\\d+(?:\\s*\\/{1,2}\\s*\\d+)?)?' +
   // A decimal: "1.5".
   '|\\d+(?:\\.\\d+)?';
+
+/**
+ * A mark in front of the quantity that is not part of it.
+ *
+ * WHY THE CATALOGUE WRITES ONE: 60 of the catalogue's 10,925 distinct
+ * ingredient strings carry a mark in front of the number — a bullet of their
+ * own ("- 3 Saffron strands"), a stray plus ("+ 1 Onion"), a stray slash
+ * ("/ 4 tsp cinnamon powder"). The House Bot writes those strings under a
+ * bullet of its own, so the mark is still there when the parser sees the
+ * line:
+ *
+ *     "- - 6 Artichokes - roughly chopped"
+ *
+ * The mark is not part of the quantity, so it has to come off BEFORE the
+ * number is read. Otherwise the number never reads as a number, every
+ * pattern fails, and the whole line stays a NAME:
+ *
+ *     "- 6 Artichokes"   ->   an item called "- 6 Artichokes", quantity "1"
+ *
+ * and the name is not the kitchen's "Artichokes" — and stock matching is
+ * exact, so the row the household shops from and the row on the shelf are
+ * two different things.
+ *
+ * WHY THE MARK HAS TO BE FOLLOWED BY A SPACE OR A NUMBER: a dash in the
+ * MIDDLE of a line is a preparation note ("Onion - sliced") and a dash
+ * inside a name is part of the name ("Semi-dried tomatoes"). Only a mark at
+ * the very front, in front of a space or a number, is a mark and not a word.
+ *
+ * WHY THE SLASH IS IN THE LIST: the catalogue writes "/ 4 tsp cinnamon
+ * powder" in the same recipe as "Tsp cumin powder" — the slash is where the
+ * bullet went, and the number after it is the quantity.
+ */
+const LEADING_MARK = /^(?:[-*•·+/](?:\s+|\d))+/;
 
 /**
  * Try to pull a quantity+unit prefix out of a line so we can capture
@@ -245,6 +303,9 @@ const NUMBER =
  * recognizable shows up first.
  */
 function extractQuantity(line: string): { quantity: string; rest: string } {
+  // The mark in front of the quantity is not part of it. See `LEADING_MARK`.
+  const text = line.replace(LEADING_MARK, '').trim();
+
   // Common quantity + unit patterns at start of line.
   //
   // WHY THE PATTERNS ARE BUILT FROM ONE LIST OF UNITS: the old code wrote the
@@ -274,7 +335,7 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
   ];
 
   for (const re of patterns) {
-    const m = line.match(re);
+    const m = text.match(re);
     if (m) {
       const qty = m[1];
       const unitWord = m[2] || '';
@@ -312,13 +373,13 @@ function extractQuantity(line: string): { quantity: string; rest: string } {
   // something" — and the rule that read a bare integer could not read those,
   // so the number stayed in the name and the item could never match the
   // kitchen's row. One number, read the same way everywhere.
-  const bare = line.match(new RegExp(`^(${NUMBER})\\s+([a-z].{2,})$`, 'i'));
+  const bare = text.match(new RegExp(`^(${NUMBER})\\s+([a-z].{2,})$`, 'i'));
   if (bare) {
     const rest = bare[2].trim();
     if (rest.length >= 2) return { quantity: bare[1], rest };
   }
 
-  return { quantity: '', rest: line };
+  return { quantity: '', rest: text };
 }
 
 /**
