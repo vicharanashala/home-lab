@@ -230,11 +230,24 @@ const written = [];
     // the model may write a quantity that carries a phrase.
     { type: 'add_grocery', name: 'Groceries', quantity: '1 bag of groceries', category: 'other' },
     { type: 'add_grocery', name: 'Spices', quantity: '1 packet of spices', category: 'condiments' },
+    // WHY THIS ONE AND NOT JUST THE PHRASES ABOVE: a phrase is left alone
+    // because it is more than one word, so "1 bag of groceries" never reaches
+    // the part of the rule that can touch a word. A quantity of ONE and a
+    // SINGLE word does reach it, and that part asked only whether the word was
+    // one word — not whether it was a unit:
+    //
+    //     the model wrote   "1 loaves"
+    //     the list carried "1 loave"
+    //
+    // "loave" is not a word. The household's own word was cut to make it fit
+    // the app's idea of a unit, and the model's own sentence — which the
+    // household reads verbatim — still says "1 loaves".
+    { type: 'add_grocery', name: 'Bread', quantity: '1 loaves', category: 'other' },
   ];
 
   const result = applyAgentActions(ACTIONS, store);
 
-  ok(result.applied === 7, 'every action was applied', String(result.applied));
+  ok(result.applied === 8, 'every action was applied', String(result.applied));
   ok(written[0] === '1 pc', 'the action writes "1 pc"', written[0]);
   ok(written[1] === '2 kg', 'the action leaves "2 kg" alone', written[1]);
   ok(
@@ -257,6 +270,11 @@ const written = [];
     written[6] === '1 packet of spices',
     'a quantity of one keeps the phrase the model wrote',
     written[6],
+  );
+  ok(
+    written[7] === '1 loaves',
+    "a quantity of one keeps a word that is not a unit as it was written",
+    written[7],
   );
 }
 
@@ -371,6 +389,21 @@ console.log("\nthe household's own Add to shopping list writes it the same way")
     // household never wrote.
     { typed: '3x', expected: '3x' },
     { typed: '10k', expected: '10k' },
+    // WHY THESE TWO AND NOT JUST THE PHRASE ABOVE: a phrase is left alone
+    // because it is more than one word, so "1 bag of groceries" never reaches
+    // the part of the rule that can touch a word. A quantity of ONE and a
+    // SINGLE word does reach it, and that part asked only whether the word was
+    // one word — not whether it was a unit:
+    //
+    //     the household typed   "1 loaves"
+    //     the list carried     "1 loave"
+    //
+    // "loave" is not a word. The household's own word was cut to make it fit
+    // the app's idea of a unit. A word the app does not know as a unit is the
+    // household's word, and it is left exactly as it was written — the same
+    // promise the rule makes about every other free text.
+    { typed: '1 loaves', expected: '1 loaves' },
+    { typed: '1 eggs', expected: '1 eggs' },
   ];
 
   for (const t of typed) {

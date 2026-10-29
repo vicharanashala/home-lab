@@ -107,8 +107,8 @@ export const spellQuantity = (text: string): string => {
   const trimmed = text.trim();
   // WHY THE UNIT HAS TO BE ONE WORD: the rule decides whether the unit reads
   // as singular, and it decides that by the LAST WORD of what it is handed —
-  // "pcs" -> "pc", "groceries" -> "grocerie". A unit IS one word, so the unit
-  // here has to be one word as well.
+  // "pcs" -> "pc". A unit IS one word, so the unit here has to be one word as
+  // well.
   //
   // The House Bot writes its quantity as free text, so the model may write a
   // quantity that carries a phrase. A phrase is not a unit, and taking its
@@ -121,8 +121,26 @@ export const spellQuantity = (text: string): string => {
   // household read the mangled word on the one screen they shop from — and
   // the count of one is what made it happen, because a count above one is
   // never made singular and so never reached this part of the rule.
+  //
+  // WHY ONE WORD IS NOT ENOUGH, AND THE WORD HAS TO BE A UNIT: "one word" only
+  // keeps a PHRASE out of the unit. It does not keep a single word out of it,
+  // and a single word that is not a unit was cut to fit the app's idea of one:
+  //
+  //     "1 loaves"    ->   "1 loave"
+  //     "1 groceries" ->   "1 grocerie"
+  //
+  // "loave" is not a word. The household's own word was cut because the rule
+  // asked whether it was ONE word and never asked whether it was a UNIT — so
+  // the guard the comment above describes did not do what it says, and the
+  // shopping list carried a word the household never wrote and could not shop
+  // from. The model's own sentence, which the household reads verbatim, still
+  // said "1 loaves".
+  //
+  // So the word has to be a unit the app WRITES — the same gate the tight
+  // shape below uses, and for the same reason. A word the app does not know
+  // is the household's word, and it is left exactly as it was written.
   const spaced = /^(\d+(?:\.\d+)?)\s+(\S+)$/.exec(trimmed);
-  if (spaced) return formatQuantity(Number(spaced[1]), spaced[2]);
+  if (spaced && isWritableUnit(spaced[2])) return formatQuantity(Number(spaced[1]), spaced[2]);
 
   // The tight shape — "2kg" — is a quantity too, and it is spelled the same
   // way. The word after the number has to be a unit the app WRITES, or this
