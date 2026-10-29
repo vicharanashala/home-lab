@@ -2898,10 +2898,12 @@ Taking action (important — you can really change the user's kitchen):
 - You may emit several actions in one block.
 - Available actions:
 
-  {"type":"add_stock","name":"...","quantity":NUMBER,"unit":"pcs|kg|g|ml|L|packets|dozen","category":"CATEGORY","location":"fridge|pantry","expiryDate":"YYYY-MM-DD (optional)","notes":"optional"}
+  {"type":"add_stock","name":"...","quantity":NUMBER,"unit":"pcs|kg|g|ml|L|packets|dozen|bunch|bottles|pack|clove|slice|handful","category":"CATEGORY","location":"fridge|pantry","expiryDate":"YYYY-MM-DD (optional)","notes":"optional"}
   {"type":"add_grocery","name":"...","quantity":"free text like 2 packets","category":"CATEGORY"}
   {"type":"check_grocery","name":"..."}          // marks a matching open grocery item bought
   {"type":"set_stock_quantity","name":"...","quantity":NUMBER}   // sets an existing item's quantity
+
+- unit must be the unit the user actually said ("2 bottles" is bottles, not pcs), and it must be one of the words listed above. The kitchen counts in bottles, bunches, packs, cloves and slices, so those are on the list.
 
 - category must be exactly one of: vegetables, fruits, dairy, meat, seafood, bakery, grains, beverages, snacks, frozen, condiments, household, other.
 - location must be exactly one of: fridge, pantry. Fresh produce/dairy -> fridge; grains, oils, spices, packaged goods -> pantry.
@@ -2933,7 +2935,40 @@ const ACTION_CATEGORIES = new Set([
   'vegetables', 'fruits', 'dairy', 'meat', 'seafood', 'bakery', 'grains',
   'beverages', 'snacks', 'frozen', 'condiments', 'household', 'other',
 ]);
-const ACTION_UNITS = new Set(['pcs', 'kg', 'g', 'ml', 'l', 'packets', 'dozen']);
+// The units the House Bot may write onto a stock row.
+//
+// WHY THIS IS THE APP'S OWN VOCABULARY AND NOT A SHORT LIST: the app's own
+// stock form offers "bunch" and "bottles", and the camera recognizer writes
+// "bunch" and "pack" onto a row. This list used to carry only "pcs", "kg",
+// "g", "ml", "l", "packets" and "dozen", so a unit outside it was silently
+// REWRITTEN to "pcs":
+//
+//     the model wrote   {"type":"add_stock","name":"Milk","quantity":2,"unit":"bottles"}
+//     the shelf held   "2 pcs Milk"
+//
+// while the model's own message — which the household reads VERBATIM — said
+// "Added 2 bottles of milk". Nothing on the screen said the unit had been
+// changed.
+//
+// WHY THE LIST IS HERE AND NOT READ FROM src/utils/units.ts: the bridge is a
+// server and it cannot import the app's TypeScript. So it keeps its own copy,
+// and scripts/test-agent-stock-unit.mjs holds the copy honest: the test
+// reads the app's table, asks this list and the client's gate to carry every
+// word in it, and drives the whole chain so a unit added to the app's table
+// turns the test red until both gates can read it.
+const ACTION_UNITS = new Set([
+  'g', 'gram', 'grams', 'kg', 'kilogram', 'kilograms',
+  'ounce', 'ounces', 'oz', 'lb', 'lbs', 'pound', 'pounds',
+  'ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters',
+  'l', 'liter', 'liters', 'litre', 'litres',
+  'pcs', 'pc', 'piece', 'pieces', 'unit', 'units', 'dozen', 'dozens',
+  'tsp', 'tsps', 'teaspoon', 'teaspoons',
+  'tbsp', 'tbs', 'tb', 'tablespoon', 'tablespoons',
+  'cup', 'cups', 'pinch', 'pinches', 'dash', 'dashes',
+  'kgs', 'pack', 'packs', 'packet', 'packets',
+  'clove', 'cloves', 'bottle', 'bottles', 'slice', 'slices',
+  'bunch', 'bunches', 'handful', 'handfuls',
+]);
 const MAX_ACTIONS_PER_MESSAGE = 12;
 const MAX_NAME_LEN = 60;
 

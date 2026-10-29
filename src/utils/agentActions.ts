@@ -16,12 +16,39 @@ import type { CategoryId, StockItem } from '../types';
 import type { UseStore } from '../store/useStore';
 import { formatQuantity } from './date';
 import { spellQuantity } from './groceryQuantity';
+import { WRITABLE_UNITS } from './units';
 
 const CATEGORIES = new Set<string>([
   'vegetables', 'fruits', 'dairy', 'meat', 'seafood', 'bakery', 'grains',
   'beverages', 'snacks', 'frozen', 'condiments', 'household', 'other',
 ]);
-const UNITS = new Set<string>(['pcs', 'kg', 'g', 'ml', 'l', 'packets', 'dozen']);
+
+/**
+ * The units a stock row may be written in.
+ *
+ * WHY THE APP'S OWN TABLE AND NOT A LIST OF ITS OWN: the House Bot writes
+ * onto the same shelf the household writes onto, and the shelf takes any
+ * unit the app knows. This gate used to carry a list of its own — "pcs",
+ * "kg", "g", "ml", "l", "packets", "dozen" — and a unit that was not on it
+ * was silently REWRITTEN to "pcs":
+ *
+ *     the model wrote   {"type":"add_stock","name":"Milk","quantity":2,"unit":"bottles"}
+ *     the shelf held   "2 pcs Milk"
+ *
+ * while the bot's own message — which the household reads VERBATIM — said
+ * "Added 2 bottles of milk". Nothing on the screen said the unit had been
+ * changed. This is the same shape as the quantity that used to be thrown
+ * away and replaced with "1"; see the `cleanQuantity` rule below.
+ *
+ * "bottles" and "bunch" are not exotic words: the app's own stock form
+ * offers both, and the camera recognizer writes "bunch" and "pack" onto a
+ * row. The app's table — `WRITABLE_UNITS` in src/utils/units.ts — is the
+ * one place that says what the app writes, so it is what this gate reads.
+ * A unit the app does NOT know is still refused, and still falls back to
+ * "pcs"; see `scripts/test-agent-stock-unit.mjs`, which drives the real
+ * bridge rule and this gate and holds both to the app's table.
+ */
+const UNITS = new Set<string>(WRITABLE_UNITS.map((u) => u.toLowerCase()));
 const FRIDGE_CATEGORIES = new Set([
   'vegetables', 'fruits', 'dairy', 'meat', 'seafood', 'frozen',
 ]);
