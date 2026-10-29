@@ -51,9 +51,10 @@ import path from 'node:path';
 /**
  * The paths this process is going to remove when it ends.
  *
- * WHY IT IS A SET: a path can be handed to `tmpWorkDir` twice — a helper that
- * builds the same directory for several cases does exactly that — and the
- * exit handler must not be registered twice for it.
+ * WHY IT IS A SET: the removal is registered by path, and registering the
+ * same path twice would register the handler twice — the second removal would
+ * find nothing there and report an error that never happened. The set makes
+ * the registration idempotent.
  */
 const removals = new Set();
 
