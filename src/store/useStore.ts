@@ -27,6 +27,7 @@ const BUILT_IN_RECIPES = [...STARTER_RECIPES, ...INDIAN_RECIPES] as any;
 import { uid } from '../utils/uid';
 import { findCandidatesForIngredient, planRecipeDeduction, resolveToCommonDimension } from '../utils/recipeMatch';
 import { convertBase, formatInUnit, subtractBase, toBaseUnit, toDisplayUnit } from '../utils/units';
+import { spellQuantity } from '../utils/groceryQuantity';
 import { MEAL_SLOTS, rescaledServings, suggestedServingsForDay } from '../utils/portions';
 import { DEFAULT_CONSENTS } from '../utils/consent';
 import { saveAppState, STORAGE_KEY, IMPORT_NOT_SAVED_MESSAGE, watchForOtherTabs, type StorageReader } from '../utils/appStorage';
@@ -421,7 +422,31 @@ const addGrocery: UseStore['addGrocery'] = (input) => {
   const item: GroceryItem = {
     id: uid('gro'),
     name: input.name.trim(),
-    quantity: input.quantity.trim() || '1',
+    // WHY THE RULE IS APPLIED HERE AND NOT BY EACH WRITER: the shopping list
+    // is ONE list, and seven writers put lines on it — the Stock row, the
+    // Alerts screen, the Meal Plan, the automatic grocery list, the House
+    // Bot's bullet parser, the House Bot's own action, and the household
+    // typing into the Add to shopping list form.
+    //
+    // Six of them called the app's rule themselves. The seventh did not, so
+    // the one writer a person typed for themselves was the one that could put
+    // a second spelling on the list:
+    //
+    //     the Stock row                   "1 pc"
+    //     the Add to shopping list form   "1 pcs"
+    //
+    // The store is the one place every one of them goes through, so the rule
+    // is applied HERE, once. A writer can no longer forget it — which is how
+    // the seventh writer forgot it in the first place.
+    //
+    // WHY IT IS THE SAME RULE THE OTHER WRITERS USE: `spellQuantity` is the
+    // rule that decides what a quantity arriving as text reads as. It
+    // rewrites a "<number> <word>" into the app's spelling and leaves free
+    // text exactly as it was written — so "1 pcs" becomes "1 pc" and
+    // "1 bag of groceries" stays "1 bag of groceries". The other writers
+    // already spell their quantity with it, and spelling it twice changes
+    // nothing.
+    quantity: spellQuantity(input.quantity) || '1',
     category: input.category,
     purchased: false,
     createdAt: Date.now(),

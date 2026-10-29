@@ -257,6 +257,102 @@ const written = [];
   );
 }
 
+/**
+ * The REAL store, bundled so it can be driven outside a browser.
+ *
+ * WHY THE REAL STORE AND NOT A STUB: the manual add is the writer under test,
+ * and what it writes is decided by the store — the one place every writer of
+ * the shopping list goes through. A stub would agree with this test by
+ * construction and prove nothing about the app.
+ *
+ * WHY IT IS BUNDLED: `useStore` is a React hook, and a node test has no DOM to
+ * mount it in. The bundle swaps React for the house's own tap shim, whose
+ * `useSyncExternalStore` reads the snapshot and keeps it — which is all the
+ * store's hook asks of React.
+ *
+ * WHY REACT STAYS EXTERNAL FOR THE SHIM ITSELF: the shim imports the real
+ * React, and a second copy of React inside the bundle would mean the hook ran
+ * against hooks the shim does not have.
+ *
+ * @returns {Promise<Object>} the store, as the app's own hook returns it
+ */
+async function realStore() {
+  const tapShim = path.join(REPO, 'scripts/lib/react-tap-state.mjs');
+  const bundle = await build({
+    entryPoints: [path.join(REPO, 'src/store/useStore.ts')],
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    write: false,
+    plugins: [
+      {
+        name: 'tap-the-store',
+        setup(b) {
+          b.onResolve({ filter: /^react$/ }, (args) => {
+            if (args.importer === tapShim) return { path: 'react', external: true };
+            return { path: tapShim, external: true };
+          });
+        },
+      },
+    ],
+  });
+  const dir = tmpWorkDir('hh-grocery-quantity-store-');
+  await symlink(path.join(REPO, 'node_modules'), path.join(dir, 'node_modules'));
+  const file = path.join(dir, 'useStore.mjs');
+  await writeFile(file, bundle.outputFiles[0].text);
+  const mod = await import(pathToFileURL(file).href);
+  return mod.useStore();
+}
+
+/**
+ * The line the household typed for themselves.
+ *
+ * WHY IT IS HELD HERE AND NOT IN THE BLOCK BELOW: the list at the end of this
+ * file is rendered with the quantity the store really wrote, so the screen can
+ * be checked against the writer rather than against a literal.
+ */
+let byHand = null;
+
+console.log("\nthe household's own Add to shopping list writes it the same way");
+
+/**
+ * What the household typed, and what the shopping list ended up carrying.
+ *
+ * WHY THE HOUSEHOLD'S OWN TYPING IS THE CASE: the Add to shopping list form
+ * takes the quantity as free text — its own placeholder says "e.g. 2 packets,
+ * 1 kg" — and it is the one writer of the shopping list that never went
+ * through the app's rule. So the one input the app knows the most about, the
+ * one a person typed for themselves, was the one that could put a second
+ * spelling on the list.
+ */
+{
+  const store = await realStore();
+
+  const typed = [
+    { typed: '1 pcs', expected: '1 pc' },
+    { typed: '2 kg', expected: '2 kg' },
+    { typed: '1 bag of groceries', expected: '1 bag of groceries' },
+    { typed: 'a pinch of salt', expected: 'a pinch of salt' },
+    { typed: '1/2 litre', expected: '1/2 litre' },
+  ];
+
+  for (const t of typed) {
+    const written = store.addGrocery({
+      name: 'Eggs',
+      quantity: t.typed,
+      category: 'other',
+    });
+    ok(
+      written.quantity === t.expected,
+      `the household's "${t.typed}" is written "${t.expected}"`,
+      written.quantity,
+    );
+    // The line the household typed for themselves, kept so the list below can
+    // be rendered with the quantity the store really wrote.
+    if (t.typed === '1 pcs') byHand = written;
+  }
+}
+
 console.log('\nthree writers, one list, one spelling');
 
 {
@@ -389,6 +485,13 @@ console.log('\nthe list the household shops from shows one spelling');
         key: 'phrase',
         item: item('Groceries', written[5] ?? ''),
       }),
+      // The line the household typed for themselves, with the quantity the
+      // store really wrote for it — so the list is checked against the writer
+      // and not against a literal.
+      createElement(GroceryRow, {
+        key: 'by-hand',
+        item: item(byHand?.name ?? 'Eggs', byHand?.quantity ?? ''),
+      }),
     ]),
   );
 
@@ -400,8 +503,8 @@ console.log('\nthe list the household shops from shows one spelling');
   ok(shown.includes('1 pc'), 'the list shows "1 pc"', shown);
   ok(!shown.includes('1 pcs'), 'the list does not show "1 pcs" anywhere', shown);
   ok(
-    (shown.match(/1 pc\b/g) ?? []).length === 2,
-    'both rows on the list read the same way',
+    (shown.match(/1 pc\b/g) ?? []).length === 3,
+    'every row on the list reads the same way',
     shown,
   );
   ok(
