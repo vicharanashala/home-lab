@@ -188,6 +188,15 @@ console.log('\nthe name is the ingredient the kitchen knows');
 
 console.log('\nthe House Bot\'s own action writes it the same way');
 
+/**
+ * The quantities the House Bot's action put on the shopping list.
+ *
+ * WHY IT IS OUT HERE AND NOT INSIDE THE BLOCK BELOW: the row at the end of
+ * this file is rendered with the quantity the action actually wrote, so the
+ * screen can be checked against the writer rather than against a literal.
+ */
+const written = [];
+
 {
   // The third writer of the shopping list: the House Bot's ACTION, which puts
   // the quantity in as one string — the bridge tells the model it may write
@@ -196,7 +205,6 @@ console.log('\nthe House Bot\'s own action writes it the same way');
     pathToFileURL(path.join(REPO, 'src/utils/agentActions.ts')).href
   );
 
-  const written = [];
   const store = {
     grocery: [],
     stock: [],
@@ -212,11 +220,18 @@ console.log('\nthe House Bot\'s own action writes it the same way');
     { type: 'add_grocery', name: 'Salt', quantity: 'a pinch of salt', category: 'other' },
     { type: 'add_grocery', name: 'Biscuits', quantity: '2 big packets', category: 'snacks' },
     { type: 'add_grocery', name: 'Milk', quantity: '1/2 litre', category: 'dairy' },
+    // WHY THESE TWO AND NOT JUST THE ONE ABOVE: "2 big packets" kept its
+    // words because a quantity of two is never made singular, so it never
+    // reached the part of the rule that could touch a word. A quantity of ONE
+    // does, and the bridge tells the model the quantity is free text — so
+    // the model may write a quantity that carries a phrase.
+    { type: 'add_grocery', name: 'Groceries', quantity: '1 bag of groceries', category: 'other' },
+    { type: 'add_grocery', name: 'Spices', quantity: '1 packet of spices', category: 'condiments' },
   ];
 
   const result = applyAgentActions(ACTIONS, store);
 
-  ok(result.applied === 5, 'every action was applied', String(result.applied));
+  ok(result.applied === 7, 'every action was applied', String(result.applied));
   ok(written[0] === '1 pc', 'the action writes "1 pc"', written[0]);
   ok(written[1] === '2 kg', 'the action leaves "2 kg" alone', written[1]);
   ok(
@@ -230,6 +245,16 @@ console.log('\nthe House Bot\'s own action writes it the same way');
     written[3],
   );
   ok(written[4] === '1/2 litre', 'a fraction is left as it was written', written[4]);
+  ok(
+    written[5] === '1 bag of groceries',
+    'a quantity of one keeps the phrase the model wrote',
+    written[5],
+  );
+  ok(
+    written[6] === '1 packet of spices',
+    'a quantity of one keeps the phrase the model wrote',
+    written[6],
+  );
 }
 
 console.log('\nthree writers, one list, one spelling');
@@ -356,6 +381,14 @@ console.log('\nthe list the household shops from shows one spelling');
         key: 'bot',
         item: item(fromHouseBot?.name ?? 'eggs', fromHouseBot?.quantity ?? ''),
       }),
+      // The House Bot's own action, with the quantity it wrote for the
+      // household. The row prints the quantity as it was written, so this is
+      // exactly what the household reads — and the quantity is the one the
+      // action really wrote, not a literal typed here.
+      createElement(GroceryRow, {
+        key: 'phrase',
+        item: item('Groceries', written[5] ?? ''),
+      }),
     ]),
   );
 
@@ -369,6 +402,16 @@ console.log('\nthe list the household shops from shows one spelling');
   ok(
     (shown.match(/1 pc\b/g) ?? []).length === 2,
     'both rows on the list read the same way',
+    shown,
+  );
+  ok(
+    shown.includes('1 bag of groceries'),
+    'the list shows the phrase the House Bot wrote',
+    shown,
+  );
+  ok(
+    !shown.includes('grocerie '),
+    'the list does not cut the last letter off a word the House Bot wrote',
     shown,
   );
 }

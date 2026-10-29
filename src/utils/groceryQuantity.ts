@@ -75,7 +75,23 @@ import { formatQuantity } from './date';
  */
 export const spellQuantity = (text: string): string => {
   const trimmed = text.trim();
-  const m = /^(\d+(?:\.\d+)?)\s+(\S.*)$/.exec(trimmed);
+  // WHY THE UNIT HAS TO BE ONE WORD: the rule decides whether the unit reads
+  // as singular, and it decides that by the LAST WORD of what it is handed —
+  // "pcs" -> "pc", "groceries" -> "grocerie". A unit IS one word, so the unit
+  // here has to be one word as well.
+  //
+  // The House Bot writes its quantity as free text, so the model may write a
+  // quantity that carries a phrase. A phrase is not a unit, and taking its
+  // last word as the unit cut the household's own words off the end:
+  //
+  //     "1 bag of groceries"   ->   "1 bag of grocerie"
+  //     "1 packet of spices"   ->   "1 packet of spice"
+  //
+  // The shopping list prints the quantity exactly as it was written, so the
+  // household read the mangled word on the one screen they shop from — and
+  // the count of one is what made it happen, because a count above one is
+  // never made singular and so never reached this part of the rule.
+  const m = /^(\d+(?:\.\d+)?)\s+(\S+)$/.exec(trimmed);
   if (!m) return trimmed;
   return formatQuantity(Number(m[1]), m[2]);
 };
