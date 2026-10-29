@@ -1,5 +1,6 @@
 import type { ShoppingNeed, StockItem } from '../types';
 import { formatQuantity } from './date';
+import { unitDimension } from './units';
 
 /**
  * How much of something to put on the shopping list, written by ONE rule.
@@ -60,10 +61,33 @@ import { formatQuantity } from './date';
  * So this rule takes the string and writes it the app's way, and all of them
  * agree: "1 pc" beside "1 pc", not "1 pc" beside "1 pcs".
  *
- * WHY ONLY THE "<number> <word>" SHAPE IS RE-SPELLED: free text is free
- * text. The model may write "a pinch of salt" or "2 big packets", and those
- * are not quantities the app has a rule for — they are left exactly as they
- * were written. Only a quantity that is already a number and a unit is one.
+ * WHY FREE TEXT IS LEFT ALONE: free text is free text. The model may write
+ * "a pinch of salt" or "2 big packets", and those are not quantities the app
+ * has a rule for — they are left exactly as they were written. Only a
+ * quantity that is already a number and a unit is one.
+ *
+ * WHY A QUANTITY WRITTEN WITHOUT A SPACE IS ALSO ONE: the number and the
+ * unit can be written together, and that spelling is the one the app's own
+ * writers used to produce:
+ *
+ *     the Meal Plan       "2kg"
+ *     the Alerts screen   "2 kg"
+ *
+ * The writers were fixed to spell it the app's way, but the HOUSEHOLD types
+ * into the Add to shopping list form and the HOUSE BOT writes the model's
+ * free text — and both can write "2kg". The rule only recognised a quantity
+ * with a space in it, so the tight spelling reached the shopping list and
+ * the list carried the same quantity two ways again:
+ *
+ *     the Stock row                   "2 kg"
+ *     the Add to shopping list form   "2kg"
+ *
+ * WHY THE TIGHT SHAPE IS GATED ON THE APP KNOWING THE UNIT: "2kg" is a
+ * number and a unit, but "3x" is a number and a letter, and "10k" is a number
+ * and a letter. A space cannot tell them apart — the rule can only do it by
+ * asking whether the word is a unit the app knows, and the app's own unit
+ * table is the one place that answers. A word the table does not carry is
+ * free text, and free text is left exactly as it was written.
  *
  * WHY A FRACTION IS LEFT ALONE: `formatQuantity` writes a NUMBER, and "1/2"
  * is not one. The household wrote "1/2 cup of sugar", and turning that into
@@ -91,9 +115,18 @@ export const spellQuantity = (text: string): string => {
   // household read the mangled word on the one screen they shop from — and
   // the count of one is what made it happen, because a count above one is
   // never made singular and so never reached this part of the rule.
-  const m = /^(\d+(?:\.\d+)?)\s+(\S+)$/.exec(trimmed);
-  if (!m) return trimmed;
-  return formatQuantity(Number(m[1]), m[2]);
+  const spaced = /^(\d+(?:\.\d+)?)\s+(\S+)$/.exec(trimmed);
+  if (spaced) return formatQuantity(Number(spaced[1]), spaced[2]);
+
+  // The tight shape — "2kg" — is a quantity too, and it is spelled the same
+  // way. The word after the number has to be a unit the app knows, or this
+  // would rewrite "3x" into "3 x" and "10k" into "10 k".
+  const tight = /^(\d+(?:\.\d+)?)([A-Za-z]+)$/.exec(trimmed);
+  if (tight && unitDimension(tight[2]) !== 'unknown') {
+    return formatQuantity(Number(tight[1]), tight[2]);
+  }
+
+  return trimmed;
 };
 
 /**

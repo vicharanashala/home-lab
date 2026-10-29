@@ -334,6 +334,24 @@ console.log("\nthe household's own Add to shopping list writes it the same way")
     { typed: '1 bag of groceries', expected: '1 bag of groceries' },
     { typed: 'a pinch of salt', expected: 'a pinch of salt' },
     { typed: '1/2 litre', expected: '1/2 litre' },
+    // WHY THESE FOUR: the number and the unit can be written TOGETHER, and
+    // that spelling is the one the app's own writers used to produce — the
+    // Meal Plan wrote "2kg" where the Stock row wrote "2 kg". The writers
+    // were fixed, but the household types into this form and the House Bot
+    // writes the model's free text, and both can write "2kg" too. So the
+    // same quantity reached the shopping list two ways:
+    //
+    //     the Stock row                   "2 kg"
+    //     the Add to shopping list form   "2kg"
+    { typed: '2kg', expected: '2 kg' },
+    { typed: '500g', expected: '500 g' },
+    { typed: '1pcs', expected: '1 pc' },
+    // WHY THESE TWO ARE LEFT ALONE: a number followed by a letter that is
+    // NOT a unit the app knows is not a quantity — it is a number and a
+    // letter, and rewriting it would put a unit on the list that the
+    // household never wrote.
+    { typed: '3x', expected: '3x' },
+    { typed: '10k', expected: '10k' },
   ];
 
   for (const t of typed) {
