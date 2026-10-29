@@ -109,6 +109,76 @@ export const KNOWN_UNITS: string[] = [
   ...Object.keys(SCOOP),
 ];
 
+/**
+ * The unit words the app can WRITE, whether or not it can CONVERT them.
+ *
+ * WHY THIS IS BIGGER THAN THE TABLES ABOVE: the tables answer "can the app
+ * convert this unit?" — and the answer is no for the words the kitchen counts
+ * in but the app does not measure in. A bottle, a packet, a pack, a clove, a
+ * slice, a bunch, a handful. The app still WRITES those words, because the
+ * stock unit field is free text and the add form offers them:
+ *
+ *     the add form's units    "pcs", "packets", "kg", "g", "L", "ml",
+ *                             "dozen", "bunch", "bottles"
+ *     the catalogue's units   "cup", "g", "kg", "l", "pcs", "pinch",
+ *                             "tbsp", "tsp", "slices"
+ *
+ * So this list answers a DIFFERENT question from `unitDimension`:
+ *
+ *     unitDimension   can the app CONVERT this word?
+ *     isWritableUnit  is this a unit word the app WRITES?
+ *
+ * WHY IT MATTERS THAT THEY ARE DIFFERENT QUESTIONS: the rule that spells a
+ * quantity has to tell a quantity from a number and a letter — "2kg" is a
+ * quantity, "3x" and "10k" are not — and it can only do that by asking
+ * whether the word is a unit the app knows. Asking the CONVERT question
+ * there left the kitchen's own units unrecognised, and the same quantity
+ * reached the shopping list two ways:
+ *
+ *     the Stock row                   "2 bottles"
+ *     the Add to shopping list form   "2bottles"
+ *
+ * WHY "kgs" IS HERE AND NOT IN THE MASS TABLE: the mass table converts, and
+ * "kgs" is not something the app converts — but the House Bot's bullet
+ * parser reads it, and the stock unit field is free text, so the app can be
+ * asked to write "2 kgs".
+ *
+ * @returns every unit word the app writes, in both forms as the app knows them
+ */
+const KITCHEN_COUNT_UNITS = [
+  'kgs',
+  'pack', 'packs',
+  'packet', 'packets',
+  'dozen', 'dozens',
+  'clove', 'cloves',
+  'bottle', 'bottles',
+  'slice', 'slices',
+  'bunch', 'bunches',
+  'handful', 'handfuls',
+];
+
+export const WRITABLE_UNITS: string[] = [
+  ...new Set([...KNOWN_UNITS, ...KITCHEN_COUNT_UNITS]),
+];
+
+/** The same list, lower-cased, for the lookup below. */
+const WRITABLE_UNIT_SET = new Set(WRITABLE_UNITS.map((u) => u.toLowerCase()));
+
+/**
+ * Is this word a unit the app writes a quantity in?
+ *
+ * WHY THE ANSWER IS NOT `unitDimension`: that asks whether the app can
+ * CONVERT the unit, and the kitchen's own units — bottles, packets, cloves,
+ * slices, bunches — cannot be converted. The app writes them all the same.
+ * See `WRITABLE_UNITS`.
+ *
+ * @param unit the word, as it was written
+ * @returns true when the app writes quantities in this unit
+ */
+export function isWritableUnit(unit: string): boolean {
+  return WRITABLE_UNIT_SET.has(unit.trim().toLowerCase());
+}
+
 export function unitDimension(unit: string): UnitDimension {
   const k = unit.trim().toLowerCase();
   if (k in MASS) return 'mass';

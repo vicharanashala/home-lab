@@ -1,6 +1,6 @@
 import type { ShoppingNeed, StockItem } from '../types';
 import { formatQuantity } from './date';
-import { unitDimension } from './units';
+import { isWritableUnit } from './units';
 
 /**
  * How much of something to put on the shopping list, written by ONE rule.
@@ -89,6 +89,12 @@ import { unitDimension } from './units';
  * table is the one place that answers. A word the table does not carry is
  * free text, and free text is left exactly as it was written.
  *
+ * AND "KNOWING THE UNIT" MEANS WRITING IT, NOT CONVERTING IT: the app writes
+ * "2 bottles" and "2 slices" and "2 packets" on the shopping list, and it
+ * converts none of them. The gate asks whether the word is a unit the app
+ * WRITES — `isWritableUnit` — so the kitchen's own units are re-spelled the
+ * same way as the ones the app can measure in. See `WRITABLE_UNITS`.
+ *
  * WHY A FRACTION IS LEFT ALONE: `formatQuantity` writes a NUMBER, and "1/2"
  * is not one. The household wrote "1/2 cup of sugar", and turning that into
  * "0.5 cup" would put a number the household never said on their shopping
@@ -119,10 +125,24 @@ export const spellQuantity = (text: string): string => {
   if (spaced) return formatQuantity(Number(spaced[1]), spaced[2]);
 
   // The tight shape — "2kg" — is a quantity too, and it is spelled the same
-  // way. The word after the number has to be a unit the app knows, or this
+  // way. The word after the number has to be a unit the app WRITES, or this
   // would rewrite "3x" into "3 x" and "10k" into "10 k".
+  //
+  // WHY IT IS "WRITES" AND NOT "CONVERTS": the question is whether the word
+  // is a unit word, not whether the app can convert between dimensions. The
+  // kitchen counts in bottles, packets, packs, cloves, slices, bunches and
+  // handfuls, and the app writes every one of them — the stock unit field is
+  // free text and the add form offers half of them — but it converts NONE of
+  // them. Asking the convert question left the kitchen's own units out, and
+  // the same quantity reached the shopping list two ways:
+  //
+  //     the Stock row                   "2 bottles"
+  //     the Add to shopping list form   "2bottles"
+  //
+  // which is the defect this rule exists to end, still alive for every unit
+  // the app writes but cannot measure in.
   const tight = /^(\d+(?:\.\d+)?)([A-Za-z]+)$/.exec(trimmed);
-  if (tight && unitDimension(tight[2]) !== 'unknown') {
+  if (tight && isWritableUnit(tight[2])) {
     return formatQuantity(Number(tight[1]), tight[2]);
   }
 

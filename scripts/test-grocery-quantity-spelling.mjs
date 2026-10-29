@@ -90,8 +90,11 @@ const { formatQuantity } = await import(
 const { parseGroceryList } = await import(
   pathToFileURL(path.join(REPO, 'src/utils/groceryListParser.ts')).href
 );
-const { groceryQuantityForStock } = await import(
+const { groceryQuantityForStock, spellQuantity } = await import(
   pathToFileURL(path.join(REPO, 'src/utils/groceryQuantity.ts')).href
+);
+const { WRITABLE_UNITS } = await import(
+  pathToFileURL(path.join(REPO, 'src/utils/units.ts')).href
 );
 
 let passed = 0;
@@ -346,6 +349,22 @@ console.log("\nthe household's own Add to shopping list writes it the same way")
     { typed: '2kg', expected: '2 kg' },
     { typed: '500g', expected: '500 g' },
     { typed: '1pcs', expected: '1 pc' },
+    // WHY THESE THREE AND NOT THE ONES ABOVE: the tight shape is a quantity
+    // only when the word after the number is a unit the app WRITES, and the
+    // app writes units it cannot convert — a bottle, a packet, a slice. The
+    // stock unit field is free text and the add form offers "packets",
+    // "bunch" and "bottles", and the recipe catalogues measure Bread in
+    // "slices", so these are the app's own units and not free text.
+    //
+    // The gate used to ask whether the app could CONVERT the unit, and it
+    // cannot convert any of these, so they were left as they were typed and
+    // the same quantity reached the shopping list two ways:
+    //
+    //     the Stock row                   "2 bottles"
+    //     the Add to shopping list form   "2bottles"
+    { typed: '2bottles', expected: '2 bottles' },
+    { typed: '2packets', expected: '2 packets' },
+    { typed: '6slices', expected: '6 slices' },
     // WHY THESE TWO ARE LEFT ALONE: a number followed by a letter that is
     // NOT a unit the app knows is not a quantity — it is a number and a
     // letter, and rewriting it would put a unit on the list that the
@@ -383,6 +402,75 @@ console.log('\nthree writers, one list, one spelling');
     'the House Bot writes the same thing the same way',
     `the Stock row says "${fromStockRow}", the House Bot says "${fromHouseBot}"`,
   );
+}
+
+console.log('\nevery unit the app writes is spelled one way, written or not');
+
+{
+  /**
+   * WHY EVERY UNIT AND NOT A HANDFUL: the gate that re-spells a tight
+   * quantity asks whether the word is a unit the app WRITES, and the set of
+   * those words is the app's own vocabulary — the recipe catalogues, the add
+   * form and the stock unit field. Listing a few of them here would let the
+   * next one drift, and the drift is silent: a tight spelling that is not
+   * re-spelled simply reaches the shopping list as it was typed.
+   */
+  const NOT_A_UNIT = ['x', 'k', 'up', 'nd', 'th'];
+
+  for (const unit of WRITABLE_UNITS) {
+    for (const qty of [1, 2]) {
+      const tight = spellQuantity(`${qty}${unit}`);
+      const spaced = spellQuantity(`${qty} ${unit}`);
+      ok(
+        tight === spaced,
+        `"${qty}${unit}" and "${qty} ${unit}" spell the same way`,
+        `tight -> "${tight}", spaced -> "${spaced}"`,
+      );
+    }
+  }
+
+  /**
+   * WHY THE LETTERS ARE CHECKED TOO: the rule has to tell a quantity from a
+   * number and a letter, and "3x" and "10k" are numbers and letters. If a
+   * word ever joins the unit list by accident, every one of those starts
+   * being rewritten, so the guarantee is stated here rather than assumed.
+   */
+  for (const word of NOT_A_UNIT) {
+    const written = spellQuantity(`3${word}`);
+    ok(
+      written === `3${word}`,
+      `"3${word}" is left exactly as it was written`,
+      written,
+    );
+  }
+}
+
+console.log('\nand the House Bot reads back what the app writes, tight or not');
+
+{
+  /**
+   * WHY THE TIGHT SPELLING IS PARSED HERE: the rule re-spells a tight
+   * quantity into the spaced one, and the House Bot's parser reads the
+   * shopping list back. So a unit the app writes but the parser does not
+   * know would be re-spelled into a spelling the parser cannot lift — and
+   * the unit would end up in the item's NAME again, which is the failure
+   * this parser has already had twice.
+   *
+   * The list of units is read out of the app's own table rather than written
+   * here, so a unit added to the table reaches this test without this file
+   * being edited.
+   */
+  for (const unit of WRITABLE_UNITS) {
+    for (const qty of [1, 2]) {
+      const tight = spellQuantity(`${qty}${unit}`);
+      const item = parseOne(`- ${tight} of Eggs`);
+      ok(
+        item?.name?.toLowerCase() === 'eggs',
+        `the parser lifts "${tight}" off the name`,
+        `the name is ${JSON.stringify(item?.name)}`,
+      );
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
