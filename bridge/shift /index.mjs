@@ -3808,6 +3808,45 @@ function stockContextLine(item) {
 }
 
 /**
+ * One ingredient of a recipe, written the way the app writes it.
+ *
+ * WHY IT READS BOTH SHAPES: the app sends the ingredient's NAME — HouseBot.tsx
+ * builds the catalogue it posts as `ingredients: r.ingredients.map((i) =>
+ * i.name)`, so every element is a plain string. The block used to read three
+ * fields off each one —
+ *
+ *     `${i.quantity || ''}${i.unit ? i.unit : ''} ${i.name}`.trim()
+ *
+ * — and a string has none of them, so every ingredient of every recipe was
+ * written to the model as the word "undefined":
+ *
+ *     - [rcp_1] 🍳 Masala Dosa (breakfast, serves 2): undefined, undefined
+ *
+ * The recipe names survived, because they are read from fields the app does
+ * send, but the ingredients did not — and the ingredients are what the block
+ * is for.
+ *
+ * WHY A RECORD IS READ TOO: a client that sends the whole ingredient record
+ * gets the quantity as well, written by the app's own rule ("200 g Rice"), so
+ * the model is never told a quantity in a spelling the app would not use.
+ *
+ * @param {unknown} ingredient an ingredient as the client sent it
+ * @returns {string} the ingredient, or an empty string if there is none
+ */
+function recipeIngredientLine(ingredient) {
+  // THE SHAPE THE APP SENDS: the name, on its own.
+  if (typeof ingredient === 'string') return ingredient.trim();
+  if (!ingredient || typeof ingredient !== 'object') return '';
+  const name = String(ingredient.name ?? '').trim();
+  if (!name) return '';
+  // A record that carries a number carries it by the app's rule — and a
+  // quantity that is not a number is left off rather than written as "NaN g".
+  const qty = Number(ingredient.quantity);
+  if (!Number.isFinite(qty)) return name;
+  return `${formatQuantity(qty, ingredient.unit)} ${name}`;
+}
+
+/**
  * One line of context for a meal the person logged.
  *
  * WHY THE FIELDS ARE THE APP'S OWN: the app records a meal as
@@ -3901,10 +3940,13 @@ app.post('/api/housebot/chat', async (req, res) => {
   const recipesBlock = recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
       recipes.slice(0, 200).map((r) => {
+        // WHY THE RULE AND NOT A TEMPLATE: the ingredient's name is what the
+        // block is for, and it is read by `recipeIngredientLine` — the same
+        // helper both routes use, so the two cannot disagree.
         const ing = Array.isArray(r.ingredients)
-          ? r.ingredients.map((i) => `${i.quantity || ''}${i.unit ? i.unit : ''} ${i.name}`.trim()).join(', ')
+          ? r.ingredients.map(recipeIngredientLine).filter(Boolean).join(', ')
           : '';
-        return `  - [${r.id}] ${r.emoji || ''} ${r.name} (${r.mealType || ''}, serves ${r.baseServings || 2}): ${ing}`;
+        return `  - [${r.id}] ${r.emoji || ''} ${r.name} (${r.mealType || ''}, serves ${r.baseServings || 2})${ing ? `: ${ing}` : ''}`;
       }).join('\n')
     : null;
 
@@ -4067,10 +4109,13 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   const recipesBlock = recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
       recipes.slice(0, 200).map((r) => {
+        // WHY THE RULE AND NOT A TEMPLATE: the ingredient's name is what the
+        // block is for, and it is read by `recipeIngredientLine` — the same
+        // helper both routes use, so the two cannot disagree.
         const ing = Array.isArray(r.ingredients)
-          ? r.ingredients.map((i) => `${i.quantity || ''}${i.unit ? i.unit : ''} ${i.name}`.trim()).join(', ')
+          ? r.ingredients.map(recipeIngredientLine).filter(Boolean).join(', ')
           : '';
-        return `  - [${r.id}] ${r.emoji || ''} ${r.name} (${r.mealType || ''}, serves ${r.baseServings || 2}): ${ing}`;
+        return `  - [${r.id}] ${r.emoji || ''} ${r.name} (${r.mealType || ''}, serves ${r.baseServings || 2})${ing ? `: ${ing}` : ''}`;
       }).join('\n')
     : null;
 
