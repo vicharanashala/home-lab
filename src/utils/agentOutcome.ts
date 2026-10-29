@@ -90,5 +90,28 @@ export function describeAgentOutcome(outcome: AgentActionResult): AgentOutcomeTo
     });
   }
 
+  // WHY A BLOCK THE BRIDGE COULD NOT READ IS ITS OWN TOAST: the model's
+  // action block did not parse, so the number of changes it asked for is not
+  // in it — and a number put there would be one the household could check
+  // and could not. So the sentence says what is true: a change was asked
+  // for, it did not happen, and the reason is that it could not be read.
+  //
+  // WHY IT IS NOT FOLDED INTO THE COUNT ABOVE: "couldn't apply 1 of 2
+  // changes" is a statement about two changes the app can name. This is a
+  // statement about a number of changes the app cannot name, and adding the
+  // two together would turn the second into a count it does not have.
+  //
+  // WHY IT MATTERS THAT THIS IS HERE AT ALL: the model's own sentence is
+  // shown to the household verbatim — "Added eggs and milk to your fridge" —
+  // and the block it wrote the changes in did not parse, so the shelf held
+  // nothing. Without this toast nothing on the screen contradicts what the
+  // household was told.
+  if (outcome.unreadable) {
+    toasts.push({
+      message: 'House Bot couldn’t apply a change it couldn’t read',
+      kind: 'warning',
+    });
+  }
+
   return toasts;
 }

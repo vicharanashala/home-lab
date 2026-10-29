@@ -818,6 +818,9 @@ export function HouseBotPage() {
       // How many actions the BRIDGE refused to carry, reported when the
       // stream is done. See the comment at the applyAgentActions call below.
       let droppedByBridge = 0;
+      // Whether the bridge found an action block it could not read at all.
+      // See the comment at the applyAgentActions call below.
+      let unreadableByBridge = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -835,6 +838,7 @@ export function HouseBotPage() {
             error?: string;
             action?: unknown;
             dropped?: number;
+            unreadable?: boolean;
           };
           try {
             payload = JSON.parse(json);
@@ -863,6 +867,12 @@ export function HouseBotPage() {
               typeof payload.dropped === 'number' && Number.isFinite(payload.dropped)
                 ? Math.max(0, payload.dropped)
                 : 0;
+            // WHY THIS IS READ HERE AND NOT COUNTED: the bridge found an
+            // action block it could not read — the model's JSON did not
+            // parse — so it cannot say how many changes were in it. What it
+            // can say is that the block was there and nothing came out of
+            // it, and that is a loss the household has to hear about.
+            unreadableByBridge = payload.unreadable === true;
           } else if (payload.type === 'error') {
             throw new Error(payload.error || 'stream error');
           }
@@ -900,9 +910,25 @@ export function HouseBotPage() {
       //     the shelf held       nothing, and nothing said so
       //
       // So the gate is asked about the batch when there is anything to
-      // apply OR anything that was dropped.
-      if (queuedActions.length > 0 || droppedByBridge > 0) {
-        const outcome = applyAgentActions(queuedActions, store, droppedByBridge);
+      // apply OR anything that was dropped OR a block that could not be
+      // read.
+      //
+      // WHY THE UNREADABLE BLOCK IS IN THE GATE: the model's action block
+      // did not parse, so nothing crossed to this browser and the count of
+      // what was lost cannot be read either — the bridge says "dropped: 0",
+      // which is honest about the number and says nothing about the loss.
+      // Without this third arm the batch looks empty and perfect, and the
+      // household is left holding the bot's own sentence and an empty shelf:
+      //
+      //     the household read   "Added eggs and milk to your fridge"
+      //     the shelf held       nothing, and nothing said so
+      if (queuedActions.length > 0 || droppedByBridge > 0 || unreadableByBridge) {
+        const outcome = applyAgentActions(
+          queuedActions,
+          store,
+          droppedByBridge,
+          unreadableByBridge,
+        );
         // WHY THE SAYING IS A RULE AND NOT TWO LINES HERE: a change that was
         // dropped has to reach the household even when another one worked. The
         // bot writes its own confirmation into the reply the household reads,

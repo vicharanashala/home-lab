@@ -3091,11 +3091,44 @@ function validateAction(raw) {
  * action can be lost for two reasons — the batch was longer than the cap, or
  * the action itself was refused — and both are the same fact to the
  * household: a change it was told about did not happen.
+ *
+ * WHY IT ALSO SAYS WHEN THE BLOCK COULD NOT BE READ AT ALL: the count above
+ * is "proposed minus carried", and it can only be worked out when the
+ * model's block PARSES — the number it proposed is read out of the block
+ * itself. When the block does not parse, that number cannot be read, and the
+ * count was reported as zero:
+ *
+ *     the model wrote   "Added eggs and milk to your fridge."
+ *                       ```homehub-actions
+ *                       [{"type":"add_grocery","name":"Eggs",...},]
+ *                       ```
+ *     the bridge read   nothing — a trailing comma
+ *     the household read "Added eggs and milk to your fridge."
+ *     the shelf held    nothing
+ *
+ * A count of zero says "nothing was lost", and something WAS lost. And the
+ * page's gate is "were there any actions, or were any dropped?", so an empty
+ * batch with a count of zero opened nothing and said nothing at all — the
+ * silence this rule was written to end, reached by the one road the count
+ * could not walk.
+ *
+ * WHY IT IS A SEPARATE FACT AND NOT A BIGGER COUNT: the number of actions
+ * the model wrote cannot be read out of a block that did not parse, and a
+ * number made up would be a number the household could check. So the LOSS is
+ * reported as what it is — the block was there and could not be read — and
+ * the count stays at zero. The two are not the same fact and they are not
+ * added together.
+ *
+ * WHY AN EMPTY BLOCK IS NOT "UNREADABLE": the model opened the block and
+ * wrote nothing in it. Nothing was proposed, so nothing was lost, and
+ * warning the household about a change that was never asked for is noise.
  */
 function splitActions(reply) {
   const text = typeof reply === 'string' ? reply : '';
   const start = text.indexOf(ACTION_FENCE);
-  if (start === -1) return { text: text.trim(), actions: [], dropped: 0 };
+  if (start === -1) {
+    return { text: text.trim(), actions: [], dropped: 0, unreadable: false };
+  }
 
   const cleanText = text.slice(0, start).trim();
   let body = text.slice(start + ACTION_FENCE.length);
@@ -3106,24 +3139,47 @@ function splitActions(reply) {
 
   let actions = [];
   let dropped = 0;
-  try {
-    const parsed = JSON.parse(body);
-    const list = Array.isArray(parsed)
-      ? parsed
-      : (parsed && Array.isArray(parsed.actions) ? parsed.actions : []);
-    const proposed = list.length;
-    actions = list.slice(0, MAX_ACTIONS_PER_MESSAGE).map(validateAction).filter(Boolean);
-    dropped = proposed - actions.length;
-  } catch {
-    // Malformed JSON means no actions — the user still gets their text.
-    //
-    // WHY THE COUNT STAYS AT ZERO HERE AND IS NOT GUESSED: the number of
-    // actions the model wrote cannot be read out of a body that did not
-    // parse, and a number made up would be a number the household could
-    // check. It is reported as unknown rather than invented.
-    actions = [];
+  let unreadable = false;
+
+  if (body === '') {
+    // The model opened the block and wrote nothing in it. Nothing was
+    // proposed, so nothing was lost.
+  } else {
+    try {
+      const parsed = JSON.parse(body);
+      const list = Array.isArray(parsed)
+        ? parsed
+        : (parsed && typeof parsed === 'object' && Array.isArray(parsed.actions)
+            ? parsed.actions
+            : null);
+      if (list) {
+        const proposed = list.length;
+        actions = list.slice(0, MAX_ACTIONS_PER_MESSAGE).map(validateAction).filter(Boolean);
+        dropped = proposed - actions.length;
+      } else {
+        // The block parsed, but it is not a list of actions. The model wrote
+        // ONE action where a list was expected, most likely.
+        unreadable = true;
+        console.error('[housebot/actions] the action block was not a list of actions');
+      }
+    } catch (err) {
+      // Malformed JSON means no actions — the user still gets their text.
+      //
+      // WHY THE COUNT STAYS AT ZERO HERE AND IS NOT GUESSED: the number of
+      // actions the model wrote cannot be read out of a body that did not
+      // parse, and a number made up would be a number the household could
+      // check. It is reported as unknown rather than invented.
+      //
+      // WHY IT IS NOT SILENT ANYWAY: the failure is real and it is the
+      // machine's problem as well as the household's — a model that keeps
+      // writing broken JSON is a model the prompt has to change, and a
+      // swallowed parse error is a bug nobody is told about.
+      actions = [];
+      unreadable = true;
+      console.error('[housebot/actions] could not read the action block:', err?.message || err);
+    }
   }
-  return { text: cleanText, actions, dropped };
+  return { text: cleanText, actions, dropped, unreadable };
 }
 
 const HOUSEBOT_SUMMARIZE_PROMPT = `You are summarizing a conversation between a user and House Bot, an Indian-household kitchen assistant.
@@ -4097,7 +4153,7 @@ app.post('/api/housebot/chat', async (req, res) => {
     });
   }
 
-  const { text: replyText, actions, dropped } = splitActions(r.content || '');
+  const { text: replyText, actions, dropped, unreadable } = splitActions(r.content || '');
 
   res.json({
     ok: true,
@@ -4110,6 +4166,11 @@ app.post('/api/housebot/chat', async (req, res) => {
     // own validation are changes the household was told about and that did
     // not happen. The browser says so — see `describeAgentOutcome`.
     dropped,
+    // WHY THIS IS SENT AS ITS OWN FACT: a block the bridge could not read at
+    // all is a loss whose SIZE cannot be read, so it is not a number in the
+    // count above — it is the fact that something was lost and cannot be
+    // counted. The browser words it without a number. See `splitActions`.
+    unreadable,
   });
   } catch (err) {
     console.error('[housebot/chat] unhandled error:', err?.message || err);
@@ -4278,7 +4339,7 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
     },
   });
 
-  const { text, actions, dropped } = splitActions(raw);
+  const { text, actions, dropped, unreadable } = splitActions(raw);
 
   if (!r.ok) {
     // WHY THE MODEL'S OWN SENTENCE: this text is shown in the chat bubble,
@@ -4302,6 +4363,11 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
       // happen, and the browser is the only place that can say so. See
       // `splitActions` and `describeAgentOutcome`.
       dropped,
+      // WHY THIS RIDES ALONGSIDE THE COUNT: a block the bridge could not read
+      // is a loss whose size cannot be read, so it is not a number added to
+      // the count — it is the fact that something was lost and could not be
+      // counted. The browser words it without a number.
+      unreadable,
     });
   }
   res.end();

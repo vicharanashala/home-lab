@@ -322,13 +322,170 @@ console.log('\nand the bridge and the page carry the count between them');
     true,
   );
   ok(
-    /applyAgentActions\(\s*queuedActions,\s*store,\s*droppedByBridge\s*\)/.test(pageSource),
+    /applyAgentActions\(\s*queuedActions,\s*store,\s*droppedByBridge\s*(,|\))/.test(pageSource),
     'and gives the count to the gate that counts',
     true,
   );
   ok(
     /queuedActions\.length\s*>\s*0\s*\|\|\s*droppedByBridge\s*>\s*0/.test(pageSource),
     'and asks about the batch even when nothing arrived',
+    true,
+  );
+}
+
+console.log('\nand the household is told when the model wrote something unreadable');
+
+{
+  // THE CASE THE COUNT ALONE CANNOT COVER
+  //
+  // The bridge counts what it did not carry as "proposed minus carried". That
+  // works when the model's action block PARSES — the number it proposed can be
+  // read out of it. But when the block does not parse, the number cannot be
+  // read, and the bridge reported "dropped: 0" — which says "nothing was
+  // lost" when something WAS lost:
+  //
+  //     the model wrote   "Added eggs and milk to your fridge."
+  //                       ```homehub-actions
+  //                       [{"type":"add_grocery","name":"Eggs",...},]
+  //                       ```
+  //     the bridge read   nothing — a trailing comma
+  //     the household read "Added eggs and milk to your fridge."
+  //     the shelf held    nothing
+  //
+  // And the page's gate is `queuedActions.length > 0 || droppedByBridge > 0`,
+  // so an empty batch with a dropped count of zero opened nothing and said
+  // nothing at all.
+  //
+  // WHY A TRAILING COMMA IS THE CASE TO WORRY ABOUT: the model writes this
+  // JSON by hand, and a trailing comma is the ordinary slip. A truncated
+  // reply does the same thing.
+  const cases = [
+    {
+      label: 'a trailing comma',
+      body: '[{"type":"add_grocery","name":"Eggs","quantity":3,"category":"other"},]',
+    },
+    {
+      label: 'a reply cut short',
+      body: '[{"type":"add_grocery","name":"Eggs","quantity":3,"category":"other"}',
+    },
+    {
+      label: 'one action written where a list was expected',
+      body: '{"type":"add_grocery","name":"Eggs","quantity":3,"category":"other"}',
+    },
+  ];
+
+  // WHY THE LOG IS CAPTURED RATHER THAN LEFT TO PRINT: a parse failure that
+  // is swallowed is a bug nobody is told about — and a model that keeps
+  // writing broken JSON is a model the prompt has to change. So the bridge
+  // says so, and this checks that it does.
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => {
+    logged.push(args.map(String).join(' '));
+  };
+
+  try {
+    for (const c of cases) {
+      const reply = `Added eggs and milk to your fridge.\n\n\`\`\`homehub-actions\n${c.body}\n\`\`\``;
+      const { actions, dropped, unreadable } = splitActions(reply);
+
+      ok(actions.length === 0, `${c.label}: the bridge carries nothing it cannot read`, String(actions.length));
+      ok(
+        unreadable === true,
+        `${c.label}: and says the block was unreadable`,
+        String(unreadable),
+      );
+      ok(
+        dropped === 0,
+        `${c.label}: without inventing a number it cannot read`,
+        String(dropped),
+      );
+    }
+  } finally {
+    console.error = realError;
+  }
+
+  ok(
+    logged.length >= cases.length,
+    'and every unreadable block is logged rather than swallowed',
+    `${logged.length} logged`,
+  );
+  ok(
+    logged.some((line) => line.includes('action block')),
+    'and the log says what could not be read',
+    logged[0] || '(nothing logged)',
+  );
+}
+
+{
+  // WHY THESE TWO ARE NOT "UNREADABLE": nothing was proposed in either, so
+  // nothing was lost, and warning the household about a change that was never
+  // asked for is noise.
+  const emptyList = '```homehub-actions\n[]\n```';
+  const noBlock = 'Added eggs to your fridge.';
+
+  ok(
+    splitActions(emptyList).unreadable === false,
+    'an empty list is not unreadable — nothing was proposed',
+    String(splitActions(emptyList).unreadable),
+  );
+  ok(
+    splitActions(noBlock).unreadable === false,
+    'a reply with no action block is not unreadable',
+    String(splitActions(noBlock).unreadable),
+  );
+}
+
+{
+  // The client's own accounting, and the wording the household is given.
+  const { applyAgentActions } = await import(
+    pathToFileURL(path.join(REPO, 'src', 'utils', 'agentActions.ts')).href
+  );
+  const { describeAgentOutcome } = await import(
+    pathToFileURL(path.join(REPO, 'src', 'utils', 'agentOutcome.ts')).href
+  );
+
+  const store = { grocery: [], stock: [], addGrocery: () => ({ id: 'g' }) };
+
+  // The bridge could not read the block, so nothing reached this browser.
+  const outcome = applyAgentActions([], store, 0, true);
+  const toasts = describeAgentOutcome(outcome);
+
+  ok(outcome.applied === 0, 'nothing was applied', String(outcome.applied));
+  ok(
+    outcome.unreadable === true,
+    'and the result carries the fact that the block was unreadable',
+    String(outcome.unreadable),
+  );
+  ok(toasts.length === 1, 'so there is ONE toast', String(toasts.length));
+  ok(toasts[0]?.kind === 'warning', 'and it is the warning', String(toasts[0]?.kind));
+  ok(
+    toasts[0]?.message === 'House Bot couldn’t apply a change it couldn’t read',
+    'and it says what happened, without a number nobody can check',
+    String(toasts[0]?.message),
+  );
+}
+
+{
+  // The page has to open the gate for an unreadable block, or the toast is
+  // never raised — which is the silence this whole file exists to end.
+  const pageSource = fs.readFileSync(path.join(REPO, 'src', 'pages', 'HouseBot.tsx'), 'utf8');
+
+  ok(
+    pageSource.includes("payload.type === 'done'"),
+    'the page reads the done event',
+    true,
+  );
+  ok(
+    /unreadableByBridge/.test(pageSource),
+    'and the page holds what the bridge said about the block',
+    true,
+  );
+  ok(
+    /queuedActions\.length\s*>\s*0\s*\|\|\s*droppedByBridge\s*>\s*0\s*\|\|\s*unreadableByBridge/.test(
+      pageSource,
+    ),
+    'and asks about the batch even when the block could not be read',
     true,
   );
 }

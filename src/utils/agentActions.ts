@@ -126,6 +126,16 @@ export interface AgentActionResult {
   applied: number;
   skipped: number;
   summary: string;
+  /**
+   * True when the BRIDGE found an action block it could not read.
+   *
+   * WHY THIS IS NOT A NUMBER IN `skipped`: the size of that loss cannot be
+   * read — the block did not parse, so the number of actions the model wrote
+   * is not in it. A number here would be one the household could check and
+   * could not. So it is the FACT that something was lost, and the wording
+   * says so without a count. See `describeAgentOutcome`.
+   */
+  unreadable: boolean;
   /** Ids of stock items to flash/highlight so the user can see what changed. */
   touchedStockIds: string[];
   touchedGroceryIds: string[];
@@ -138,6 +148,8 @@ export interface AgentActionResult {
  * @param actions the actions the bridge carried
  * @param store the kitchen to apply them to
  * @param droppedByBridge how many actions the BRIDGE refused to carry
+ * @param unreadableByBridge whether the bridge found an action block it could
+ *                           not read at all
  *
  * WHY THE BRIDGE'S OWN DROPS COUNT HERE: the bridge validates an action
  * before it crosses to this browser, and an action it refuses never arrives
@@ -159,16 +171,34 @@ export interface AgentActionResult {
  * happen belongs to the result, and the result is what the rule that words
  * it takes. A page that added to the count on its own would have two places
  * that decide the same number.
+ *
+ * WHY AN UNREADABLE BLOCK IS ITS OWN FACT AND NOT A NUMBER: when the model's
+ * block does not parse, the bridge cannot read how many actions were in it —
+ * so it cannot say "1 of 3". What it CAN say is that there was a block and
+ * nothing came out of it, and that is a loss the household has to hear about:
+ *
+ *     the model wrote   "Added eggs and milk to your fridge."
+ *                       ```homehub-actions
+ *                       [{"type":"add_grocery","name":"Eggs",...},]
+ *                       ```
+ *     the bridge read   nothing — a trailing comma
+ *     the household read "Added eggs and milk to your fridge."
+ *     the shelf held    nothing, and nothing said so
+ *
+ * So the loss travels as a boolean and is worded without a number, rather
+ * than being guessed at into the count.
  */
 export function applyAgentActions(
   actions: unknown,
   store: UseStore,
   droppedByBridge = 0,
+  unreadableByBridge = false,
 ): AgentActionResult {
   const result: AgentActionResult = {
     applied: 0,
     skipped: 0,
     summary: '',
+    unreadable: unreadableByBridge,
     touchedStockIds: [],
     touchedGroceryIds: [],
   };
