@@ -56,6 +56,37 @@ function findByName<T extends { name: string }>(items: T[], name: string): T | u
 const clean = (v: unknown, max = 60): string =>
   typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '';
 
+/**
+ * The quantity the model wrote, as text.
+ *
+ * WHY A NUMBER IS NOT DROPPED: the quantity is FREE TEXT — the model may
+ * write "2 packets", and it writes a plain number just as often — and the
+ * cleaner it went through only accepts strings. A number came out as
+ * nothing, and the fallback wrote "1":
+ *
+ *     the model wrote   {"type":"add_grocery","name":"Eggs","quantity":3}
+ *     the list carried  "Eggs · 1"
+ *
+ * while the model's own message, which the household reads VERBATIM, said
+ * "Added 3 eggs to your shopping list". Nothing said the number had been
+ * thrown away.
+ *
+ * WHY IT MATTERS HERE AND NOT IN add_stock: add_stock reads its quantity
+ * with `asQuantity`, which takes a number as a number. The two actions carry
+ * the same field name and were treated differently, and the one that guessed
+ * quietly was the one the household shops from.
+ *
+ * WHY THIS IS THE LAST GATE AND NOT THE FIRST: the bridge cleans the same
+ * field before it gets here, so by now a number has already become a
+ * string. This is the second gate, and it exists because the module's own
+ * rule is that a bad field is DROPPED rather than guessed at — and "1" is a
+ * guess.
+ */
+const cleanQuantity = (v: unknown, max = 40): string => {
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+  return clean(v, max);
+};
+
 const asCategory = (v: unknown): CategoryId =>
   typeof v === 'string' && CATEGORIES.has(v) ? (v as CategoryId) : 'other';
 
@@ -160,7 +191,12 @@ export function applyAgentActions(
             // onto it. The model writes its quantity as free text, so it can
             // write "1 pcs" — and the list then carried the same quantity two
             // ways. Free text that is not a number and a unit is left alone.
-            quantity: spellQuantity(clean(a.quantity, 40)) || '1',
+            //
+            // WHY THE QUANTITY IS CLEANED AS A QUANTITY: the cleaner for
+            // names only accepts strings, so a number the model wrote as a
+            // plain number came out as nothing and the list carried "1".
+            // The number the household asked for is the number on the list.
+            quantity: spellQuantity(cleanQuantity(a.quantity, 40)) || '1',
             category: asCategory(a.category),
           });
           result.touchedGroceryIds.push(item.id);

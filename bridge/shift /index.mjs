@@ -2984,9 +2984,33 @@ function validateAction(raw) {
     case 'add_grocery': {
       const name = cleanName(raw.name);
       if (!name) return null;
-      const quantity = cleanName(raw.quantity, 40) || '1';
+      // WHY A NUMBER IS NOT THROWN AWAY: the quantity here is FREE TEXT — the
+      // model is told it may write "2 packets" — and a plain number is as
+      // ordinary a thing for it to write as a phrase. The cleaner only
+      // accepts strings, so a number came out as nothing and the fallback
+      // wrote "1":
+      //
+      //     the model wrote   {"type":"add_grocery","name":"Eggs","quantity":3}
+      //     the list carried  "Eggs · 1"
+      //
+      // while the model's own message — which the household reads VERBATIM —
+      // said "Added 3 eggs to your shopping list". Nothing said a number had
+      // been thrown away.
+      //
+      // WHY THIS IS A DIFFERENCE FROM add_stock: add_stock reads its quantity
+      // with Number(), so a number survives there. The two actions carry the
+      // same field name and were treated differently, and the one that
+      // guessed quietly was the one the household shops from.
+      //
+      // WHY A NUMBER IS KEPT AS ITS OWN TEXT: the quantity on the shopping
+      // list IS text — "2 packets" is a quantity the app itself writes — so a
+      // number is only text that has not been written down yet.
+      const quantity =
+        typeof raw.quantity === 'number' && Number.isFinite(raw.quantity)
+          ? String(raw.quantity)
+          : cleanName(raw.quantity, 40);
       const category = ACTION_CATEGORIES.has(raw.category) ? raw.category : 'other';
-      return { type, name, quantity, category };
+      return { type, name, quantity: quantity || '1', category };
     }
     case 'check_grocery': {
       const name = cleanName(raw.name);
