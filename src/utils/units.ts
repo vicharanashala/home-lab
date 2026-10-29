@@ -1,3 +1,5 @@
+import { formatQuantity } from './date';
+
 /**
  * Unit normalization for recipe → stock matching.
  *
@@ -225,10 +227,21 @@ export function toDisplayUnit(baseValue: number, unit: string): number {
  * WHY IT USES THE ROW'S OWN UNIT AND NOT THE DIMENSION: the row says "10
  * tbsp" and the app says what it took from that row, so the two numbers
  * have to be in the same unit for the user to check one against the other.
+ *
+ * WHY THE SPELLING IS THE APP'S OWN RULE: this label sits on the same screen
+ * as the stock row it describes, and the row is written with `formatQuantity`.
+ * The label used to build its own phrase, so a row of one "pc" was written
+ * two ways on one screen:
+ *
+ *     the stock row beside it      "1 pc"
+ *     the amount left on it         "1 pcs"
+ *
+ * "pcs" is the default unit for a new item, so that was the commonest row in
+ * the kitchen and the commonest way for the two to disagree.
  */
 export function formatInUnit(baseValue: number, unit: string): string {
   const quantity = Math.round(toDisplayUnit(baseValue, unit) * 100) / 100;
-  return unit ? `${quantity} ${unit}` : `${quantity}`;
+  return formatQuantity(quantity, unit);
 }
 
 /**

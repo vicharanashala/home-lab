@@ -30,6 +30,7 @@ import { DishIcon } from './icons/DishIcons';
 import clsx from 'clsx';
 import type { MealType, MealLog, Recipe } from '../types';
 import { planRecipeDeduction } from '../utils/recipeMatch';
+import { formatQuantity } from '../utils/date';
 
 type EatenAmount = 'a-lot' | 'medium' | 'less';
 
@@ -168,7 +169,22 @@ const recipesForMeal = useMemo(() => {
       // by composing a virtual recipe. Simpler: just check if any stock item matches by name prefix.
       const match = stock.find((s) => s.name.toLowerCase().trim() === ing.name.toLowerCase().trim());
       if (match) {
-        deductions.push({ name: ing.name, deductedLabel: `${ing.quantity.toFixed(2)} ${ing.unit}`.trim() });
+        // WHY THE APP'S OWN RULE: this label is the amount taken FROM a stock
+        // row, and the row it is taken from is on the same screen, written by
+        // the app's own rule. The label used to build its own phrase, so one
+        // row was written two ways at once:
+        //
+        //     the row                      "1 pc"
+        //     the amount taken from it      "1.00 pcs"
+        //
+        // The rounding to two decimals is kept — a scaled amount can be a
+        // fraction of a unit, and "0.75 g" is a thing the app says elsewhere.
+        // Only the spelling changed. The unit is not written at all when the
+        // row has none, where the old template wrote the word "undefined".
+        deductions.push({
+          name: ing.name,
+          deductedLabel: formatQuantity(Number(ing.quantity.toFixed(2)), ing.unit),
+        });
       } else {
         deductions.push({ name: ing.name, deductedLabel: '—', skipped: true, reason: 'not in fridge' });
       }

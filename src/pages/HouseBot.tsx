@@ -13,6 +13,7 @@ import { parseGroceryList } from '../utils/groceryListParser';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { blockedReason } from '../utils/micPermission';
 import { applyAgentActions } from '../utils/agentActions';
+import { formatQuantity } from '../utils/date';
 import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhotoAttachButton, AttachedImageChip, usePhotoAttach } from '../components/PhotoAttach';
@@ -367,7 +368,13 @@ function IndianRecipeCard({
                     <li key={`ing-${idx}-${i}`} style={{ marginBottom: 2 }}>
                       {ing.name}
                       {ing.quantity > 0 && ing.unit !== 'pcs'
-                        ? ` — ${ing.quantity} ${ing.unit}`
+                        // WHY THE APP'S OWN RULE: this is a quantity, and the
+                        // app has one rule for writing them. The bubble used
+                        // to build its own, so a recipe asking for one
+                        // "dash" was shown to the household as "1 dashes" —
+                        // the same number and unit the Stock screen writes as
+                        // "1 dash".
+                        ? ` — ${formatQuantity(ing.quantity, ing.unit)}`
                         : ''}
                     </li>
                   ))}
