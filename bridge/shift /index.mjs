@@ -3716,6 +3716,77 @@ function stockExpiry(item) {
 }
 
 /**
+ * A unit, made singular without mangling it.
+ *
+ * WHY IT EXISTS HERE AND NOT IN THE APP'S SOURCE: the app's rule lives in
+ * src/utils/date.ts, which is TypeScript the app bundles. The bridge is
+ * plain .mjs run by node, and the tests copy it to a temporary directory, so
+ * it cannot import the app's source. What it has to agree with is the RULE,
+ * not the file.
+ *
+ * THE RULE: English plurals are not just "+s". "dashes" is "dash" and
+ * "pinches" is "pinch", while "glass" keeps its ending and "pcs" is "pc" —
+ * units people actually type for a kitchen app.
+ *
+ * @param {string} unit the unit, as the household typed it
+ * @returns {string} the unit, singular
+ */
+function singularUnit(unit) {
+  const u = String(unit).trim();
+  if (!u) return u;
+  // -es plurals whose stem ends in a sibilant: dashes -> dash, pinches -> pinch.
+  if (/(sh|ch|s|x|z)es$/i.test(u)) return u.slice(0, -2);
+  // A plain -s: grams -> gram, bottles -> bottle, pcs -> pc. Words ending in
+  // "ss" (glass) keep their ending.
+  if (/[^s]s$/i.test(u) && !/(ss|sh|ch|x|z)s$/i.test(u)) return u.slice(0, -1);
+  return u;
+}
+
+/**
+ * How much of something, written out.
+ *
+ * WHY THE BRIDGE HAS ITS OWN COPY: the app writes every quantity it shows
+ * with `formatQuantity` (src/utils/date.ts) — the Stock row beside the
+ * quantity buttons, the Alerts list, the grocery line seeded from a stock
+ * row. The bridge cannot import that file (see `singularUnit` above), so it
+ * keeps its own copy of the same rule. What it has to agree with is the
+ * RULE, not the file.
+ *
+ * WHY IT MATTERS HERE AND NOT ONLY IN THE APP: this string is what the MODEL
+ * reads. The bridge used to join the two fields of the record with nothing
+ * between them —
+ *
+ *     `${item.quantity}${item.unit || ''}`
+ *
+ * — so a household with one bottle of milk was told, in the STOCK block the
+ * model reads:
+ *
+ *     the Stock row on screen   "1 bottle"
+ *     the model's STOCK block   "  - Milk: 1bottles (exp ...)"
+ *
+ * A quantity of one with a plural unit, run together, and the app's own
+ * singularisation missing. The same line turned a unit of nothing but spaces
+ * into a run of trailing spaces. The model repeats what it is given, so the
+ * household could be told it had "1 bottles of milk" by the bot while the app
+ * showed "1 bottle".
+ *
+ * THE RULE, in the three parts the app's rule has:
+ *   - a unit that is not there is not written at all — "2", not "2   ";
+ *   - a unit of one is written singular — "1 bottle", never "1 bottles";
+ *   - the number and the unit are separated by a space.
+ *
+ * @param {number} qty how many
+ * @param {string} [unit] the unit, if there is one
+ * @returns {string} the quantity and its unit — "2 kg", "1 bottle", "2"
+ */
+function formatQuantity(qty, unit) {
+  const u = typeof unit === 'string' ? unit.trim() : '';
+  if (!u) return `${qty}`;
+  if (Number(qty) === 1) return `${qty} ${singularUnit(u)}`;
+  return `${qty} ${u}`;
+}
+
+/**
  * One line of context for a stock item.
  *
  * WHY IT IS ITS OWN FUNCTION: the expiry date is read here and nowhere else,
@@ -3723,12 +3794,17 @@ function stockExpiry(item) {
  * used to read `s.expiresOn`, a field no stock item has ever had, so no
  * line ever carried a date.
  *
+ * WHY THE QUANTITY IS WRITTEN BY THE RULE AND NOT BY JOINING TWO FIELDS:
+ * the quantity and the unit are two fields of the record, and joining them
+ * with nothing between them is how the model ended up being told "1bottles"
+ * where the app shows "1 bottle". See `formatQuantity` above.
+ *
  * @param {object} item a stock item as the app recorded it
  * @returns {string} one line of context
  */
 function stockContextLine(item) {
   const expiry = stockExpiry(item);
-  return `  - ${item.name}: ${item.quantity}${item.unit || ''}${expiry ? ` (exp ${expiry})` : ''}${item.category ? ` [${item.category}]` : ''}`;
+  return `  - ${item.name}: ${formatQuantity(item.quantity, item.unit)}${expiry ? ` (exp ${expiry})` : ''}${item.category ? ` [${item.category}]` : ''}`;
 }
 
 /**
@@ -3806,7 +3882,11 @@ app.post('/api/housebot/chat', async (req, res) => {
   // The window is the household's, not the bridge's — see `expiryWindow`.
   const soonWindow = expiryWindow(settings.expiringSoonDays);
   const expiringSoon = stock
-    .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
+    // WHY THERE IS NO QUANTITY HERE: this block names the food that is going
+    // off and the day it goes off. The STOCK block above already carries every
+    // item's quantity, and it writes it with the app's own rule — so the
+    // quantity used to be computed here and never read, on every request.
+    .map((s) => ({ name: s.name, expires: stockExpiry(s) }))
     // WHY THE LOWER BOUND: the Alerts screen does not put an item whose date
     // has passed in the "expiring soon" list — it has its own "Expired"
     // section for those. Without this bound the block called a mango that
@@ -3968,7 +4048,11 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   // The window is the household's, not the bridge's — see `expiryWindow`.
   const soonWindow = expiryWindow(settings.expiringSoonDays);
   const expiringSoon = stock
-    .map((s) => ({ name: s.name, qty: `${s.quantity}${s.unit || ''}`, expires: stockExpiry(s) }))
+    // WHY THERE IS NO QUANTITY HERE: this block names the food that is going
+    // off and the day it goes off. The STOCK block above already carries every
+    // item's quantity, and it writes it with the app's own rule — so the
+    // quantity used to be computed here and never read, on every request.
+    .map((s) => ({ name: s.name, expires: stockExpiry(s) }))
     // WHY THE LOWER BOUND: the Alerts screen does not put an item whose date
     // has passed in the "expiring soon" list — it has its own "Expired"
     // section for those. Without this bound the block called a mango that
