@@ -48,7 +48,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { mkdtempSync, mkdirSync, copyFileSync, symlinkSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -205,33 +205,55 @@ copyFileSync(join(bridgeDir, 'openclaw-cli.mjs'), join(work, 'openclaw-cli.mjs')
 const deps = bridgeDependencies();
 if (deps) symlinkSync(deps, join(work, 'node_modules'));
 
-const bridgePort = await freePort();
-const bridge = deps
-  ? spawn(process.execPath, ['index.mjs'], {
-      cwd: work,
-      env: {
-        ...process.env,
-        HOME: home,
-        PORT: String(bridgePort),
-        BRIDGE_TOKEN: '',
-        MINIMAX_CHAT_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
-        MINIMAX_API_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
-        MINIMAX_ACCESS_TOKEN: 'stub-token',
-        BRAVE_API_KEY: '',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-  : null;
+// The bridge copy, and the port it is on.
+//
+// WHY THEY ARE DECLARED HERE AND NOT WHERE THEY ARE USED: the block below
+// catches whatever throws — including a throw in the middle of starting the
+// bridge — and the cleanup that stops a bridge that DID start has to be
+// reachable from there.
+let bridge = null;
 let bridgeErr = '';
-bridge?.stderr.on('data', (d) => { bridgeErr += d.toString(); });
+let bridgePort = null;
 
 let bridgeUp = false;
-for (let i = 0; i < 80; i++) {
-  try {
-    const r = await fetch(`http://127.0.0.1:${bridgePort}/healthz`);
-    if (r.ok) { bridgeUp = true; break; }
-  } catch { /* not up yet */ }
-  await sleep(100);
+
+/**
+ * Start the bridge copy and wait until it answers.
+ *
+ * WHY IT IS A FUNCTION AND NOT THE TOP LEVEL OF THE MODULE: the bridge copy
+ * is started inside the block that stops it, and the cleanup that stops it has
+ * to run whatever happens in here. A function can be wrapped in a try/finally;
+ * the top level of a module cannot.
+ *
+ * @returns {Promise<void>} resolves when the bridge is up, or has given up
+ */
+async function startBridge() {
+  bridgePort = await freePort();
+  bridge = deps
+    ? spawn(process.execPath, ['index.mjs'], {
+        cwd: work,
+        env: {
+          ...process.env,
+          HOME: home,
+          PORT: String(bridgePort),
+          BRIDGE_TOKEN: '',
+          MINIMAX_CHAT_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
+          MINIMAX_API_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
+          MINIMAX_ACCESS_TOKEN: 'stub-token',
+          BRAVE_API_KEY: '',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    : null;
+  bridge?.stderr.on('data', (d) => { bridgeErr += d.toString(); });
+
+  for (let i = 0; i < 80; i++) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${bridgePort}/healthz`);
+      if (r.ok) { bridgeUp = true; break; }
+    } catch { /* not up yet */ }
+    await sleep(100);
+  }
 }
 
 /**
@@ -384,13 +406,15 @@ function checkRecipeRecords(label, block) {
   );
 }
 
-// WHY THE TEST IS WRAPPED: the bridge copy is started above, and the cleanup
-// that stops it is below. Between the two there are fetches and assertions,
-// and any of them can throw — and a throw is exactly when the test is least
-// likely to be watched. A throw that skips the cleanup leaves a bridge copy
-// running on a port of its own.
+// WHY THE TEST IS WRAPPED: the bridge copy is started INSIDE this block, and
+// the cleanup that stops it is in the `finally`. Between the two there are
+// fetches and assertions, and any of them can throw — and a throw is exactly
+// when the test is least likely to be watched. A throw that skips the cleanup
+// leaves a bridge copy running on a port of its own, with a work directory
+// that was removed from under it.
 try {
   console.log('\nHouse Bot is told what is in the recipes it is offered');
+  await startBridge();
   if (!deps) {
     console.log('  SKIP the bridge is not installed here — its dependencies could not be found');
   } else if (!bridgeUp) {
@@ -412,7 +436,14 @@ try {
   failed += 1;
   console.log(`  FAIL the test threw — ${err && err.message ? err.message : err}`);
 } finally {
+  // WHY THE BRIDGE IS STOPPED AND NOT JUST KILLED: `kill` only asks, and a
+  // bridge that is still winding down holds its port for a moment longer —
+  // and a bridge that was never stopped holds it for ever.
   await stopBridge();
+  // WHY THE WORK DIRECTORY IS REMOVED: it holds a copy of the bridge and the
+  // home directory the bridge wrote into, and the test that made it is over.
+  // A directory left behind is a directory nobody is looking after.
+  rmSync(work, { recursive: true, force: true });
   model.close();
 }
 
