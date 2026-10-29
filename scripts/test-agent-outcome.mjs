@@ -84,7 +84,14 @@ function kitchen(stock, grocery) {
     addStock: (item) => ({ id: 'added', ...item }),
     addGrocery: (item) => ({ id: 'added', ...item }),
     toggleGroceryPurchased: () => {},
-    updateStock: () => {},
+    // WHY THE WRITE IS APPLIED AND NOT IGNORED: a test that cannot see what
+    // the shelf now holds cannot tell whether the app said what it wrote.
+    // The number in the toast is the household's proof of what is on the
+    // shelf, so the two have to be read off the same row.
+    updateStock: (id, patch) => {
+      const r = stock.find((s) => s.id === id);
+      if (r) Object.assign(r, patch);
+    },
   };
 }
 
@@ -194,6 +201,50 @@ console.log('\nand a batch where nothing worked says so, and does not claim succ
     'and it is the wording the app has always used for a lone change',
     toasts[0]?.message,
     'House Bot couldn’t apply that change',
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* The number the toast names is the number that was written                    */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nand the number it names is the number that was written');
+
+{
+  // The model's number is above the ceiling the last gate keeps to, so the
+  // gate writes the ceiling — and the toast has to name the number that was
+  // written, because the toast is the household's only proof of what the
+  // shelf now holds.
+  //
+  // The gate read the number as the model wrote it, the gate wrote a
+  // different one, and the sentence named the one that was NOT written:
+  //
+  //     the model wrote   {"type":"set_stock_quantity","name":"Milk","quantity":50000}
+  //     the shelf held   10000
+  //     the toast said    "Milk → 50000 g"
+  //
+  // The number the household shops from is the number on the shelf, and the
+  // sentence above it is the one they read.
+  const shelf = [row('s1', 'Milk')];
+  const store = kitchen(shelf, []);
+
+  const outcome = applyAgentActions(
+    [{ type: 'set_stock_quantity', name: 'Milk', quantity: 50000 }],
+    store,
+  );
+
+  check('the shelf holds the number the gate wrote', shelf[0].quantity, 10000);
+  check(
+    'and the summary names that same number',
+    outcome.summary,
+    'Milk → 10000 g',
+  );
+
+  const toasts = describeAgentOutcome(outcome);
+  check(
+    'and so does the toast the household reads',
+    toasts[0]?.message,
+    'House Bot · Milk → 10000 g',
   );
 }
 

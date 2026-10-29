@@ -58,6 +58,19 @@ const FRIDGE_CATEGORIES = new Set([
 // should not be able to write an unbounded number of items.
 const MAX_ACTIONS_PER_BATCH = 12;
 
+// The largest quantity this gate will write onto a row.
+//
+// WHY IT IS NAMED AND NOT WRITTEN TWICE: the ceiling appears in two rules
+// here — the one that reads a quantity for a new row and the one that sets
+// the quantity on a row that is already there — and the two have to agree.
+// A number written down twice is a number that can drift, and a ceiling
+// that drifts is a ceiling that writes one number and names another.
+//
+// It matches the bridge's own ceiling of 10000. The bridge is a server and
+// cannot import this file, so it keeps its own copy of the number; the two
+// are the same number today.
+const MAX_QUANTITY = 10000;
+
 /** Loose match on an existing item name — the model rarely repeats our exact casing. */
 function findByName<T extends { name: string }>(items: T[], name: string): T | undefined {
   const needle = name.trim().toLowerCase();
@@ -119,7 +132,7 @@ const asCategory = (v: unknown): CategoryId =>
 
 const asQuantity = (v: unknown): number => {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
-  return Number.isFinite(n) && n > 0 ? Math.min(n, 10000) : 0;
+  return Number.isFinite(n) && n > 0 ? Math.min(n, MAX_QUANTITY) : 0;
 };
 
 export interface AgentActionResult {
@@ -321,10 +334,24 @@ export function applyAgentActions(
             result.skipped += 1;
             break;
           }
-          store.updateStock(target.id, { quantity: Math.min(quantity, 10000) });
+          // WHY THE NUMBER THAT IS WRITTEN IS THE NUMBER THAT IS NAMED: the
+          // gate keeps the quantity under a ceiling of its own, so a number
+          // above it is written as the ceiling — and the sentence under the
+          // toast is the household's proof of what the shelf now holds. It
+          // used to name the number that was NOT written:
+          //
+          //     the model wrote   {"type":"set_stock_quantity","name":"Milk","quantity":50000}
+          //     the shelf held   10000
+          //     the toast said    "Milk → 50000 g"
+          //
+          // The number the household shops from is the number on the shelf,
+          // so the written number is held once and used for both the write
+          // and the sentence.
+          const written = Math.min(quantity, MAX_QUANTITY);
+          store.updateStock(target.id, { quantity: written });
           result.touchedStockIds.push(target.id);
           result.applied += 1;
-          done.push(`${target.name} → ${formatQuantity(quantity, target.unit)}`);
+          done.push(`${target.name} → ${formatQuantity(written, target.unit)}`);
           break;
         }
 
