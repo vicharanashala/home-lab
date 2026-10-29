@@ -154,74 +154,12 @@ function bridgeDependencies() {
   return null;
 }
 
-// ── a copy of the bridge, on a spare port ────────────────────────────────
-//
-// A COPY, not the real one: the test must not talk to the bridge serving the
-// owner's link, and must not write to the real data directory. HOME points
-// at a temporary directory so everything the bridge keeps lands there.
-const work = mkdtempSync(join(tmpdir(), 'hh-bridge-stock-qty-'));
-const home = join(work, 'home');
-mkdirSync(home, { recursive: true });
-copyFileSync(join(bridgeDir, 'index.mjs'), join(work, 'index.mjs'));
-copyFileSync(join(bridgeDir, 'openclaw-cli.mjs'), join(work, 'openclaw-cli.mjs'));
-const deps = bridgeDependencies();
-if (deps) symlinkSync(deps, join(work, 'node_modules'));
-
-const bridgePort = await freePort();
-const bridge = deps
-  ? spawn(process.execPath, ['index.mjs'], {
-      cwd: work,
-      env: {
-        ...process.env,
-        HOME: home,
-        PORT: String(bridgePort),
-        BRIDGE_TOKEN: '',
-        MINIMAX_CHAT_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
-        MINIMAX_API_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
-        MINIMAX_ACCESS_TOKEN: 'stub-token',
-        // The bridge looks up recipes on the web for some questions. The test
-        // asks about the kitchen, and must not wait on a search engine.
-        BRAVE_API_KEY: '',
-      },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    })
-  : null;
-let bridgeErr = '';
-bridge?.stderr.on('data', (d) => { bridgeErr += d.toString(); });
-
-let bridgeUp = false;
-for (let i = 0; i < 80; i++) {
-  try {
-    const r = await fetch(`http://127.0.0.1:${bridgePort}/healthz`);
-    if (r.ok) { bridgeUp = true; break; }
-  } catch { /* not up yet */ }
-  await sleep(100);
-}
-
-if (!bridgeUp) {
-  console.error('the bridge did not start');
-  if (bridgeErr) console.error(bridgeErr.slice(0, 800));
-  rmSync(work, { recursive: true, force: true });
-  process.exit(2);
-}
-
-/**
- * Today, as the bridge writes it.
- *
- * WHY THE TEST COMPUTES IT ITSELF AND NOT BY IMPORTING THE BRIDGE: the bridge
- * is a running server, not a library. The bridge's `localDay` is local time,
- * so the test uses local time too.
- */
-function localDay(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${month}-${day}`;
-}
-
 /**
  * The kitchen the test talks about.
+ *
+ * WHY IT IS BUILT BEFORE THE BRIDGE IS STARTED: the block that starts the
+ * bridge also catches whatever throws, and a constant that is still in its
+ * temporal dead zone when that block runs is a ReferenceError of its own.
  *
  * WHY THESE ITEMS: one of quantity ONE with a plural unit (the case that
  * produced "1bottles"), one of quantity two with a unit that ends in "s"
@@ -239,6 +177,80 @@ const STOCK = [
   { id: 'd', name: 'Salt', quantity: 1, unit: '', expiryDate: localDay(1), category: 'other' },
   { id: 'e', name: 'Curd', quantity: 1, unit: 'dashes', expiryDate: localDay(1), category: 'dairy' },
 ];
+
+/**
+ * Every route the bridge answers on, and the one that builds its own copy of
+ * the context block.
+ *
+ * WHY BOTH: the two routes build the context block separately — the same
+ * block, written out twice — and they have drifted before. A fix that only
+ * touched one of them would leave the other answering with the old wording.
+ */
+const ROUTES = ['chat', 'chat/stream'];
+
+// ── a copy of the bridge, on a spare port ────────────────────────────────
+//
+// A COPY, not the real one: the test must not talk to the bridge serving the
+// owner's link, and must not write to the real data directory. HOME points
+// at a temporary directory so everything the bridge keeps lands there.
+const work = mkdtempSync(join(tmpdir(), 'hh-bridge-stock-qty-'));
+const home = join(work, 'home');
+mkdirSync(home, { recursive: true });
+copyFileSync(join(bridgeDir, 'index.mjs'), join(work, 'index.mjs'));
+copyFileSync(join(bridgeDir, 'openclaw-cli.mjs'), join(work, 'openclaw-cli.mjs'));
+const deps = bridgeDependencies();
+if (deps) symlinkSync(deps, join(work, 'node_modules'));
+
+// The bridge copy, and the port it is on.
+//
+// WHY THEY ARE DECLARED HERE AND NOT WHERE THEY ARE USED: the block below
+// catches whatever throws — including a throw in the middle of starting the
+// bridge — and the cleanup that stops a bridge that DID start has to be
+// reachable from there.
+let bridge = null;
+let bridgeErr = '';
+let bridgePort = null;
+
+/**
+ * Stop the bridge copy, and wait until it really is gone.
+ *
+ * WHY IT WAITS FOR THE EXIT: `kill` only asks. A bridge that is still winding
+ * down when the work directory is removed goes on running with a directory
+ * that is no longer there, holding a port that nothing asked it to hold.
+ *
+ * WHY IT ESCALATES: the bridge is a server with sockets open, and a server
+ * that is asked to stop politely can decline. SIGKILL is what it gets when
+ * SIGTERM did not do it.
+ *
+ * @returns {Promise<void>} resolves when the bridge is gone
+ */
+async function stopBridge() {
+  if (!bridge) return;
+  if (bridge.exitCode !== null || bridge.signalCode !== null) return;
+  const exited = new Promise((resolve) => bridge.once('exit', resolve));
+  bridge.kill('SIGTERM');
+  const stopped = await Promise.race([exited.then(() => true), sleep(2000).then(() => false)]);
+  if (stopped) return;
+  bridge.kill('SIGKILL');
+  await Promise.race([exited, sleep(2000)]);
+}
+
+let bridgeUp = false;
+
+/**
+ * Today, as the bridge writes it.
+ *
+ * WHY THE TEST COMPUTES IT ITSELF AND NOT BY IMPORTING THE BRIDGE: the bridge
+ * is a running server, not a library. The bridge's `localDay` is local time,
+ * so the test uses local time too.
+ */
+function localDay(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+}
 
 /**
  * Send a message to one of the chat routes and return the system prompt the
@@ -295,55 +307,110 @@ function quantityIn(sys, name) {
 }
 
 /**
- * Every route the bridge answers on, and the one that builds its own copy of
- * the context block.
+ * Everything the test does with the bridge copy.
  *
- * WHY BOTH: the two routes build the context block separately — the same
- * block, written out twice — and they have drifted before. A fix that only
- * touched one of them would leave the other answering with the old wording.
+ * WHY IT IS A FUNCTION AND NOT THE TOP LEVEL OF THE MODULE: the bridge copy
+ * is started before this is called, and the cleanup that stops it has to run
+ * whatever happens in here. A function can be wrapped in a try/finally; the
+ * top level of a module cannot.
+ *
+ * @returns {Promise<void>} resolves when the checks are done
  */
-const ROUTES = ['chat', 'chat/stream'];
+async function runChecks() {
+  for (let i = 0; i < 80; i++) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${bridgePort}/healthz`);
+      if (r.ok) { bridgeUp = true; break; }
+    } catch { /* not up yet */ }
+    await sleep(100);
+  }
 
-for (const route of ROUTES) {
-  const sys = await systemPromptFor(route);
-  console.log(`\nthe ${route} route tells the model the quantity the app's way`);
+  if (!bridgeUp) {
+    console.error('the bridge did not start');
+    if (bridgeErr) console.error(bridgeErr.slice(0, 800));
+    failed += 1;
+    return;
+  }
 
-  for (const item of STOCK) {
-    const expected = formatQuantity(item.quantity, item.unit);
-    // THE RAW TEXT, not the trimmed text: the quantity the bridge wrote is
-    // what sits between the name and the expiry, and a unit of nothing but
-    // spaces leaves the padding in that gap. Trimming it away here would
-    // hide the very hole the test is looking for.
-    const raw = quantityIn(sys, item.name);
-    ok(
-      raw.trim() === expected,
-      `the model is told "${expected}" for ${item.name}`,
-      raw.trim() === expected ? raw.trim() : `the model was told "${raw.trim()}"`,
-    );
-    // THE HOLE ITSELF, named. A unit that is not there must not leave a run
-    // of spaces where it would have been.
-    ok(
-      !/\s{2,}/.test(raw),
-      `${item.name} has no run of spaces where a unit would be`,
-      /\s{2,}/.test(raw) ? `the model was told "${raw}"` : '',
-    );
-    // THE NUMBER AND THE UNIT ARE SEPARATED. A quantity of one with a plural
-    // unit ran together — "1bottles" — and the model repeats what it is
-    // given.
-    if (item.unit.trim()) {
+  for (const route of ROUTES) {
+    const sys = await systemPromptFor(route);
+    console.log(`\nthe ${route} route tells the model the quantity the app's way`);
+
+    for (const item of STOCK) {
+      const expected = formatQuantity(item.quantity, item.unit);
+      // THE RAW TEXT, not the trimmed text: the quantity the bridge wrote is
+      // what sits between the name and the expiry, and a unit of nothing but
+      // spaces leaves the padding in that gap. Trimming it away here would
+      // hide the very hole the test is looking for.
+      const raw = quantityIn(sys, item.name);
       ok(
-        !raw.includes(`${item.quantity}${item.unit}`),
-        `${item.name} does not run the number into the unit`,
-        raw.includes(`${item.quantity}${item.unit}`)
-          ? `the model was told "${raw.trim()}"`
-          : '',
+        raw.trim() === expected,
+        `the model is told "${expected}" for ${item.name}`,
+        raw.trim() === expected ? raw.trim() : `the model was told "${raw.trim()}"`,
       );
+      // THE HOLE ITSELF, named. A unit that is not there must not leave a run
+      // of spaces where it would have been.
+      ok(
+        !/\s{2,}/.test(raw),
+        `${item.name} has no run of spaces where a unit would be`,
+        /\s{2,}/.test(raw) ? `the model was told "${raw}"` : '',
+      );
+      // THE NUMBER AND THE UNIT ARE SEPARATED. A quantity of one with a plural
+      // unit ran together — "1bottles" — and the model repeats what it is
+      // given.
+      if (item.unit.trim()) {
+        ok(
+          !raw.includes(`${item.quantity}${item.unit}`),
+          `${item.name} does not run the number into the unit`,
+          raw.includes(`${item.quantity}${item.unit}`)
+            ? `the model was told "${raw.trim()}"`
+            : '',
+        );
+      }
     }
   }
 }
 
-bridge.kill('SIGKILL');
-rmSync(work, { recursive: true, force: true });
+// WHY THE TEST IS WRAPPED: the bridge copy is started INSIDE this block, and
+// the cleanup that stops it is in the `finally`. Between the two there are
+// fetches and assertions, and any of them can throw — and a throw is exactly
+// when the test is least likely to be watched. A throw that skips the
+// cleanup leaves a bridge copy running on a port of its own, with a work
+// directory that was removed from under it.
+try {
+  bridgePort = await freePort();
+  bridge = deps
+    ? spawn(process.execPath, ['index.mjs'], {
+        cwd: work,
+        env: {
+          ...process.env,
+          HOME: home,
+          PORT: String(bridgePort),
+          BRIDGE_TOKEN: '',
+          MINIMAX_CHAT_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
+          MINIMAX_API_URL: `http://127.0.0.1:${modelPort}/v1/messages`,
+          MINIMAX_ACCESS_TOKEN: 'stub-token',
+          // The bridge looks up recipes on the web for some questions. The test
+          // asks about the kitchen, and must not wait on a search engine.
+          BRAVE_API_KEY: '',
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      })
+    : null;
+  bridge?.stderr.on('data', (d) => { bridgeErr += d.toString(); });
+
+  await runChecks();
+} catch (err) {
+  failed += 1;
+  console.log(`  FAIL the test threw — ${err && err.message ? err.message : err}`);
+} finally {
+  // WHY THE BRIDGE IS STOPPED AND NOT JUST KILLED: `kill` only asks, and a
+  // bridge that is still winding down holds its port for a moment longer —
+  // and a bridge that was never stopped holds it for ever.
+  await stopBridge();
+  rmSync(work, { recursive: true, force: true });
+  model.close();
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed === 0 ? 0 : 1);
+process.exit(bridgeUp ? (failed === 0 ? 0 : 1) : 2);
