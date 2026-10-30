@@ -1096,6 +1096,71 @@ console.log('\nthe store opens even when the browser refuses the share');
   );
 }
 
+console.log('\nthe store opens even when the browser throws before it answers');
+{
+  // WHY THIS TEST EXISTS
+  //
+  // The block above covers the browser REFUSING the share: getDisplayMedia
+  // returns a promise and the promise is rejected. There is another way for
+  // the ask to fail, and it never becomes a rejected promise — the browser
+  // throws WHILE the request is being made:
+  //
+  //     navigator.mediaDevices.getDisplayMedia(...)   ->   throws
+  //
+  // The throw happens before there is a promise to reject, so it never
+  // reaches the catch around `await request`. It goes straight to the catch
+  // around the whole attempt — and that catch is the one that REPORTS the
+  // failure to the household:
+  //
+  //     the person pressed   a store
+  //     the browser          threw
+  //     the store's tab      did not open
+  //     the screen said      "Screen sharing was not allowed.
+  //                           The store opened in a new tab."
+  //
+  // The last line is the defect. The store's tab did NOT open, and the
+  // screen said it did — because the screen says "The store opened in a new
+  // tab." whenever it was not told the tab was blocked, and it is only told
+  // that by the opening callback, which never ran.
+  //
+  // WHY IT MATTERS THAT THE PERSON ASKED FOR A STORE: the share failing is
+  // not the end of the thing the person pressed. They pressed a store, and
+  // the store is what they get — whether the browser granted the screen or
+  // not. Every other failure path opens the store for exactly that reason.
+  reset();
+  const streams = [];
+  installBrowser(streams);
+
+  const order = [];
+  navigator.mediaDevices.getDisplayMedia = () => {
+    order.push('asked');
+    const err = new Error('the browser would not ask');
+    err.name = 'NotAllowedError';
+    throw err;
+  };
+
+  const harness = mountHook(() => useScreenSharer());
+  await harness.value.start('Amazon Fresh', () => {
+    order.push('opened');
+  });
+
+  ok(
+    order.includes('opened'),
+    'the person asked for a STORE, so the store opens',
+    order.join(' then '),
+  );
+  ok(
+    order.filter((o) => o === 'opened').length === 1,
+    'and it opens exactly once',
+    order.join(' then '),
+  );
+  ok(
+    typeof harness.value.state.error === 'string' && harness.value.state.error.length > 0,
+    'and the failure is still reported',
+    `error: ${harness.value.state.error}`,
+  );
+}
+
 console.log('\nthe store stays shut when the attempt has been abandoned');
 {
   // WHY THIS TEST EXISTS

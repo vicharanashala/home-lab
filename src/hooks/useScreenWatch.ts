@@ -499,7 +499,27 @@ export function useScreenSharer() {
         return true;
       } catch (err) {
         // The picker was refused, or the browser would not give a capture.
-        // The store was opened in the click either way.
+        //
+        // WHY THE STORE IS OPENED HERE AND NOT ONLY IN THE INNER CATCH: the
+        // inner catch wraps `await request`, so it only ever sees a promise
+        // that was REFUSED. The browser can also fail the ask before there is
+        // a promise to refuse — it can throw while the request is being made
+        // — and that throw skips the inner catch entirely and lands here.
+        // The store's tab then never opened, and the screen still said it had:
+        //
+        //     the person pressed   a store
+        //     the browser          threw
+        //     the store's tab      did not open
+        //     the screen said      "Screen sharing was not allowed.
+        //                           The store opened in a new tab."
+        //
+        // The store is what the person pressed for, and the share failing is
+        // not a reason to lose it — the same reason every other failure path
+        // opens it. `openTheStore` opens at most once and asks whether the
+        // attempt is still alive, so calling it here does nothing at all on
+        // the paths that already opened the store.
+        openTheStore();
+        //
         // WHY THE GRANTED CAPTURE IS GIVEN BACK HERE
         //
         // The browser granted the capture and will keep filming until
