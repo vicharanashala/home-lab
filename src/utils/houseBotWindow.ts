@@ -124,7 +124,30 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
   // BESIDE the app's window cannot cover any of it, so applying the cap
   // there took width away from the chat for nothing — and the width it
   // took was enough to put the chat below its own minimum.
-  const widestSafe = Math.max(200, g.outerWidth - KEEP_VISIBLE);
+  //
+  // WHY IT IS MEASURED FROM WHERE THE BOT WINDOW WILL LAND: the bot window
+  // sits against the right edge of the screen, so its left edge lands at
+  // availWidth - width - WINDOW_GAP. Capping the width by the app's width
+  // alone said how wide the bot window could be without saying where it
+  // would sit, and on a narrow app window the two disagreed: the cap said
+  // 70 was safe, the floor said 200, and a 200 wide bot window over a 150
+  // wide app window hid the app completely — the one thing this file says
+  // must not happen, because a hidden window is refused a capture.
+  //
+  // WHY THERE ARE TWO TERMS AND NOT ONE: the bot window's left edge has to
+  // stay to the right of the app's left edge (or the app is hidden), and it
+  // has to stay to the right of the app's right edge less the strip that
+  // must keep showing (or more of the app is covered than it can spare).
+  const spare = Math.max(0, g.outerWidth - KEEP_VISIBLE);
+  const widestSafe = Math.floor(
+    Math.max(
+      0,
+      Math.min(
+        g.availWidth - WINDOW_GAP - g.screenX,
+        g.availWidth - WINDOW_GAP - appRight + spare,
+      ),
+    ),
+  );
 
   const roomRight = g.availWidth - appRight - WINDOW_GAP;
   const roomLeft = g.screenX - WINDOW_GAP;
@@ -161,7 +184,18 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
     // cannot be that wide, and those two are limits of the machine rather
     // than of the chat.
     width = Math.max(width, Math.min(MIN_BOT_WIDTH, screenWidth, widestSafe));
-    left = Math.max(0, g.availWidth - width - WINDOW_GAP);
+    // THE OTHER END OF THE SCREEN IS SOMETIMES THE BETTER PLACE: a bot
+    // window that fits to the LEFT of the app's window does not cover any
+    // of it at all, so the whole app keeps showing rather than the strip.
+    // It is worth taking whenever it is the WIDER of the two, because a
+    // chat squeezed into a sliver is a chat nobody can use.
+    const clearOfApp = Math.floor(Math.min(screenWidth, g.screenX - WINDOW_GAP));
+    if (clearOfApp > width) {
+      width = clearOfApp;
+      left = 0;
+    } else {
+      left = Math.max(0, g.availWidth - width - WINDOW_GAP);
+    }
     beside = false;
   }
 

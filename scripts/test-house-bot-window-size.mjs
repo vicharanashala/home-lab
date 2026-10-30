@@ -32,6 +32,28 @@
  * A window that hangs off the screen is a window the person cannot use, and
  * the screen is a harder limit than the preferred height.
  *
+ * THE OTHER BUG THIS GUARDS
+ *
+ * The third promise — KEEP_VISIBLE, how much of the app's window must stay
+ * showing — was broken the other way round, and only on a NARROW app window.
+ *
+ * The width the bot window may take was capped by the app's width less the
+ * strip that has to stay showing, but with a floor of 200 underneath it:
+ *
+ *     app window 150 wide, screen 320 wide
+ *     bot window  ->  200 wide, sitting on top of the app window
+ *
+ * The floor overrode the cap, because the app's width (150) less the strip
+ * (80) is 70, and 200 is more than 70. So the bot window was 130 pixels wider
+ * than the app's window could spare, and it sat right on top of the app:
+ *
+ *     bot window 108..308, app window 110..260  ->  NOTHING of the app showing
+ *
+ * A shared window with nothing showing is a hidden window, and the browser
+ * refuses a capture of a hidden window — the share stops. The file says so at
+ * the top: "a window completely covered by another one is hidden, and a
+ * hidden page is refused a capture".
+ *
  * WHAT IS TESTED HERE
  *
  *   - the REAL planner, over the geometries that bring both out;
@@ -86,6 +108,30 @@ function coveredWidthOfApp(plan, g) {
   return Math.min(botRight, appRight) - Math.max(botLeft, appLeft);
 }
 
+/**
+ * The widest bot window the machine allows, for the place the planner puts
+ * the bot window when it has to sit over the app's window.
+ *
+ * WHY IT IS WORKED OUT HERE AND NOT COPIED FROM THE PLANNER: a test that
+ * re-implements the rule it is checking proves nothing. This one starts at
+ * the other end — the bot window's right edge sits WINDOW_GAP from the
+ * screen's right edge, so a window W wide has its left edge at
+ * availWidth - W - WINDOW_GAP — and asks how much of the app's window that
+ * left edge leaves covered.
+ */
+function widestTheMachineAllows(g) {
+  const appRight = g.screenX + g.outerWidth;
+  // What the app's window can spare: everything but the strip that has to
+  // keep showing. An app window narrower than the strip may not be covered
+  // at all.
+  const spare = Math.max(0, g.outerWidth - KEEP_VISIBLE);
+  // The bot window's left edge has to stay to the right of the app's left
+  // edge, or the app is hidden, and to the right of the app's right edge
+  // less the strip, or more of the app is covered than it can spare.
+  const leftmostEdge = Math.max(g.screenX, appRight - spare);
+  return g.availWidth - WINDOW_GAP - leftmostEdge;
+}
+
 const GEOMETRIES = [
   {
     name: 'a narrow app window on a wide screen',
@@ -111,6 +157,18 @@ const GEOMETRIES = [
     name: 'a short screen',
     g: { screenX: 0, screenY: 0, outerWidth: 900, outerHeight: 400, availWidth: 1440, availHeight: 400 },
   },
+  {
+    name: 'a very narrow app window on a small screen',
+    g: { screenX: 110, screenY: 0, outerWidth: 150, outerHeight: 800, availWidth: 320, availHeight: 1000 },
+  },
+  {
+    name: 'a narrow app window pushed to the right of a small screen',
+    g: { screenX: 150, screenY: 0, outerWidth: 200, outerHeight: 700, availWidth: 400, availHeight: 900 },
+  },
+  {
+    name: 'a narrow app window on a small screen',
+    g: { screenX: 220, screenY: 0, outerWidth: 250, outerHeight: 700, availWidth: 480, availHeight: 900 },
+  },
 ];
 
 console.log('\nthe House Bot window is wide enough to chat in');
@@ -118,8 +176,14 @@ for (const { name, g } of GEOMETRIES) {
   const plan = planHouseBotWindow(g);
   // The screen may be too small for the minimum, but then the screen wins.
   const screenAllows = g.availWidth >= MIN_BOT_WIDTH + 24;
+  // So may the app's own window: a bot window that has to sit over it can
+  // only be as wide as what the app's width leaves spare, and an app window
+  // too narrow to spare that is a limit of the machine, not of the chat.
+  // Beside the app's window there is nothing to cover, so the app's width
+  // limits nothing there.
+  const appAllows = plan.beside || widestTheMachineAllows(g) >= MIN_BOT_WIDTH;
   ok(
-    !screenAllows || plan.width >= MIN_BOT_WIDTH,
+    !screenAllows || !appAllows || plan.width >= MIN_BOT_WIDTH,
     `the bot window is at least ${MIN_BOT_WIDTH} wide on ${name}`,
     `${plan.width} wide`,
   );
