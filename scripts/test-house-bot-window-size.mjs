@@ -181,7 +181,21 @@ for (const { name, g } of GEOMETRIES) {
   // too narrow to spare that is a limit of the machine, not of the chat.
   // Beside the app's window there is nothing to cover, so the app's width
   // limits nothing there.
-  const appAllows = plan.beside || widestTheMachineAllows(g) >= MIN_BOT_WIDTH;
+  //
+  // WHY IT IS ASKED OF THE GEOMETRY AND NOT OF THE PLAN: "the app's width
+  // limits nothing" is a question about the SCREEN — could a window
+  // MIN_BOT_WIDTH wide have been put clear of the app on either side, or
+  // over it without covering more than the app can spare? It is not the
+  // same question as "where did the planner put the window", and asking the
+  // plan made this check skip the one geometry that puts a narrow window
+  // clear of the app on the LEFT — the check that was there to catch a
+  // window too narrow to chat in.
+  const roomRight = g.availWidth - (g.screenX + g.outerWidth) - WINDOW_GAP;
+  const roomLeft = g.screenX - WINDOW_GAP;
+  const appAllows =
+    roomRight >= MIN_BOT_WIDTH ||
+    roomLeft >= MIN_BOT_WIDTH ||
+    widestTheMachineAllows(g) >= MIN_BOT_WIDTH;
   ok(
     !screenAllows || !appAllows || plan.width >= MIN_BOT_WIDTH,
     `the bot window is at least ${MIN_BOT_WIDTH} wide on ${name}`,
@@ -250,6 +264,23 @@ for (const { name, g } of GEOMETRIES) {
     coveredWidthOfApp(plan, g) === 0,
     `the bot window does not overlap the app window on ${name}`,
     `bot at ${plan.left}, app at ${g.screenX}..${g.screenX + g.outerWidth}`,
+  );
+}
+
+console.log('\nthe flag and the geometry agree about "beside"');
+for (const { name, g } of GEOMETRIES) {
+  const plan = planHouseBotWindow(g);
+  const covered = coveredWidthOfApp(plan, g);
+  // WHY THIS IS ITS OWN CHECK: the flag says where the window went, and the
+  // check above only looks at the windows the flag CLAIMS are beside. A flag
+  // that said "over" for a window that covers none of the app would make
+  // that check skip the window and say nothing at all — which is what
+  // happened: the placement that puts the window clear of the app on the
+  // LEFT was reported as over the app, and the check above never ran for it.
+  ok(
+    plan.beside === (covered === 0),
+    `the bot window is called beside exactly when it does not touch the app on ${name}`,
+    `beside ${plan.beside}, covering ${covered} of ${g.outerWidth}`,
   );
 }
 

@@ -101,8 +101,16 @@ export interface HouseBotWindowPlan {
   /**
    * Whether the window sits beside the app's window rather than over it.
    *
-   * WHY IT IS WORTH KNOWING: when it is over the app's window, the person
-   * may have to move it, and the app's copy says something different.
+   * WHY IT IS WORTH KNOWING: when the window is over the app's window, the
+   * person may have to move it — and the check that guards the placement
+   * cannot tell the two apart without it. Nothing in the app reads this
+   * flag, so it must not be taken as a claim about what the app does.
+   *
+   * WHY IT MEANS "COVERS NONE OF THE APP'S WINDOW": the window is placed in
+   * one of three ways, and the corner placement does not always land on top
+   * of the app — with a narrow app's window the bot window starts where the
+   * app's window ends and covers none of it. A window that covers none of
+   * the app's window is beside it, whichever way it was placed.
    */
   beside: boolean;
 }
@@ -154,7 +162,6 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
 
   let left: number;
   let width: number;
-  let beside: boolean;
 
   if (roomRight >= MIN_BOT_WIDTH) {
     // Beside it, on the right — where there is the most room on most screens.
@@ -162,12 +169,10 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
     // there is nothing for the app's width to protect.
     width = Math.min(PREFERRED_BOT_WIDTH, roomRight);
     left = appRight + WINDOW_GAP;
-    beside = true;
   } else if (roomLeft >= MIN_BOT_WIDTH) {
     // Beside it, on the left.
     width = Math.min(PREFERRED_BOT_WIDTH, roomLeft);
     left = g.screenX - WINDOW_GAP - width;
-    beside = true;
   } else {
     // NO ROOM BESIDE: the app's window fills the screen. The bot window goes
     // in the corner, and it is made small enough that the app's window still
@@ -196,7 +201,6 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
     } else {
       left = Math.max(0, g.availWidth - width - WINDOW_GAP);
     }
-    beside = false;
   }
 
   // THE SCREEN IS A HARDER LIMIT THAN THE PREFERRED HEIGHT: a window that
@@ -215,6 +219,23 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
   const h = Math.round(height);
   const l = Math.round(left);
   const t = Math.round(top);
+
+  // WHETHER THE WINDOW IS BESIDE THE APP'S WINDOW OR OVER IT.
+  //
+  // WHY IT IS WORKED OUT FROM WHERE THE WINDOW LANDED, AND NOT FROM WHICH
+  // BRANCH PUT IT THERE: the corner placement does not always land on top
+  // of the app. With a narrow app's window the bot window starts where the
+  // app's window ends and covers none of it — and with a wide app's window
+  // pushed to the right, the bot window is put in the strip to the LEFT of
+  // the app, which also covers none of it. Both are beside the app's
+  // window.
+  //
+  // WHY IT MATTERED: the flag used to come out of the branch, so a window
+  // that was provably beside the app said it was over it. The test that
+  // checks the flag took it at its word and skipped its own check — "a
+  // window placed beside does not touch the app's window" — for exactly
+  // the geometry that reaches that branch.
+  const beside = l >= appRight || l + w <= g.screenX;
 
   return {
     features: `noopener,width=${w},height=${h},left=${l},top=${t}`,
