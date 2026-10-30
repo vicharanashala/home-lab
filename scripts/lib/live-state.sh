@@ -301,7 +301,19 @@ live_bundle_state() {
         if [ "$env_newest" -gt "$build_mtime" ]; then echo stale; else echo current; fi
         return 0 ;;
       stale) echo stale; return 0 ;;
-      *) : ;; # the list cannot be read — fall back to the times
+      # WHY EVERYTHING ELSE IS "STALE" TOO: the list exists but cannot be
+      # read, or it says something the rule does not recognise. Either way the
+      # bundle cannot be SHOWN to have been built from the source on disk, and
+      # a bundle that cannot be shown to be current is not current — the same
+      # rule the rest of this file follows.
+      #
+      # WHY IT MUST NOT FALL BACK TO THE TIMES: falling back would put back
+      # exactly the false all-clear this list was written to end. A source
+      # file whose CONTENT changed but whose time was put back is invisible to
+      # the times, so the times would say "current" about a bundle that really
+      # is behind the source — the 2026-10-24 incident again, with a rebuild
+      # in place of a restart.
+      *) echo stale; return 0 ;;
     esac
   fi
 
@@ -342,7 +354,11 @@ live_bundle_state() {
 bundle_manifest_state() {
   local root="$1" manifest="$2"
 
-  [ -r "$manifest" ] || { echo unreadable; return 0; }
+  # A list that cannot be read is not a list that agrees with the source. The
+  # answer is "stale" and not a word of its own, because the caller has one
+  # decision to make: can the bundle be shown to have been built from the
+  # source on disk. It cannot.
+  [ -r "$manifest" ] || { echo stale; return 0; }
 
   local current expected
   current="$(bundle_manifest_lines "$root")"

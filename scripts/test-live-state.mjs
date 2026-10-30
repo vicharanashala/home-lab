@@ -25,7 +25,7 @@
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -442,6 +442,60 @@ try {
     bundleState(addedRoot) === 'stale',
     `state=${bundleState(addedRoot)}`,
   );
+
+  // A .DS_Store in the source tree.
+  //
+  // WHY THIS CASE IS HERE: macOS writes a .DS_Store into every folder it shows
+  // in Finder and rewrites it whenever the window moves. Those files live in
+  // src/ and public/, and Finder rewrote one of them on this machine while
+  // this test was being written. They are NOT inputs to the bundle — vite
+  // never reads them — but they are files in the input trees, so a list that
+  // holds their hash says the bundle is stale the moment Finder touches one.
+  //
+  // That is the false alarm the content comparison was written to end: a file
+  // that changed while nothing about the app changed. The owner's link would
+  // be rebuilt over and over for nothing, and the one check that exists to
+  // tell the truth about the running app would be crying wolf.
+  const dsStoreRoot = makeBundleFixture(join(work, 'bundle-dsstore'));
+  const dsStore = join(dsStoreRoot, 'src', '.DS_Store');
+  writeFileSync(dsStore, 'Bud1');
+  check(
+    'a .DS_Store that appears after the build leaves the bundle current',
+    bundleState(dsStoreRoot) === 'current',
+    `state=${bundleState(dsStoreRoot)}`,
+  );
+  writeFileSync(dsStore, 'Bud1 window-position changed');
+  check(
+    'a .DS_Store whose content changes leaves the bundle current',
+    bundleState(dsStoreRoot) === 'current',
+    `state=${bundleState(dsStoreRoot)}`,
+  );
+
+  // A list the build left behind that cannot be read.
+  //
+  // WHY THIS CASE IS HERE: the rule promises to fail closed — a list that
+  // cannot be read answers "stale" — and it did not. The unreadable list fell
+  // back to comparing TIMES, which is the rule this whole mechanism was
+  // written to replace: a source file whose content changed with its time put
+  // back is invisible to the times, so the fallback said "current" about a
+  // bundle that really was behind the source.
+  //
+  // That is the 2026-10-24 incident again — the owner's link on old code and
+  // every check green — with the door the fix was built to close left open.
+  const unreadableRoot = makeBundleFixture(join(work, 'bundle-unreadable'));
+  const unreadableSource = join(unreadableRoot, 'src', 'App.tsx');
+  const unreadableManifest = join(unreadableRoot, 'dist', '.build-inputs');
+  // The source really IS behind the bundle: the content changed, and its
+  // time was put back so that the times cannot see it.
+  writeFileSync(unreadableSource, 'export const App = 2;\n');
+  utimesSync(unreadableSource, OLD, OLD);
+  chmodSync(unreadableManifest, 0o000);
+  check(
+    'a list that cannot be read is stale, never current',
+    bundleState(unreadableRoot) === 'stale',
+    `state=${bundleState(unreadableRoot)}`,
+  );
+  chmodSync(unreadableManifest, 0o644);
 
   // The env file is still judged by its TIME. Its contents are a secret, and
   // they must never be hashed into a list that sits inside the bundle the

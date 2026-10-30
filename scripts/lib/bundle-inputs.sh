@@ -56,6 +56,33 @@ bundle_env_paths() {
 EOF
 }
 
+# The files inside the input trees that are NOT inputs to the bundle.
+#
+# WHY THIS LIST EXISTS: macOS writes a .DS_Store into every folder it shows in
+# Finder, and rewrites that file whenever the window moves — with content that
+# has nothing to do with the app. A file like that never goes into the bundle
+# (vite does not read it), but it DOES live in src/ and public/, so the list of
+# what the bundle was made from would hold its hash. The moment Finder
+# touched it, the check would say the bundle was stale and the owner's link
+# would be rebuilt over and over for nothing.
+#
+# That is the exact false alarm the content comparison was written to end: a
+# file that changed while nothing about the app changed. It is not
+# hypothetical — this checkout carries eight of them inside the input trees,
+# and macOS rewrote one of them while this was being written.
+#
+# WHY IT IS A LIST AND NOT "EVERYTHING GIT IGNORES": public/whisper/vendor/
+# is gitignored too, and those files ARE inputs to the bundle — the Whisper
+# runtime is copied into it by scripts/setup-whisper-vendor.sh. Git's ignore
+# list answers "what may be committed", not "what goes into the bundle", and
+# the two are not the same question.
+bundle_input_excludes() {
+  cat <<'EOF'
+.DS_Store
+Thumbs.db
+EOF
+}
+
 # The FILES an input path contributes, as paths relative to the checkout root.
 #
 # WHY THE DIRECTORY IS WALKED RATHER THAN LISTED: an input is a whole tree
@@ -63,11 +90,28 @@ EOF
 # miss every other one, and one that watched a directory's own time would miss
 # a file edited inside it.
 bundle_input_files() {
-  local root="$1" path
+  local root="$1" path file name
+  # The excluded names are read ONCE, so that the walk below costs no process
+  # per file — this runs on every check.
+  local excludes=""
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    excludes="$excludes $name"
+  done < <(bundle_input_excludes)
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     if [ -d "$root/$path" ]; then
-      ( cd "$root" && find "$path" -type f 2>/dev/null )
+      while IFS= read -r file; do
+        [ -n "$file" ] || continue
+        # WHY THE NAME IS COMPARED AND NOT THE PATH: the list holds names, so
+        # "src/.DS_Store" and "public/.DS_Store" are caught by one name, and a
+        # source file whose name merely CONTAINS an excluded name is not
+        # caught by accident.
+        case " $excludes " in
+          *" ${file##*/} "*) continue ;;
+        esac
+        echo "$file"
+      done < <( cd "$root" && find "$path" -type f 2>/dev/null )
     elif [ -f "$root/$path" ]; then
       echo "$path"
     fi
