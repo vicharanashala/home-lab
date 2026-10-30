@@ -101,11 +101,15 @@ export function DigitalStoresPage() {
    *
    * WHY THE TAB IS OPENED BY `openStoreTab` AND NOT BY `window.open` HERE: a
    * pop-up is only allowed while the page still holds the person's gesture,
-   * and the tab is opened after the capture picker has been answered — which
-   * is long after the gesture is gone, so the browser stops the tab from
-   * opening. The page cannot tell that from the return value (`noopener`
-   * makes `window.open` return null either way), so the question is asked
-   * before the tab is opened, and the person is told when it was refused.
+   * and the gesture is short-lived — about five seconds in Chrome, about one
+   * in Safari. The tab is opened a moment after the capture is asked for, so
+   * the gesture is still alive and the browser lets the tab through — but
+   * `window.open` CONSUMES that gesture, so a page that asked afterwards
+   * would always be told "blocked", including on the runs where the tab
+   * opened perfectly well. The page cannot tell from the return value
+   * either (`noopener` makes `window.open` return null whether the tab
+   * opened or not), so the question is asked before the tab is opened, and
+   * the person is told when it was refused.
    */
   const openAndWatch = (id: string, name: string, url: string) => {
     setOpening(id);

@@ -10,8 +10,9 @@ import { STORE_TAB_BLOCKED_TEXT, STORE_TAB_OPENED_TEXT } from '../utils/screenWa
  * or taken it away. It is a claim about something the app did not check, and
  * the browser's popup blocker checks it for the app: a pop-up is only allowed
  * while the page still holds the person's gesture, and the store's tab is
- * opened after the capture picker has been answered, which is long after the
- * gesture is gone. See `popUpAllowedNow`.
+ * opened a moment after the capture is asked for, so the gesture is still
+ * alive — but the question has to be asked before the tab is opened, because
+ * `window.open` consumes the gesture. See `popUpAllowedNow`.
  *
  * WHY THE LINK IS A REAL LINK AND NOT A BUTTON: a link the person CLICKS is a
  * navigation the browser always allows — a pop-up blocker has nothing to

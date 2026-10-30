@@ -257,18 +257,29 @@ export function shareRunningText(store: string | null): string {
  *
  * WHY THIS IS ASKED ABOUT AT ALL: a pop-up is only allowed while the page
  * still holds the person's gesture, and the gesture is short-lived — about
- * five seconds in Chrome, about one in Safari. The store's tab is opened
- * AFTER the browser has answered the capture request, and the person has to
- * pick a window in a picker before that answer comes, so the tab is opened
- * long after the gesture is gone:
+ * five seconds in Chrome, about one in Safari. The store's tab is opened a
+ * MOMENT after the capture is asked for, so the gesture is still alive and
+ * the browser lets the tab through:
+ *
+ *     the person pressed the store    the gesture starts
+ *     the tab opens, a moment later   the gesture is still alive
+ *
+ * BUT THE QUESTION HAS TO BE ASKED FIRST, because `window.open` CONSUMES the
+ * gesture that made it possible. A page that asked afterwards would always be
+ * told "blocked" — including on the runs where the tab opened perfectly well.
+ *
+ * WHY IT IS NOT ASKED AFTER THE ANSWER: the older version opened the tab
+ * once the browser had answered the capture request, which takes as long as
+ * the person takes to pick a window in a picker — and the tab was then
+ * opened with a gesture that was already gone:
  *
  *     the person pressed the store    the gesture starts
  *     the person picks a window       ... five seconds, or ten, or a minute
  *     the browser answers             the gesture is gone
  *     the store's tab opens           the browser stops it
  *
- * So the tab the person asked for is the tab the browser takes away, and
- * nothing on the screen says so.
+ * So the tab the person asked for was the tab the browser took away, and
+ * nothing on the screen said so.
  *
  * WHY THE ACTIVATION AND NOT A TRY: `window.open` cannot say whether it was
  * blocked. This app passes `noopener` — so the store's site cannot reach back
