@@ -41,13 +41,28 @@ export const WINDOW_GAP = 12;
  *
  * WHY IT IS NOT TOO NARROW: the chat needs a place to type, and a window
  * too narrow to type in is a window the person cannot use.
+ *
+ * WHY IT IS A FLOOR AND NOT A PREFERENCE: a window narrower than this is
+ * not a chat window, it is a column of text. The only things allowed to
+ * beat it are the screen being too small to give it, and the app's own
+ * window being too narrow to leave room beside it — and both of those are
+ * limits of the machine, not of the chat.
  */
 export const MIN_BOT_WIDTH = 420;
 
 /** How wide a House Bot window would like to be. */
 export const PREFERRED_BOT_WIDTH = 720;
 
-/** The narrowest a House Bot window is allowed to be tall. */
+/**
+ * The narrowest a House Bot window is allowed to be tall.
+ *
+ * WHY IT IS NOT TOO SHORT: the chat and the picture of the shared window
+ * both need a place to be.
+ *
+ * WHY THE SCREEN CAN STILL BEAT IT: a window that hangs off the bottom of
+ * the screen cannot be used at all, so a screen too short to hold this
+ * gets a shorter window rather than one that runs off it.
+ */
 export const MIN_BOT_HEIGHT = 420;
 
 /** How tall a House Bot window would like to be. */
@@ -103,6 +118,12 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
   const appRight = g.screenX + g.outerWidth;
 
   // THE BOT WINDOW MUST NEVER COVER THE APP'S WINDOW COMPLETELY.
+  //
+  // WHY IT IS ONLY USED WHERE THE TWO WINDOWS OVERLAP: this cap is what
+  // keeps KEEP_VISIBLE of the app's width showing. A bot window placed
+  // BESIDE the app's window cannot cover any of it, so applying the cap
+  // there took width away from the chat for nothing — and the width it
+  // took was enough to put the chat below its own minimum.
   const widestSafe = Math.max(200, g.outerWidth - KEEP_VISIBLE);
 
   const roomRight = g.availWidth - appRight - WINDOW_GAP;
@@ -114,26 +135,43 @@ export function planHouseBotWindow(g: WindowGeometry): HouseBotWindowPlan {
 
   if (roomRight >= MIN_BOT_WIDTH) {
     // Beside it, on the right — where there is the most room on most screens.
-    width = Math.min(PREFERRED_BOT_WIDTH, roomRight, widestSafe);
+    // The room is the only limit here: the two windows do not touch, so
+    // there is nothing for the app's width to protect.
+    width = Math.min(PREFERRED_BOT_WIDTH, roomRight);
     left = appRight + WINDOW_GAP;
     beside = true;
   } else if (roomLeft >= MIN_BOT_WIDTH) {
     // Beside it, on the left.
-    width = Math.min(PREFERRED_BOT_WIDTH, roomLeft, widestSafe);
+    width = Math.min(PREFERRED_BOT_WIDTH, roomLeft);
     left = g.screenX - WINDOW_GAP - width;
     beside = true;
   } else {
-    // NO ROOM BESIDE: the app's window fills the screen. The bot window
-    // goes in the corner, and it is made small enough that the app's window
-    // still shows around it — the share must not stop.
-    width = Math.max(200, Math.min(PREFERRED_BOT_WIDTH, widestSafe, Math.floor(g.availWidth * 0.45)));
+    // NO ROOM BESIDE: the app's window fills the screen. The bot window goes
+    // in the corner, and it is made small enough that the app's window still
+    // shows around it — the share must not stop.
+    const screenWidth = Math.max(0, g.availWidth - WINDOW_GAP * 2);
+    width = Math.min(
+      PREFERRED_BOT_WIDTH,
+      Math.floor(g.availWidth * 0.45),
+      widestSafe,
+      screenWidth,
+    );
+    // THE CHAT NEEDS A ROOM TO TYPE IN, so the window is not left narrower
+    // than the minimum — unless the screen or the app's own width says it
+    // cannot be that wide, and those two are limits of the machine rather
+    // than of the chat.
+    width = Math.max(width, Math.min(MIN_BOT_WIDTH, screenWidth, widestSafe));
     left = Math.max(0, g.availWidth - width - WINDOW_GAP);
     beside = false;
   }
 
-  const height = Math.max(
-    MIN_BOT_HEIGHT,
-    Math.min(PREFERRED_BOT_HEIGHT, g.availHeight - WINDOW_GAP * 2),
+  // THE SCREEN IS A HARDER LIMIT THAN THE PREFERRED HEIGHT: a window that
+  // hangs off the bottom of the screen is a window the person cannot use,
+  // so a short screen gets a short window rather than one that runs off it.
+  const screenHeight = Math.max(0, g.availHeight - WINDOW_GAP);
+  const height = Math.min(
+    screenHeight,
+    Math.max(MIN_BOT_HEIGHT, Math.min(PREFERRED_BOT_HEIGHT, screenHeight)),
   );
   // THE TOPS LINE UP, so the two windows read as a pair, and the bot window
   // is kept on the screen.

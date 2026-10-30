@@ -1,0 +1,207 @@
+/**
+ * The House Bot window has to be big enough to talk to, and small enough to
+ * fit on the screen.
+ *
+ * THE BUG THIS GUARDS
+ *
+ * The planner carries three promises in its own constants:
+ *
+ *     MIN_BOT_WIDTH   the narrowest a House Bot window is allowed to be
+ *     MIN_BOT_HEIGHT  the narrowest a House Bot window is allowed to be tall
+ *     KEEP_VISIBLE    how much of the app's window must stay showing
+ *
+ * and the arithmetic did not keep two of them.
+ *
+ * The width came out BELOW the minimum. The planner capped the bot window's
+ * width by the app's window width (so the bot window could never cover the
+ * window being shared) — but that cap was applied to the window placed
+ * BESIDE the app's window, where nothing can be covered at all:
+ *
+ *     app window 400 wide, screen 2240 wide
+ *     bot window beside it  ->  320 wide
+ *
+ * The file says the narrowest allowed is 420, and says why: "the chat needs a
+ * place to type, and a window too narrow to type in is a window the person
+ * cannot use". A 320-wide chat window is exactly that.
+ *
+ * The height came out TALLER than the screen. The minimum height was applied
+ * as a floor, so a short screen got a window that hung off the bottom of it:
+ *
+ *     screen 400 tall  ->  bot window 420 tall at top 0
+ *
+ * A window that hangs off the screen is a window the person cannot use, and
+ * the screen is a harder limit than the preferred height.
+ *
+ * WHAT IS TESTED HERE
+ *
+ *   - the REAL planner, over the geometries that bring both out;
+ *   - that the bot window is never narrower than the chat minimum, unless
+ *     the screen or the app's own window says it cannot be;
+ *   - that it never falls off the screen, in either direction;
+ *   - that the app's window keeps KEEP_VISIBLE of itself showing whenever
+ *     the two windows overlap;
+ *   - that a window placed beside the app's window overlaps it not at all,
+ *     and is not made narrow to avoid an overlap that cannot happen.
+ *
+ * Run with:  node scripts/test-house-bot-window-size.mjs
+ */
+import { register } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.resolve(HERE, '..');
+
+register('./lib/ts-resolve.mjs', import.meta.url);
+
+const {
+  planHouseBotWindow,
+  MIN_BOT_WIDTH,
+  MIN_BOT_HEIGHT,
+  PREFERRED_BOT_HEIGHT,
+  WINDOW_GAP,
+  KEEP_VISIBLE,
+} = await import(pathToFileURL(path.join(REPO, 'src/utils/houseBotWindow.ts')).href);
+
+let passed = 0;
+let failed = 0;
+
+function ok(cond, label, detail = '') {
+  if (cond) {
+    passed += 1;
+    console.log(`  ok   ${label}${detail ? ' — ' + detail : ''}`);
+  } else {
+    failed += 1;
+    console.log(`  FAIL ${label}${detail ? ' — ' + detail : ''}`);
+  }
+}
+
+/** How much of the app's window width the bot window covers. */
+function coveredWidthOfApp(plan, g) {
+  const appLeft = g.screenX;
+  const appRight = g.screenX + g.outerWidth;
+  const botLeft = plan.left;
+  const botRight = plan.left + plan.width;
+  if (botRight <= appLeft || botLeft >= appRight) return 0;
+  return Math.min(botRight, appRight) - Math.max(botLeft, appLeft);
+}
+
+const GEOMETRIES = [
+  {
+    name: 'a narrow app window on a wide screen',
+    g: { screenX: 0, screenY: 0, outerWidth: 400, outerHeight: 800, availWidth: 2240, availHeight: 1140 },
+  },
+  {
+    name: 'a small app window beside a lot of room',
+    g: { screenX: 0, screenY: 0, outerWidth: 480, outerHeight: 800, availWidth: 2240, availHeight: 1140 },
+  },
+  {
+    name: 'a narrow screen with no room beside',
+    g: { screenX: 0, screenY: 0, outerWidth: 780, outerHeight: 700, availWidth: 800, availHeight: 700 },
+  },
+  {
+    name: 'a maximized window',
+    g: { screenX: 0, screenY: 0, outerWidth: 2240, outerHeight: 1140, availWidth: 2240, availHeight: 1140 },
+  },
+  {
+    name: 'a laptop screen',
+    g: { screenX: 0, screenY: 25, outerWidth: 1440, outerHeight: 875, availWidth: 1440, availHeight: 875 },
+  },
+  {
+    name: 'a short screen',
+    g: { screenX: 0, screenY: 0, outerWidth: 900, outerHeight: 400, availWidth: 1440, availHeight: 400 },
+  },
+];
+
+console.log('\nthe House Bot window is wide enough to chat in');
+for (const { name, g } of GEOMETRIES) {
+  const plan = planHouseBotWindow(g);
+  // The screen may be too small for the minimum, but then the screen wins.
+  const screenAllows = g.availWidth >= MIN_BOT_WIDTH + 24;
+  ok(
+    !screenAllows || plan.width >= MIN_BOT_WIDTH,
+    `the bot window is at least ${MIN_BOT_WIDTH} wide on ${name}`,
+    `${plan.width} wide`,
+  );
+}
+
+console.log('\nthe House Bot window fits on the screen');
+for (const { name, g } of GEOMETRIES) {
+  const plan = planHouseBotWindow(g);
+  ok(
+    plan.left >= 0 &&
+      plan.top >= 0 &&
+      plan.left + plan.width <= g.availWidth + 1 &&
+      plan.top + plan.height <= g.availHeight + 1,
+    `the bot window is on the screen on ${name}`,
+    `${plan.left},${plan.top} ${plan.width}x${plan.height} on ${g.availWidth}x${g.availHeight}`,
+  );
+}
+
+console.log('\nthe House Bot window is no taller than the screen allows');
+{
+  // A screen shorter than the minimum height: the screen wins, because a
+  // window that hangs off the bottom cannot be used at all.
+  const g = { screenX: 0, screenY: 0, outerWidth: 900, outerHeight: 400, availWidth: 1440, availHeight: 400 };
+  const plan = planHouseBotWindow(g);
+  ok(
+    plan.height <= g.availHeight,
+    'a short screen gets a short window',
+    `${plan.height} tall on a ${g.availHeight} tall screen`,
+  );
+  ok(
+    plan.height === Math.min(PREFERRED_BOT_HEIGHT, g.availHeight - WINDOW_GAP),
+    'and it uses all the room the screen allows',
+    `${plan.height} of ${g.availHeight - WINDOW_GAP}`,
+  );
+
+  // A screen with room to spare: the window is not held below the minimum.
+  const tall = { screenX: 0, screenY: 0, outerWidth: 900, outerHeight: 800, availWidth: 1440, availHeight: 900 };
+  const tallPlan = planHouseBotWindow(tall);
+  ok(
+    tallPlan.height >= MIN_BOT_HEIGHT,
+    'a screen with room gets a window at least the minimum tall',
+    `${tallPlan.height} tall`,
+  );
+}
+
+console.log('\nthe app\'s window keeps a strip of itself showing');
+for (const { name, g } of GEOMETRIES) {
+  const plan = planHouseBotWindow(g);
+  const covered = coveredWidthOfApp(plan, g);
+  ok(
+    covered === 0 || g.outerWidth - covered >= KEEP_VISIBLE,
+    `the shared window keeps ${KEEP_VISIBLE} of its width on ${name}`,
+    covered === 0
+      ? 'the bot window does not touch it'
+      : `${g.outerWidth - covered} of ${g.outerWidth} showing`,
+  );
+}
+
+console.log('\na window placed beside does not touch the app\'s window');
+for (const { name, g } of GEOMETRIES) {
+  const plan = planHouseBotWindow(g);
+  if (!plan.beside) continue;
+  ok(
+    coveredWidthOfApp(plan, g) === 0,
+    `the bot window does not overlap the app window on ${name}`,
+    `bot at ${plan.left}, app at ${g.screenX}..${g.screenX + g.outerWidth}`,
+  );
+}
+
+console.log('\na narrow app window does not make the chat window narrow');
+{
+  // The cap that keeps the bot window from covering the app's window is only
+  // needed where the two overlap. Beside, it took room away for nothing.
+  const g = { screenX: 0, screenY: 0, outerWidth: 400, outerHeight: 800, availWidth: 2240, availHeight: 1140 };
+  const plan = planHouseBotWindow(g);
+  ok(plan.beside, 'the bot window is placed beside the app window');
+  ok(
+    plan.width >= MIN_BOT_WIDTH,
+    'and it is not narrowed by an overlap that cannot happen',
+    `${plan.width} wide`,
+  );
+}
+
+console.log(`\n${passed} passed, ${failed} failed\n`);
+process.exit(failed === 0 ? 0 : 1);
