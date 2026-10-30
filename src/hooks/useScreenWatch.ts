@@ -169,16 +169,29 @@ export function useScreenSharer() {
   /**
    * Ask the browser for a share, and start watching it.
    *
-   * WHY THE ASK COMES FIRST, AND THE STORE OPENS AFTER: Chrome only puts
-   * the capture picker up for a page that is in front. Opening the store's
-   * tab first took the focus away and hid this page, and the request went
-   * out to a browser that had no reason to show anything — so nothing
+   * WHY THE ASK COMES FIRST, AND THE STORE OPENS AFTER THE ASK: Chrome only
+   * puts the capture picker up for a page that is in front. Opening the
+   * store's tab first took the focus away and hid this page, and the request
+   * went out to a browser that had no reason to show anything — so nothing
    * happened, and nothing said why.
    *
    * So the request is made while this page is still in front, and the store
-   * opens once the browser has answered. Because the capture is of the
-   * WINDOW and not of one tab, the window is filmed from the moment it is
-   * granted, so the store is already on the screen House Bot is watching.
+   * opens a MOMENT later — while the person's click is still alive, because a
+   * `window.open` made outside that window is a pop-up and Chrome blocks it.
+   * It does NOT wait for the browser's answer:
+   *
+   *     the person pressed the store    the gesture starts
+   *     the store's tab opens            ... a moment later, the gesture is alive
+   *     the person picks a window        ... five seconds, or ten, or a minute
+   *     the browser answers              the gesture is gone
+   *
+   * Opened after the answer — the order this used to run in — Chrome blocked
+   * the tab as a pop-up, the address bar said "Pop-up blocked", and the page
+   * said nothing at all.
+   *
+   * Because the capture is of the WINDOW and not of one tab, the window is
+   * filmed from the moment it is granted, so the store is already on the
+   * screen House Bot is watching.
    *
    * WHY getDisplayMedia IS STILL CALLED IN THE SAME HANDLER: the browser
    * only allows a screen share to be asked for in response to something the

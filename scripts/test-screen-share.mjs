@@ -1002,6 +1002,69 @@ console.log('\nand the caller describes the order the app actually runs in');
   );
 }
 
+console.log('\nand the hook describes the order the hook itself runs in');
+{
+  // WHY THIS EXISTS
+  //
+  // The block above pins the ORDER in code and checks the CALLER's comment
+  // against it. The HOOK's own docstring was left out of that, and it still
+  // described the order the hook used to run in:
+  //
+  //     "the store opens once the browser has answered"
+  //
+  // That is not only out of date — it is the order Chrome blocked as a
+  // pop-up, stated as the order the code runs in. A reader of the hook would
+  // conclude the tab opens with a dead gesture, and would put the broken
+  // order back.
+  //
+  // WHY THE HOOK IS THE PLACE THAT MATTERS MOST: the timer that opens the
+  // store lives here, and every screen's share goes through here, so its
+  // docstring is what the next agent reads before touching the ordering.
+  //
+  // WHY THE ORDER IS TAKEN FROM THE CODE AND NOT WRITTEN DOWN HERE: the check
+  // is that the comment agrees with the code, so the code has to be the thing
+  // being compared against. Write the order into the test and the two could
+  // drift apart the same way the comment did.
+  const hook = fs.readFileSync(
+    path.join(REPO, 'src', 'hooks', 'useScreenWatch.ts'),
+    'utf8',
+  );
+  const fnAt = hook.indexOf('const start = useCallback(');
+  ok(fnAt > 0, 'the hook that starts the share is where it is expected to be');
+
+  const commentStart = hook.lastIndexOf('/**', fnAt);
+  const commentEnd = hook.indexOf('*/', commentStart);
+  const comment = commentStart < 0 || commentEnd < 0 ? '' : hook.slice(commentStart, commentEnd);
+
+  // The store is opened on a TIMER after the ask, so the person's click is
+  // still alive when the tab opens.
+  const body = hook.slice(fnAt, fnAt + 12000);
+  const opensOnATimer = /setTimeout\(openTheStore,\s*\d+\)/.test(body);
+
+  const claimsAfterTheAnswer =
+    /opens?\s+(once|after)\s+the\s+browser\s+(has\s+)?answered/i.test(comment);
+
+  ok(
+    opensOnATimer,
+    'the code opens the store on a timer after the ask',
+    opensOnATimer ? '' : 'the hook has no setTimeout(openTheStore, …)',
+  );
+  ok(
+    !claimsAfterTheAnswer,
+    'the hook does not claim the store opens after the browser has answered',
+    claimsAfterTheAnswer
+      ? 'the docstring says the store opens once the browser has answered; the code opens it a moment after the ask'
+      : '',
+  );
+  ok(
+    /after\s+the\s+ask|a\s+moment\s+later/i.test(comment),
+    'and it says the store opens after the ask',
+    /after\s+the\s+ask|a\s+moment\s+later/i.test(comment)
+      ? ''
+      : 'the docstring never says the store opens after the ask',
+  );
+}
+
 console.log('\nthe store opens even when the browser refuses the share');
 {
   reset();
@@ -1037,10 +1100,11 @@ console.log('\nthe store stays shut when the attempt has been abandoned');
 {
   // WHY THIS TEST EXISTS
   //
-  // The store is opened from three places — the browser's answer, the
-  // refusal, and the fallback timer that opens it when the browser never
-  // answers. And the attempt can die between the question and the answer:
-  // the person presses Stop, or the page goes away. The store opened anyway:
+  // The store is opened from several places — a short timer after the
+  // browser is asked, the browser's refusal, and the browser's answer — and
+  // every one of them asks whether the attempt is still alive first. And the
+  // attempt can die between the question and the answer: the person presses
+  // Stop, or the page goes away. The store opened anyway:
   //
   //     the person presses Stop, then dismisses Chrome's picker
   //       ->  a store opens in a tab, after the person said stop
@@ -1055,7 +1119,9 @@ console.log('\nthe store stays shut when the attempt has been abandoned');
   //     "a store opening in a tab after the person has gone is worse than
   //      a store that did not open"
   //
-  // — the comment that clears the fallback timer when the page goes away.
+  // — and the hook now asks, on every path that opens the store, whether the
+  // attempt is still alive. A timer still running after the page has gone
+  // away cannot open anything, because the attempt it belonged to is gone.
   // The person is left with a tab they did not ask for, and nothing on screen
   // says it is there. They can always ask for the store again.
 
@@ -1167,16 +1233,26 @@ console.log('\nthe store stays shut when the attempt has been abandoned');
   }
 }
 
-console.log('\nthe store opens inside the click, so there is no timer waiting to open it');
+console.log('\nthe store opens inside the click, so no long timer is left waiting');
 {
-  // WHY THIS IS CHECKED SEPARATELY: the fallback timer opens the store when
-  // the browser never answers, and it belongs to the attempt. Stop retires
-  // the attempt, so the timer has to go with it — otherwise a timer is left
-  // running for four seconds on a page whose person has said stop.
+  // WHY THIS IS CHECKED SEPARATELY: the store's tab is opened on a SHORT
+  // timer after the browser is asked — 350ms — because that is the only
+  // window in which Chrome's popup blocker will allow it. The timer belongs
+  // to the attempt, and Stop retires the attempt, so the timer has to go
+  // with it: otherwise a timer is left running on a page whose person has
+  // said stop.
   //
-  // WHY THE TIMERS ARE COUNTED RATHER THAN WAITED FOR: the fallback is four
-  // seconds, and a test that waits four seconds to learn what a counter can
-  // say in a millisecond makes every commit slower for every agent.
+  // WHY THE CHECK IS ABOUT THE TIMER'S LENGTH AND NOT ITS EXISTENCE: the
+  // store's tab IS opened on a timer, and that is the order the code runs
+  // in. What must not come back is the FOUR-SECOND timer this used to have
+  // — the one that fired only when the browser never answered. By then the
+  // person's click is long dead, and the tab it opened was a pop-up Chrome
+  // blocked. So the check is that no timer of four seconds or more is
+  // waiting.
+  //
+  // WHY THE TIMERS ARE COUNTED RATHER THAN WAITED FOR: a test that waits
+  // four seconds to learn what a counter can say in a millisecond makes
+  // every commit slower for every agent.
   reset();
   const streams = [];
   installBrowser(streams);
@@ -1204,14 +1280,14 @@ console.log('\nthe store opens inside the click, so there is no timer waiting to
     const harness = mountHook(() => useScreenSharer());
     const starting = harness.value.start('Amazon Fresh', () => {});
 
-    // WHY THERE IS NO TIMER ANY MORE: the store opens inside the person's
-    // click, because that is the only moment Chrome's popup blocker will
-    // allow it. A timer that opened it later was a timer that opened a
-    // blocked popup.
+    // WHY THE THRESHOLD IS FOUR SECONDS: the timer this used to have was
+    // four seconds long, and the tab it opened was a pop-up Chrome blocked.
+    // A timer that long means the person's click is gone before the tab
+    // opens — so the check is that no timer of that length is waiting.
     const fallbacks = () => [...pending.values()].filter((ms) => ms >= 4000);
     ok(
       fallbacks().length === 0,
-      'there is no timer waiting to open the store later',
+      'no timer long enough to outlive the click is waiting to open the store',
       `${fallbacks().length}`,
     );
 
