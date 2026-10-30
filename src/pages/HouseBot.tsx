@@ -4,11 +4,7 @@ import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart
 import { useStore } from '../store/useStore';
 import { STARTER_RECIPES } from '../data/recipes';
 import { INDIAN_RECIPES } from '../data/indianRecipes';
-import {
-  type CsvRecipe,
-  type ScoredCsvRecipe,
-  searchCsvRecipes,
-} from '../utils/csvRecipeSearch';
+import { type ScoredCsvRecipe } from '../utils/csvRecipeSearch';
 import { parseGroceryList } from '../utils/groceryListParser';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { blockedReason } from '../utils/micPermission';
@@ -573,19 +569,6 @@ export function HouseBotPage() {
   // on an unmounted component and leak the request.
   const streamAbortRef = useRef<AbortController | null>(null);
 
-  // Lazy-load the 5,894-recipe Indian catalog. Same pattern Discover uses.
-  const [csvRecipes, setCsvRecipes] = useState<CsvRecipe[] | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void import('../data/csvRecipes.json').then((mod) => {
-      if (!cancelled)
-        setCsvRecipes((mod.default || mod) as unknown as CsvRecipe[]);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   // Auto-resize the textarea as the user types (ChatGPT-like).
   useLayoutEffect(() => {
     const ta = textareaRef.current;
@@ -681,7 +664,12 @@ export function HouseBotPage() {
       // dumping full recipes on the user — the user wanted buttons first.
       // (We still keep `setCsvHits` available so the user can browse
       // the catalog from Discover if they want.)
-      void csvRecipes; // suppress unused warning
+      //
+      // WHY THE CATALOGUE IS NOT LOADED HERE: it WAS loaded here, and the
+      // page paid for the whole 5,894-recipe file — 5,414,808 bytes as the
+      // bridge serves it — on every visit, for a value this chat never read.
+      // The catalogue is a Discover and Meal Plan thing; this page asks the
+      // model. See scripts/test-loaded-but-unused.mjs.
 
       // No strong Indian-catalog hit — fetch web-search candidates and
       // show them as clickable options. The user picks one and we send it
