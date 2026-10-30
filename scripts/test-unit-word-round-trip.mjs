@@ -10,7 +10,7 @@
  *     the unit "grams"  ->  "1 gram"
  *     the unit "tbs"    ->  "1 tb"
  *
- * The app's own unit table (src/utils/units.ts) is the one place that decides
+ * The app's own unit table (src/utils/unitTable.ts) is the one place that decides
  * what the app understands, and it carries BOTH forms of every spoon unit it
  * knows — "tsp" and "tsps", "cup" and "cups", "pinch" and "pinches",
  * "tablespoon" and "tablespoons" — and both "tbsp" and "tbs".

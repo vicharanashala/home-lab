@@ -42,7 +42,7 @@ const CATEGORIES = new Set<string>([
  *
  * "bottles" and "bunch" are not exotic words: the app's own stock form
  * offers both, and the camera recognizer writes "bunch" and "pack" onto a
- * row. The app's table — `WRITABLE_UNITS` in src/utils/units.ts — is the
+ * row. The app's table — `WRITABLE_UNITS` in src/utils/unitTable.ts — is the
  * one place that says what the app writes, so it is what this gate reads.
  * A unit the app does NOT know is still refused, and still falls back to
  * "pcs"; see `scripts/test-agent-stock-unit.mjs`, which drives the real

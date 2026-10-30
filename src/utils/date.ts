@@ -1,5 +1,6 @@
 import { differenceInCalendarDays, format, formatDistanceToNow, isValid, parseISO } from 'date-fns';
 import type { StockItem } from '../types';
+import { isWritableUnit } from './unitTable';
 
 export const toISODate = (d: Date): string => format(d, 'yyyy-MM-dd');
 
@@ -106,6 +107,21 @@ export const formatDays = (days: number): string =>
  * "dashes" into "dashe" and "pinches" into "pinche" — units people actually
  * type for a kitchen app. English plurals are not just "+s".
  *
+ * WHY A WORD THE APP DOES NOT KNOW IS LEFT ALONE: the stock unit field is
+ * free text, so the word can be the household's own noun — "tomatoes",
+ * "leaves", "berries" — and English does not make those singular by dropping
+ * a letter: "tomatoes" is not "tomatoe" and "leaves" is not "leave". The rule
+ * used to invent them, and the word it invented went onto the shopping list:
+ *
+ *     the shelf row                  "1 tomatoe"
+ *     the same quantity written
+ *     by hand on the same list       "1 tomatoes"
+ *
+ * Two spellings of one quantity on the one list the household shops from, and
+ * one of them a word nobody wrote. A word the app KNOWS is a unit, and a unit
+ * has a singular the rule can spell — so the rule takes the singular of a
+ * unit and leaves everything else exactly as it was typed.
+ *
  * WHY IT IS NOT EXPORTED: a caller that wants to write a quantity writes it
  * with `formatQuantity`, which is the rule that decides whether there IS a
  * unit, whether it is singular, and how it is spaced. A caller that spliced
@@ -117,6 +133,9 @@ export const formatDays = (days: number): string =>
 function singularUnit(unit: string): string {
   const u = unit.trim();
   if (!u) return unit;
+  // A word the app does not know is the household's word, not a unit. It is
+  // left exactly as it was written — see the note above.
+  if (!isWritableUnit(u)) return u;
   // -es plurals whose stem ends in a sibilant: dashes -> dash, pinches -> pinch.
   if (/(sh|ch|s|x|z)es$/i.test(u)) return u.slice(0, -2);
   // A plain -s: grams -> gram, bottles -> bottle, pcs -> pc. Words ending in
@@ -140,8 +159,8 @@ function singularUnit(unit: string): string {
  * WHY A BLANK UNIT IS NO UNIT: "2" is a whole quantity on its own. There is
  * nothing for the unit to be, so it is not written at all.
  *
- * WHY THE SINGULAR IS STILL SPELLED OUT: one of them reads "1 glass", never
- * "1 glasses". See `singularUnit`.
+ * WHY THE SINGULAR IS STILL SPELLED OUT: a unit the app knows reads "1 bottle",
+ * never "1 bottles". See `singularUnit`.
  *
  * @param qty how many
  * @param unit the unit, if there is one

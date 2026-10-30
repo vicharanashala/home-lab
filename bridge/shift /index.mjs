@@ -2950,7 +2950,7 @@ const ACTION_CATEGORIES = new Set([
 // "Added 2 bottles of milk". Nothing on the screen said the unit had been
 // changed.
 //
-// WHY THE LIST IS HERE AND NOT READ FROM src/utils/units.ts: the bridge is a
+// WHY THE LIST IS HERE AND NOT READ FROM src/utils/unitTable.ts: the bridge is a
 // server and it cannot import the app's TypeScript. So it keeps its own copy,
 // and scripts/test-agent-stock-unit.mjs holds the copy honest: the test
 // reads the app's table, asks this list and the client's gate to carry every
@@ -3883,6 +3883,20 @@ function stockExpiry(item) {
 function singularUnit(unit) {
   const u = String(unit).trim();
   if (!u) return u;
+  // A word this bridge does not know is the household's own noun — the stock
+  // unit field is free text — and English does not make those singular by
+  // dropping a letter: "tomatoes" is not "tomatoe" and "leaves" is not
+  // "leave". The rule used to invent them, and the word it invented was what
+  // the MODEL was told the shelf held:
+  //
+  //     the shelf row on screen   "1 tomatoe"
+  //     the model's STOCK block    "  - Tomatoes: 1 tomatoe"
+  //
+  // so the household was told its own row held a word nobody wrote. A word
+  // this bridge KNOWS is a unit, and a unit has a singular the rule can
+  // spell — so the rule takes the singular of a unit and leaves everything
+  // else exactly as it was typed.
+  if (!ACTION_UNITS.has(u.toLowerCase())) return u;
   // -es plurals whose stem ends in a sibilant: dashes -> dash, pinches -> pinch.
   if (/(sh|ch|s|x|z)es$/i.test(u)) return u.slice(0, -2);
   // A plain -s: grams -> gram, bottles -> bottle, pcs -> pc. Words ending in
@@ -3919,9 +3933,11 @@ function singularUnit(unit) {
  * household could be told it had "1 bottles of milk" by the bot while the app
  * showed "1 bottle".
  *
- * THE RULE, in the three parts the app's rule has:
+ * THE RULE, in the four parts the app's rule has:
  *   - a unit that is not there is not written at all — "2", not "2   ";
  *   - a unit of one is written singular — "1 bottle", never "1 bottles";
+ *   - a word this bridge does not know is the household's own word, and it is
+ *     left exactly as it was written — "1 tomatoes", never "1 tomatoe";
  *   - the number and the unit are separated by a space.
  *
  * @param {number} qty how many

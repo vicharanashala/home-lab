@@ -141,9 +141,10 @@ function cleanBullet(raw: string): string {
  * of them turns that test RED until it is written here — which is the drift
  * this list is prone to and the one the test exists to catch.
  *
- * WHY THE LIST IS GROUPED THE WAY `units.ts` GROUPS ITS TABLES: the app has
- * one table of the units it understands, and it is published as
- * `KNOWN_UNITS` from there. The stock unit field is FREE TEXT — the Edit
+ * WHY THE LIST IS GROUPED THE WAY THE APP'S UNIT TABLE GROUPS ITS TABLES: the
+ * app has one table of the units it understands, it lives in
+ * src/utils/unitTable.ts, and it is published as `KNOWN_UNITS` from
+ * src/utils/units.ts. The stock unit field is FREE TEXT — the Edit
  * Stock form is an input with a datalist, not a select — so a household can
  * write any unit onto a stock row, and the app's own rule writes that unit
  * onto the shopping list as it was typed:
