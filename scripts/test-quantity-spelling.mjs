@@ -38,18 +38,24 @@
  *     cannot make the test agree with itself;
  *   - the REAL store, driving a real deduction, so the label is the one the
  *     screen prints and not a number this file recomputed;
- *   - the two `.tsx` writers, checked in the source, because their lists are
- *     rendered inside effects the server renderer does not run — the same
- *     reasoning as scripts/test-stock-deduction-units.mjs.
+ *   - EVERY file in src/, asked whether it puts a quantity and a unit side by
+ *     side in a phrase of its own. The rule used to name two files — the
+ *     End-of-Day meals flow and the House Bot bubble — because those were the
+ *     two that built the phrase. A named file can only be checked for the
+ *     phrase it happened to have on the day, and a file written later is not
+ *     checked at all. The rule is asked of every file now, and it is proved
+ *     against the historical shapes before it is asked of the app, so a rule
+ *     that stopped working could not pass quietly.
  *
  * Run with:  node scripts/test-quantity-spelling.mjs
  */
 import { register } from 'node:module';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 register('./lib/ts-resolve.mjs', import.meta.url);
 
@@ -200,37 +206,235 @@ check(
 );
 
 /* -------------------------------------------------------------------------- */
-/* The two writers that are checked in the source                             */
+/* The writers that are checked in the source                                 */
 /* -------------------------------------------------------------------------- */
 
-console.log('\nthe two writers that cannot be rendered call the shared rule');
+console.log('\nno page builds the amount and the unit into a phrase of its own');
 
 // WHY THE SOURCE IS CHECKED AND NOT THE COMPONENT: the deduction list lives
 // inside an effect the server renderer does not run, so rendering it would
 // read an empty list and prove nothing. The same reasoning as
 // scripts/test-stock-deduction-units.mjs.
+//
+// WHY THE RULE IS GENERAL AND DOES NOT NAME ANY FILE: it used to name two —
+// the End-of-Day meals flow and the House Bot bubble — because those were the
+// two that built the phrase. A named file can only be checked for the phrase
+// it happened to have on the day, and a file that is added later is not
+// checked at all. The rule can be asked of every file, and it is asked of
+// every file now.
+//
+// WHY THE HOUSE BOT IS NOT A WRITER ANY MORE: it WAS one. The Indian-catalog
+// card wrote `${formatQuantity(ing.quantity, ing.unit)}` — and that card could
+// never render, because the state it read was always empty. The card is gone.
+// The bubble that is left shows the MODEL's ingredient lines verbatim, so it
+// writes no amount of its own and there is nothing there to spell. That is
+// checked below, against the bubble itself rather than the whole page, so a
+// writer added elsewhere on the page is not mistaken for one in the bubble.
 
-const endOfDaySource = readFileSync(path.join(REPO, 'src/components/EndOfDayMeals.tsx'), 'utf8');
+/**
+ * The rules the app spells a quantity with.
+ *
+ * WHY THESE TWO: `formatQuantity` in src/utils/date.ts is the rule, and
+ * `spellQuantity` in src/utils/groceryQuantity.ts is the same rule applied
+ * to a quantity that arrived as free text. A phrase handed to either of them
+ * is a phrase the rule decides.
+ */
+const SHARED_RULES = new Set(['formatQuantity', 'spellQuantity']);
+
+/** An expression that is a number of something. */
+const looksLikeAQuantity = (text) => /quantity|qty|amount|count/i.test(text);
+/** An expression that is the word the number is measured in. */
+const looksLikeAUnit = (text) => /\bunit\b/i.test(text);
+
+/**
+ * Every place in a file where a quantity and a unit are put side by side.
+ *
+ * WHY THE AST AND NOT A PATTERN: the phrase can be built in a template
+ * literal or by joining two strings, and the difference between a phrase of
+ * the app's own making and one the rule decides is not in the characters —
+ * it is in WHERE the phrase is. So the file is parsed and the question is
+ * asked of the tree.
+ *
+ * @returns one entry per phrase, and the shared rule it is handed to (if any)
+ */
+function quantityPhrases(file, source) {
+  const tree = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+
+  /**
+   * The shared rule a phrase is handed to, if any.
+   *
+   * WHY IT WALKS UP THE TREE: the phrase is usually built INSIDE the call —
+   * `spellQuantity(`${qty} ${unit}`)` — so the call is the phrase's parent,
+   * not its sibling.
+   */
+  const ruleFor = (node) => {
+    let cur = node;
+    while (cur) {
+      if (ts.isCallExpression(cur) && ts.isIdentifier(cur.expression)) {
+        const name = cur.expression.text;
+        if (SHARED_RULES.has(name)) return name;
+      }
+      // A phrase inside the rule ITSELF is the rule's own business — it is
+      // where the phrase is allowed to be built.
+      //
+      // WHY THE DECLARATION IS NAMED RATHER THAN ITS TEXT SEARCHED FOR: the
+      // rule is `export const formatQuantity = ...` or `function
+      // formatQuantity(...)`, and asking which declaration it is by its name
+      // is an exact question. Searching the text of the declaration for the
+      // name would exempt any function that merely MENTIONED the rule.
+      if (ts.isFunctionDeclaration(cur) && cur.name && SHARED_RULES.has(cur.name.text)) {
+        return 'the rule itself';
+      }
+      if (ts.isVariableStatement(cur)) {
+        const declared = cur.declarationList.declarations[0]?.name;
+        if (declared && ts.isIdentifier(declared) && SHARED_RULES.has(declared.text)) {
+          return 'the rule itself';
+        }
+      }
+      cur = cur.parent;
+    }
+    return null;
+  };
+
+  /** Whether a list of expressions puts a quantity next to a unit. */
+  const pairs = (texts) => {
+    for (let i = 0; i < texts.length; i++) {
+      if (!looksLikeAQuantity(texts[i])) continue;
+      for (let j = i + 1; j < texts.length; j++) {
+        if (looksLikeAUnit(texts[j])) return true;
+      }
+    }
+    return false;
+  };
+
+  const found = [];
+
+  const visit = (node) => {
+    if (ts.isTemplateExpression(node)) {
+      const texts = node.templateSpans.map((span) => span.expression.getText(tree));
+      if (pairs(texts)) {
+        found.push({ text: node.getText(tree).replace(/\s+/g, ' ').trim(), rule: ruleFor(node) });
+      }
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = node.left.getText(tree);
+      const right = node.right.getText(tree);
+      if (pairs([left, right]) || pairs([right, left])) {
+        found.push({ text: `${left} + ${right}`, rule: ruleFor(node) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+
+  return found;
+}
+
+// THE RULE IS PROVED AGAINST A FIXTURE FIRST, so a rule that stopped working
+// could not pass quietly. The fixtures are the three shapes this rule was
+// written for, and the two shapes that are allowed.
+
+const BAD_SHAPES = [
+  ['the House Bot card', 'const s = `${ing.quantity} ${ing.unit}`;'],
+  ['the End-of-Day meals flow', 'const s = `${ing.quantity.toFixed(2)} ${ing.unit}`;'],
+  ['the unit helper', 'const s = unit ? `${quantity} ${unit}` : `${quantity}`;'],
+  ['two strings joined', "const s = ing.quantity + ' ' + ing.unit;"],
+];
+
+for (const [label, code] of BAD_SHAPES) {
+  const phrases = quantityPhrases('Fixture.tsx', code);
+  check(
+    `a phrase of its own is caught in ${label}`,
+    phrases.filter((p) => !p.rule).length > 0,
+    true,
+  );
+}
+
+const GOOD_SHAPES = [
+  ['the shared rule', 'const s = `${formatQuantity(ing.quantity, ing.unit)}`;'],
+  ['a phrase handed to the shared rule', 'const s = spellQuantity(`${qty} ${unit.toLowerCase()}`);'],
+];
+
+for (const [label, code] of GOOD_SHAPES) {
+  const phrases = quantityPhrases('Fixture.tsx', code);
+  check(
+    `a phrase the shared rule decides is not caught in ${label}`,
+    phrases.filter((p) => !p.rule).length,
+    0,
+  );
+}
+
+// AND THEN EVERY FILE IN src/ IS ASKED.
+
+const sourceFiles = [];
+const walkSrc = (dir) => {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkSrc(full);
+    else if (entry.isFile() && ['.ts', '.tsx'].includes(path.extname(entry.name))) {
+      sourceFiles.push(full);
+    }
+  }
+};
+walkSrc(path.join(REPO, 'src'));
+
+let phrasesFound = 0;
+for (const file of sourceFiles.sort()) {
+  const source = readFileSync(file, 'utf8');
+  for (const phrase of quantityPhrases(file, source)) {
+    phrasesFound += 1;
+    if (!phrase.rule) {
+      check(
+        `${path.relative(REPO, file)} does not build the amount and the unit into a phrase of its own`,
+        phrase.text,
+        'the shared rule',
+      );
+    }
+  }
+}
+
 check(
-  'the End-of-Day meals flow writes its amount with the shared rule',
-  endOfDaySource.includes('formatQuantity('),
+  'every quantity the app writes goes through the shared rule',
+  phrasesFound >= 1,
   true,
 );
-check(
-  'and does not build the amount and the unit into a phrase of its own',
-  /toFixed\(2\)\}\s*\$\{/.test(endOfDaySource),
-  false,
-);
+
+// AND THE HOUSE BOT BUBBLE IS CHECKED AS A BUBBLE.
+//
+// WHY IT IS CHECKED AT ALL WHEN IT WRITES NO AMOUNT: the bubble used to be a
+// writer — the Indian-catalog card beside it wrote
+// `${formatQuantity(ing.quantity, ing.unit)}` — and that card could never
+// render, because the state it read was always empty. The card is gone. What
+// is left is the bubble that shows the MODEL's ingredient lines verbatim, and
+// it must stay that way: a bubble that re-spelled the ingredients while the
+// other recipe cards showed them as the model wrote them would put two
+// spellings of one recipe on two screens.
+//
+// WHY IT IS CHECKED AGAINST THE BUBBLE AND NOT THE PAGE: a page may grow a
+// writer somewhere else — the quantities House Bot puts on the SHELF go
+// through the shared rule in src/utils/agentActions.ts — and a check against
+// the whole page would call that a defect when it is the rule being used.
 
 const houseBotSource = readFileSync(path.join(REPO, 'src/pages/HouseBot.tsx'), 'utf8');
+const bubbleSource = houseBotSource.slice(
+  houseBotSource.indexOf('function RecipeCard'),
+  houseBotSource.indexOf('function formatTime'),
+);
+
 check(
-  'the House Bot bubble writes its amount with the shared rule',
-  houseBotSource.includes('formatQuantity('),
-  true,
+  'the House Bot bubble shows the model\'s ingredient lines and does not re-spell them',
+  bubbleSource.includes('formatQuantity('),
+  false,
 );
 check(
-  'and does not build the amount and the unit into a phrase of its own',
-  /ing\.quantity\}\s*\$\{ing\.unit\}/.test(houseBotSource),
+  'and it does not build the amount and the unit into a phrase of its own',
+  /ing\.quantity\}\s*\$\{ing\.unit\}/.test(bubbleSource),
   false,
 );
 

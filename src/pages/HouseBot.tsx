@@ -1,16 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Send, ArrowUp, SquarePen, Globe, ExternalLink, Clock, ShoppingCart, Mic, MicOff, Volume2, VolumeX, MonitorPlay } from 'lucide-react';
+import { Bot, Send, ArrowUp, SquarePen, Globe, ShoppingCart, Mic, MicOff, Volume2, VolumeX, MonitorPlay } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { STARTER_RECIPES } from '../data/recipes';
 import { INDIAN_RECIPES } from '../data/indianRecipes';
-import { type ScoredCsvRecipe } from '../utils/csvRecipeSearch';
 import { parseGroceryList } from '../utils/groceryListParser';
 import { bridgeHeaders } from '../utils/bridgeToken';
 import { blockedReason } from '../utils/micPermission';
 import { applyAgentActions } from '../utils/agentActions';
 import { describeAgentOutcome } from '../utils/agentOutcome';
-import { formatQuantity } from '../utils/date';
 import { DishIcon } from '../components/icons/DishIcons';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { PhotoAttachButton, AttachedImageChip, usePhotoAttach } from '../components/PhotoAttach';
@@ -28,7 +26,6 @@ type Msg = {
 };
 type ProgressMsg = { id: string; text: string; ts: number };
 type RecipeMsg = { query: string; recipe: string; ts: number };
-type CsvHit = { query: string; matches: ScoredCsvRecipe[]; ts: number };
 type RecipeOption = { id: string; title: string; url: string | null; snippet: string };
 type OptionsHit = {
   query: string;
@@ -212,237 +209,6 @@ function RecipeCard({ recipe, query }: { recipe: string; query: string }) {
   );
 }
 
-/**
- * Card that renders one or more CSV-catalog matches. Used when the user
- * asks for an Indian dish by name or ingredients and we have a strong hit
- * in the 5,894-recipe catalog. CSV matches don't carry instructions, so
- * we show name + time + ingredients + image + source link. The user can
- * tap "Web instructions" if they want step-by-step from the LLM.
- */
-function IndianRecipeCard({
-  matches,
-  query,
-  onWebFallback,
-}: {
-  matches: ScoredCsvRecipe[];
-  query: string;
-  onWebFallback?: () => void;
-}) {
-  return (
-    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexDirection: 'column' }}>
-      <div
-        style={{
-          display: 'flex',
-          gap: 12,
-          alignItems: 'flex-start',
-          width: '100%',
-        }}
-      >
-        <div
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: '50%',
-            background:
-              'radial-gradient(circle at 30% 30%, #fde68a 0%, #b45309 60%, #451a03 100%)',
-            display: 'grid',
-            placeItems: 'center',
-            flexShrink: 0,
-          }}
-        >
-          <Bot size={15} color="white" />
-        </div>
-        <div
-          style={{
-            fontSize: 12,
-            color: '#fbbf24',
-            fontWeight: 600,
-            letterSpacing: 0.6,
-            textTransform: 'uppercase',
-          }}
-        >
-          From your Indian recipe catalog · {matches.length} match
-          {matches.length === 1 ? '' : 'es'}
-        </div>
-      </div>
-      {matches.map((m, idx) => {
-        const r = m.recipe;
-        const ings = r.ingredients.slice(0, 10);
-        const more = r.ingredients.length - ings.length;
-        return (
-          <div
-            key={`csv-${r.id}-${idx}`}
-            style={{
-              maxWidth: '78%',
-              padding: '14px 16px',
-              borderRadius: 18,
-              background: 'rgba(30, 41, 59, 0.75)',
-              color: '#f8fafc',
-              fontSize: 14,
-              lineHeight: 1.55,
-              border: '1px solid rgba(251, 191, 36, 0.25)',
-              width: '100%',
-            }}
-          >
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              {r.imageUrl && (
-                <img
-                  src={r.imageUrl}
-                  alt={r.name}
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = 'none';
-                  }}
-                  style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: 10,
-                    objectFit: 'cover',
-                    flexShrink: 0,
-                    background: 'rgba(0,0,0,0.2)',
-                  }}
-                />
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>
-                  {r.name}
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 12,
-                    fontSize: 12,
-                    color: '#94a3b8',
-                    marginBottom: 10,
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <span>
-                    <strong style={{ color: '#cbd5e1' }}>Serves:</strong>{' '}
-                    {r.baseServings}
-                  </span>
-                  {r.totalTime && (
-                    <span>
-                      <Clock
-                        size={11}
-                        style={{ verticalAlign: 'middle', marginRight: 3 }}
-                      />
-                      <strong style={{ color: '#cbd5e1' }}>Time:</strong>{' '}
-                      {r.totalTime} min
-                    </span>
-                  )}
-                  {r.cuisine && (
-                    <span>
-                      <strong style={{ color: '#cbd5e1' }}>Cuisine:</strong>{' '}
-                      {r.cuisine}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-            {ings.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <div
-                  style={{
-                    fontSize: 11,
-                    letterSpacing: 0.6,
-                    color: '#fbbf24',
-                    fontWeight: 700,
-                    marginBottom: 4,
-                  }}
-                >
-                  Ingredients ({r.ingredients.length})
-                </div>
-                <ul
-                  style={{
-                    margin: 0,
-                    paddingLeft: 18,
-                    fontSize: 13,
-                    color: '#e2e8f0',
-                  }}
-                >
-                  {ings.map((ing, i) => (
-                    <li key={`ing-${idx}-${i}`} style={{ marginBottom: 2 }}>
-                      {ing.name}
-                      {ing.quantity > 0 && ing.unit !== 'pcs'
-                        // WHY THE APP'S OWN RULE: this is a quantity, and the
-                        // app has one rule for writing them. The bubble used
-                        // to build its own, so a recipe asking for one
-                        // "dash" was shown to the household as "1 dashes" —
-                        // the same number and unit the Stock screen writes as
-                        // "1 dash".
-                        ? ` — ${formatQuantity(ing.quantity, ing.unit)}`
-                        : ''}
-                    </li>
-                  ))}
-                  {more > 0 && (
-                    <li
-                      style={{
-                        marginBottom: 2,
-                        color: '#94a3b8',
-                        fontStyle: 'italic',
-                      }}
-                    >
-                      …and {more} more
-                    </li>
-                  )}
-                </ul>
-              </div>
-            )}
-            <div
-              style={{
-                marginTop: 10,
-                display: 'flex',
-                gap: 10,
-                alignItems: 'center',
-                flexWrap: 'wrap',
-              }}
-            >
-              {r.imageUrl && /^https?:\/\//.test(r.imageUrl) && (
-                <a
-                  href={r.imageUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    display: 'inline-flex',
-                    gap: 4,
-                    alignItems: 'center',
-                    fontSize: 12,
-                    color: '#86efac',
-                    textDecoration: 'none',
-                    border: '1px solid rgba(134, 239, 172, 0.3)',
-                    padding: '4px 10px',
-                    borderRadius: 999,
-                  }}
-                >
-                  <ExternalLink size={11} /> Source
-                </a>
-              )}
-              {onWebFallback && (
-                <button
-                  type="button"
-                  onClick={onWebFallback}
-                  style={{
-                    fontSize: 12,
-                    color: '#fbbf24',
-                    background: 'transparent',
-                    border: '1px solid rgba(251, 191, 36, 0.3)',
-                    padding: '4px 10px',
-                    borderRadius: 999,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Get web instructions →
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function formatTime(ts: number): string {
   const d = new Date(ts);
   const h = d.getHours();
@@ -512,7 +278,6 @@ export function HouseBotPage() {
   ]);
   const [progressMsgs, setProgressMsgs] = useState<ProgressMsg[]>([]);
   const [recipeMsgs, setRecipeMsgs] = useState<RecipeMsg[]>([]);
-  const [csvHits, setCsvHits] = useState<CsvHit[]>([]);
   const [optionsHits, setOptionsHits] = useState<OptionsHit[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -582,7 +347,7 @@ export function HouseBotPage() {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, loading, progressMsgs, recipeMsgs, csvHits, optionsHits]);
+  }, [messages, loading, progressMsgs, recipeMsgs, optionsHits]);
 
   // Auto-focus the textarea on mount (no need to click to begin typing).
   useEffect(() => {
@@ -639,7 +404,6 @@ export function HouseBotPage() {
     // set, then another, all trailing the latest reply.
     setOptionsHits([]);
     setRecipeMsgs([]);
-    setCsvHits([]);
     setProgressMsgs([]);
 
     // Reset textarea height after sending.
@@ -662,14 +426,19 @@ export function HouseBotPage() {
       // Always go to the LLM-generated options endpoint so they can pick
       // a variant. The Indian catalog fast-path was skipping this and
       // dumping full recipes on the user — the user wanted buttons first.
-      // (We still keep `setCsvHits` available so the user can browse
-      // the catalog from Discover if they want.)
       //
       // WHY THE CATALOGUE IS NOT LOADED HERE: it WAS loaded here, and the
       // page paid for the whole 5,894-recipe file — 5,414,808 bytes as the
       // bridge serves it — on every visit, for a value this chat never read.
       // The catalogue is a Discover and Meal Plan thing; this page asks the
       // model. See scripts/test-loaded-but-unused.mjs.
+      //
+      // AND WHY THERE IS NO CATALOGUE CARD LEFT EITHER: the card that read
+      // the matches was fed by a state the page never filled — both of its
+      // writes passed the value it was created with, so it was empty for the
+      // whole life of the page and the card never ran. The card, the state
+      // and the type are gone rather than left behind as a branch that
+      // cannot be reached. See scripts/test-dead-state.mjs.
 
       // No strong Indian-catalog hit — fetch web-search candidates and
       // show them as clickable options. The user picks one and we send it
@@ -1076,7 +845,6 @@ export function HouseBotPage() {
     // Also wipe any leftover web-search artefacts so the new chat starts clean.
     setProgressMsgs([]);
     setRecipeMsgs([]);
-    setCsvHits([]);
     setOptionsHits([]);
     setInput('');
     setWebMode(false);
@@ -1568,23 +1336,6 @@ export function HouseBotPage() {
           {/* Final recipe card — structured layout for ingredients + steps. */}
           {recipeMsgs.map((r) => (
             <RecipeCard key={`r-${r.ts}`} recipe={r.recipe} query={r.query} />
-          ))}
-
-          {/* CSV catalog hits — instant matches from the 5,894-recipe Indian catalog. */}
-          {csvHits.map((h) => (
-            <IndianRecipeCard
-              key={`csv-${h.ts}`}
-              matches={h.matches}
-              query={h.query}
-              onWebFallback={() => {
-                // Re-issue the query to /api/housebot/recipe so the LLM
-                // writes step-by-step instructions for the matched dish.
-                setWebMode(true);
-                setInput(h.query);
-                // Defer so the state updates settle before handleSend fires.
-                requestAnimationFrame(() => handleSend());
-              }}
-            />
           ))}
 
           {/* Web-search recipe options — clickable pills. */}

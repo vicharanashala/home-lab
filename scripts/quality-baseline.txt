@@ -26,7 +26,6 @@ src/pages/Discover.tsx TS6133 'recipeById' is declared but its value is never re
 src/pages/Grocery.tsx TS6133 'getCategory' is declared but its value is never read.
 src/pages/HouseBot.tsx TS6133 'DishIcon' is declared but its value is never read.
 src/pages/HouseBot.tsx TS6133 'Send' is declared but its value is never read.
-src/pages/HouseBot.tsx TS6133 'query' is declared but its value is never read.
 src/pages/MealPlan.tsx TS6133 'Trash2' is declared but its value is never read.
 src/pages/MealPlan.tsx TS6133 'suggestCategory' is declared but its value is never read.
 src/pages/Settings.tsx TS6133 'force' is declared but its value is never read.
