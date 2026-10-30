@@ -1922,11 +1922,25 @@ export function HouseBotPage() {
               granted and still deliver nothing — a window that is closed, a
               screen that has stopped coming through. The chip only appears
               when there is actually a picture for the bot to look at, so it
-              never promises sight the bot does not have. */}
+              never promises sight the bot does not have.
+
+              WHY THE PICTURE IS SHOWN AND NOT ONLY THE WORDS: the share is of
+              a WINDOW, and a window shows one tab at a time. So the picture
+              can be the store — or it can be this very chat window, if the
+              person left the store's tab behind. A person who can see the
+              picture knows straight away which one it is, and can click the
+              store's tab to put it right. Words alone ("I can see the window
+              with Amazon Fresh") would be a claim the person cannot check,
+              and a claim that is wrong looks exactly like a broken feature. */}
           {!attach.image && screen.watching && screen.frame && (
             <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-lg bg-sage-50 dark:bg-sage-900/30 px-2 py-1 text-[10px] font-semibold text-sage-700 dark:text-sage-200">
-              <MonitorPlay size={11} />
+              <MonitorPlay size={11} className="shrink-0" />
               {shareVisibleText(screen.label)}
+              <img
+                src={`data:${screen.frame.mediaType};base64,${screen.frame.data}`}
+                alt="What House Bot can see"
+                className="h-8 w-auto rounded border border-sage-200 dark:border-ink-700 shrink-0"
+              />
             </span>
           )}
           <div className="flex items-end gap-2 flex-1 min-w-0">

@@ -12,6 +12,7 @@ import {
   openStoreTab,
   shareRunningText,
 } from '../utils/screenWatch';
+import { openHouseBotWindow } from '../utils/houseBotWindow';
 
 /**
  * The online stores you can order from, with the shopping list beside them.
@@ -48,12 +49,20 @@ import {
  * view. Every word this page shows the person says "window" for that reason —
  * a page that said "tab" would be promising less than the browser asks for.
  *
- * HOUSE BOT NEEDS A TAB OF ITS OWN
+ * HOUSE BOT NEEDS A WINDOW OF ITS OWN
  * The share belongs to this page, so this page is the share. House Bot has to
  * be somewhere else for the share to still be running when it is asked
  * about — and the app's only way into House Bot is the nav, which replaces
  * this page and takes the share with it. So the page offers a way into House
  * Bot that leaves this page alive.
+ *
+ * WHY A WINDOW AND NOT JUST A TAB: the share is of a WINDOW, and a window
+ * shows one tab at a time. If House Bot were a tab of this window, the
+ * person would have to click that tab to ask it something — and the window
+ * would then be showing House Bot, so the bot would be handed a picture of
+ * ITSELF and asked what was on the screen. House Bot gets a window of its
+ * own, beside this one, so the store stays in front of the shared window
+ * while the person talks to the bot. See src/utils/houseBotWindow.ts.
  */
 export function DigitalStoresPage() {
   const { grocery } = useStore();
@@ -62,6 +71,10 @@ export function DigitalStoresPage() {
   // The store whose tab the browser refused, so the person can be told and
   // given a way to open it. See `openStoreTab`.
   const [blockedStore, setBlockedStore] = useState<{ name: string; url: string } | null>(null);
+  // Whether the browser refused to open House Bot's window. Said out loud,
+  // because otherwise the button does nothing at all and the person is left
+  // wondering what they did wrong.
+  const [botBlocked, setBotBlocked] = useState(false);
 
   const toBuyCount = useMemo(
     () => grocery.filter((g) => !g.purchased).length,
@@ -103,20 +116,27 @@ export function DigitalStoresPage() {
   };
 
   /**
-   * Open House Bot in a tab of its own.
+   * Open House Bot in a window of its own, beside this one.
    *
-   * WHY A NEW TAB AND NOT THE NAV: the browser's share belongs to this page,
+   * WHY A WINDOW AND NOT THE NAV: the browser's share belongs to this page,
    * and this page IS the share. The only way into House Bot in the app is the
    * nav, and the nav replaces the page — which ends the share, because the
-   * share goes with the page that asked for it. House Bot in a tab of its own
-   * leaves this page alive, and the share alive with it.
+   * share goes with the page that asked for it. House Bot in a window of its
+   * own leaves this page alive, and the share alive with it.
+   *
+   * WHY A WINDOW AND NOT A TAB OF THIS ONE: the share is of a WINDOW, and a
+   * window shows one tab at a time. A House Bot tab in this window would mean
+   * the person has to click that tab to ask the bot anything — and then this
+   * window is showing House Bot, so the bot is handed a picture of ITSELF and
+   * asked what is on the screen. The store has to stay in front of this
+   * window for the bot to be able to see it.
    *
    * WHY IT IS OFFERED HERE AND NOW: without it, the instruction to "open
    * House Bot" sends the person to the one route that ends the share, and
    * the app would be telling them to do the thing that breaks it.
    */
   const openHouseBot = () => {
-    window.open('/house-bot', '_blank');
+    setBotBlocked(!openHouseBotWindow('/house-bot'));
   };
 
   return (
@@ -188,17 +208,30 @@ export function DigitalStoresPage() {
                   </p>
                   <p className="text-[11px] text-sage-600 dark:text-ink-300 mt-0.5 leading-relaxed">
                     {share.state.sentFrame
-                      ? 'House Bot can see it. Open House Bot in a tab of its own and ask about what is on the screen. The share keeps going until you stop it.'
+                      ? 'House Bot can see it. The share keeps going until you stop it.'
                       : 'Waiting for the screen to come through. House Bot will be able to see it once the first picture arrives.'}
                   </p>
+                  {share.state.sentFrame && (
+                    <p className="text-[11px] text-sage-600 dark:text-ink-300 mt-1 leading-relaxed">
+                      Open House Bot in a window of its own, then click the store’s
+                      tab once so House Bot is looking at the store, and ask it what
+                      is on the screen.
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={openHouseBot}
                     className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-sage-300 dark:border-sage-800 bg-white dark:bg-ink-800 px-2 py-1 text-[11px] font-semibold text-sage-700 dark:text-cream-100 hover:bg-sage-50 dark:hover:bg-ink-700"
                   >
                     <Bot size={12} />
-                    Open House Bot in a new tab
+                    Open House Bot in a window of its own
                   </button>
+                  {botBlocked && (
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1 leading-relaxed">
+                      Your browser blocked the new window. Press the button again and
+                      it will open.
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
