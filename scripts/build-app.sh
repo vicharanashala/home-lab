@@ -79,6 +79,10 @@ LIVE="$ROOT/dist"
 BUILD_LOCK_ROOT="$ROOT"
 # shellcheck source=scripts/lib/build-lock.sh
 . "$ROOT/scripts/lib/build-lock.sh"
+# The list of what the bundle is made from, shared with the live check so the
+# two cannot disagree about which files the bundle was built from.
+# shellcheck source=scripts/lib/bundle-inputs.sh
+. "$ROOT/scripts/lib/bundle-inputs.sh"
 
 build_lock_acquire
 
@@ -91,6 +95,17 @@ if [ ! -d "$LIVE" ] && [ -d "$RETIRED" ]; then
 fi
 rm -rf "$RETIRED"
 
+# The list of the files that go into the bundle, with the hash of each one.
+#
+# WHY IT IS TAKEN BEFORE THE BUILD AND WRITTEN AFTER IT: a source file that
+# changes WHILE the build runs must leave the bundle behind the source, not in
+# front of it. Taken before, the list holds the content the build started
+# from, so the check sees a difference and says the bundle is stale — which is
+# the truth. Taken after, the list would hold the new content while the
+# bundle holds the old, and the check would say "current" for a bundle that
+# is not.
+MANIFEST="$(bundle_manifest_lines "$ROOT")"
+
 # The live dist/ is left alone while the new build is written.
 npx vite build --outDir "$STAGING"
 
@@ -98,6 +113,19 @@ if [ ! -f "$STAGING/index.html" ]; then
   echo "the build produced no index.html — the live build has been left alone" >&2
   rm -rf "$STAGING"
   exit 1
+fi
+
+# The list travels with the bundle it describes, so the check can tell a
+# bundle that is behind the source from one that was built from exactly this
+# source and merely touched since.
+#
+# WHY IT IS A DOTFILE: the bridge serves dist/ as static files, and it must
+# not serve this. express.static ignores dotfiles by default, so the list
+# never reaches the owner's phone.
+if [ -n "$MANIFEST" ]; then
+  printf '%s\n' "$MANIFEST" > "$STAGING/.build-inputs"
+else
+  : > "$STAGING/.build-inputs"
 fi
 
 # Both renames are metadata-only operations, so dist/ is missing for a

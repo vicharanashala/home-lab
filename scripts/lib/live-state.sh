@@ -37,6 +37,9 @@
 LIVE_STATE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 . "$LIVE_STATE_LIB_DIR/bridge-stale.sh"
 . "$LIVE_STATE_LIB_DIR/supervisor-reload.sh"
+# The list of what goes into the bundle, shared with the build so the two
+# cannot disagree about which files the bundle was made from.
+. "$LIVE_STATE_LIB_DIR/bundle-inputs.sh"
 
 # live_port_listening <port>
 #
@@ -263,23 +266,50 @@ live_bundle_state() {
     '' | *[!0-9]*) echo unknown; return 0 ;;
   esac
 
+  # The env files are judged by their TIME and never by their content: they
+  # hold the bridge token, and the bundle is served to the owner's phone.
+  local env_newest=0 path mtime
+  for path in $(bundle_env_paths); do
+    [ -e "$root/$path" ] || continue
+    mtime="$(stat -f %m "$root/$path" 2>/dev/null)"
+    case "$mtime" in
+      '' | *[!0-9]*) echo unknown; return 0 ;;
+    esac
+    [ "$mtime" -gt "$env_newest" ] && env_newest="$mtime"
+  done
+
+  # THE LIST THE BUILD LEFT BEHIND IS THE STRONGER ANSWER: it says what the
+  # bundle was MADE FROM, rather than when each file was last touched.
+  #
+  # WHY THE TIMES ALONE WERE WRONG IN BOTH DIRECTIONS:
+  #   a file written again with the same content — an agent reverting an
+  #   experiment, a formatter rewriting a file it did not change — looked
+  #   exactly like a file that had been edited, so the bundle was reported
+  #   stale for ever and the owner's link was rebuilt over and over for
+  #   nothing;
+  #   and a file whose content DID change but whose time was put back looked
+  #   untouched, so a bundle that really was behind the source was reported
+  #   current. That one is the worse of the two: the owner is served an old
+  #   interface and the check says healthy.
+  local manifest="$root/dist/.build-inputs"
+  if [ -f "$manifest" ]; then
+    case "$(bundle_manifest_state "$root" "$manifest")" in
+      current)
+        # Every file the bundle was built from is still there, unchanged, and
+        # nothing has joined the source since. The env files still have to be
+        # older than the build.
+        if [ "$env_newest" -gt "$build_mtime" ]; then echo stale; else echo current; fi
+        return 0 ;;
+      stale) echo stale; return 0 ;;
+      *) : ;; # the list cannot be read — fall back to the times
+    esac
+  fi
+
   # The newest of everything that goes into the bundle.
-  local newest=0 path mtime
-  for path in \
-    "$root/src" \
-    "$root/public" \
-    "$root/index.html" \
-    "$root/vite.config.ts" \
-    "$root/tailwind.config.js" \
-    "$root/postcss.config.js" \
-    "$root/package.json" \
-    "$root/package-lock.json" \
-    "$root/.env" \
-    "$root/.env.local" \
-    "$root/.env.production" \
-    "$root/.env.production.local"; do
-    [ -e "$path" ] || continue
-    mtime="$(bundle_newest_mtime "$path")"
+  local newest=0
+  for path in $(bundle_input_paths) $(bundle_env_paths); do
+    [ -e "$root/$path" ] || continue
+    mtime="$(bundle_newest_mtime "$root/$path")"
     case "$mtime" in
       '' | *[!0-9]*) echo unknown; return 0 ;;
     esac
@@ -296,6 +326,44 @@ live_bundle_state() {
   fi
   echo current
   return 0
+}
+
+# Whether the bundle in dist/ was built from the source that is on disk now.
+#
+# WHY THE CONTENT IS COMPARED AND NOT ONLY THE TIMES: the times alone were
+# wrong in both directions — a file written again with the same content looked
+# edited, and a file whose content changed but whose time was put back looked
+# untouched. The second one is the false all-clear this whole check exists to
+# end.
+#
+# WHY IT FAILS CLOSED: anything that cannot be read — a file that is gone, a
+# hash that could not be computed, a list that cannot be read — answers
+# "stale", never "current".
+bundle_manifest_state() {
+  local root="$1" manifest="$2"
+
+  [ -r "$manifest" ] || { echo unreadable; return 0; }
+
+  local current expected
+  current="$(bundle_manifest_lines "$root")"
+  expected="$(bundle_input_count "$root")"
+
+  # A file that could not be hashed is simply ABSENT from the list, so two
+  # lists can agree while a file neither of them could read. The count says
+  # whether one is missing.
+  local read
+  read="$(printf '%s' "$current" | grep -c '')"
+  [ "$read" -eq "$expected" ] || { echo stale; return 0; }
+
+  # The list the build left behind and the list of the source as it is now
+  # must be the same, line for line. Any difference — a file that changed, a
+  # file that was added, a file that was removed — means the bundle was not
+  # built from the source that is on disk.
+  if [ "$current" = "$(cat "$manifest")" ]; then
+    echo current
+  else
+    echo stale
+  fi
 }
 
 # bundle_newest_mtime <path>

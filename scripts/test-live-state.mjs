@@ -97,6 +97,28 @@ function bundleState(root) {
 }
 
 /**
+ * A checkout with a bundle in it, and the list the build left behind.
+ *
+ * WHY THE LIST IS WRITTEN BY THE SAME RULE THE BUILD USES: the test and the
+ * build must not be able to drift apart. The list is asked for here rather
+ * than written out by hand, so a change to its format breaks this test
+ * instead of quietly making it test nothing.
+ */
+function makeBundleFixture(root) {
+  mkdirSync(join(root, 'src'), { recursive: true });
+  mkdirSync(join(root, 'public'), { recursive: true });
+  mkdirSync(join(root, 'dist'), { recursive: true });
+  writeFileSync(join(root, 'src', 'App.tsx'), 'export const App = 1;\n');
+  writeFileSync(join(root, 'public', 'icon.svg'), '<svg/>\n');
+  writeFileSync(join(root, 'index.html'), '<div id="root"></div>\n');
+  writeFileSync(join(root, 'vite.config.ts'), 'export default {};\n');
+  writeFileSync(join(root, 'package.json'), '{ "dependencies": {} }\n');
+  writeFileSync(join(root, 'dist', 'index.html'), '<div id="root"></div>\n');
+  sh(`bundle_manifest_lines "${root}" > "${join(root, 'dist', '.build-inputs')}"`);
+  return root;
+}
+
+/**
  * The checksum of the code the supervisor runs, the way the rule computes it.
  *
  * WHY IT IS NOT A PLAIN CHECKSUM OF ONE FILE: the rule watches the script
@@ -369,6 +391,71 @@ try {
     `state=${bundleState(bundleRoot)}`,
   );
   utimesSync(bundleEnv, OLD, OLD);
+
+  // A source file that was TOUCHED but not CHANGED.
+  //
+  // WHY THIS CASE IS HERE: the rule compared TIMES only, so a file written
+  // again with the same content — an agent reverting an experiment, a
+  // formatter rewriting a file it did not change — looked exactly like a file
+  // that had been edited. The bundle was reported stale for ever, and the
+  // owner's link was rebuilt over and over for nothing.
+  //
+  // It is not a hypothetical: on 2026-10-30 this check reported "the bundle is
+  // stale" on the owner's own machine while the only file newer than the
+  // bundle was byte-for-byte identical to the commit — the same sha256.
+  //
+  // The build leaves behind a list of what it read, so the check can compare
+  // the CONTENT. A file that is newer but unchanged leaves the bundle current.
+  const touchedRoot = makeBundleFixture(join(work, 'bundle-touched'));
+  const touchedSource = join(touchedRoot, 'src', 'App.tsx');
+  utimesSync(touchedSource, NEW, NEW);
+  check(
+    'a source file that was touched but not changed leaves the bundle current',
+    bundleState(touchedRoot) === 'current',
+    `state=${bundleState(touchedRoot)}`,
+  );
+
+  // A source file whose content DID change, with its time put back so the
+  // time rule cannot see it.
+  //
+  // THIS IS THE DANGEROUS DIRECTION: the owner's link really is behind the
+  // source, and a rule that compared times alone said "healthy" — the false
+  // all-clear this whole check exists to end.
+  const changedRoot = makeBundleFixture(join(work, 'bundle-changed'));
+  const changedSource = join(changedRoot, 'src', 'App.tsx');
+  writeFileSync(changedSource, 'export const App = 2;\n');
+  utimesSync(changedSource, OLD, OLD);
+  check(
+    'a source file whose content changed is stale, even when its time was put back',
+    bundleState(changedRoot) === 'stale',
+    `state=${bundleState(changedRoot)}`,
+  );
+
+  // A file the tree GAINED since the build. The bundle was not built from it,
+  // so it is behind the source even though every file it did read is the same.
+  const addedRoot = makeBundleFixture(join(work, 'bundle-added'));
+  const addedFile = join(addedRoot, 'src', 'New.tsx');
+  writeFileSync(addedFile, 'export const New = 1;\n');
+  utimesSync(addedFile, OLD, OLD);
+  check(
+    'a file added to the source since the build is stale',
+    bundleState(addedRoot) === 'stale',
+    `state=${bundleState(addedRoot)}`,
+  );
+
+  // The env file is still judged by its TIME. Its contents are a secret, and
+  // they must never be hashed into a list that sits inside the bundle the
+  // bridge serves.
+  const envRoot = makeBundleFixture(join(work, 'bundle-env'));
+  const envFile = join(envRoot, '.env.production');
+  writeFileSync(envFile, 'VITE_BRIDGE_TOKEN=not-a-real-token\n');
+  sh(`bundle_manifest_lines "${envRoot}" > "${join(envRoot, 'dist', '.build-inputs')}"`);
+  utimesSync(envFile, NEW, NEW);
+  check(
+    'an env file newer than the build is stale, even though its contents are never read',
+    bundleState(envRoot) === 'stale',
+    `state=${bundleState(envRoot)}`,
+  );
 
   // No build at all. The link serves nothing, which is not "current".
   rmSync(bundleBuild, { force: true });
