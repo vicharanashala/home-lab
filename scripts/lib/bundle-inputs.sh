@@ -135,7 +135,31 @@ bundle_manifest_lines() {
   (
     cd "$root" || exit 1
     local files
-    files="$(bundle_input_files "$root" | sort)"
+    #
+    # WHY THE SORT IS ASKED FOR IN THE C COLLATION: `sort` compares in the
+    # shell's own locale unless it is told otherwise, and the locales do not
+    # agree. "src/components/LogMealModal.tsx" comes BEFORE
+    # "src/components/icons/AppIcons.tsx" under the C collation — 'L' is
+    # 0x4C and 'i' is 0x69 — and AFTER it under en_US.UTF-8, which does not
+    # put a capital before a small letter. The same file list, in a different
+    # order, is a different list.
+    #
+    # WHY THAT MATTERS: the build writes this list and the check compares
+    # against it, and they do not have to run in the same locale. A build run
+    # from a shell that has LANG=en_US.UTF-8 — which is what a login shell on
+    # this machine gives — writes the list in one order, and a check run from
+    # a plain non-interactive shell, which has no LANG at all and collates in
+    # C, reads it in another. The lists hold the same files with the same
+    # hashes, and the comparison says they are different.
+    #
+    # And the answer it gives is "stale": the bundle is reported behind the
+    # source when it is not, the verdict says unhealthy, and the owner's link
+    # is rebuilt over and over for nothing — the exact false alarm the
+    # content comparison was written to end, in a new place.
+    #
+    # WHY C: it is the one collation that is the same in every environment,
+    # because it compares the bytes and knows nothing about language.
+    files="$(bundle_input_files "$root" | LC_ALL=C sort)"
     [ -n "$files" ] || exit 0
     # WHY ONE PROCESS FOR ALL THE FILES: a rule that runs a hash per file
     # spawns a process per file, and this runs on every check.

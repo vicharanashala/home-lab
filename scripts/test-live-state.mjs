@@ -87,10 +87,13 @@ function bridgeState(port, dir) {
  * Ask the rule what state the BUNDLE the owner is served is in.
  *
  * @param root the checkout the bundle belongs to
+ * @param env extra environment for the shell that asks — the locale, when the
+ *            question is what the rule does in a shell that is set up
+ *            differently from the one the tests run in
  */
-function bundleState(root) {
+function bundleState(root, env = {}) {
   try {
-    return sh(`live_bundle_state "${root}"`);
+    return sh(`live_bundle_state "${root}"`, env);
   } catch (err) {
     return `error: ${err.message}`;
   }
@@ -469,6 +472,60 @@ try {
     'a .DS_Store whose content changes leaves the bundle current',
     bundleState(dsStoreRoot) === 'current',
     `state=${bundleState(dsStoreRoot)}`,
+  );
+
+  // The ORDER the list is written in must not depend on the shell that wrote
+  // it.
+  //
+  // WHY THIS CASE IS HERE: `sort` compares in the shell's own locale unless
+  // it is told otherwise, and the locales do not agree. In the C collation
+  // "src/components/LogMealModal.tsx" comes BEFORE
+  // "src/components/icons/AppIcons.tsx" — 'L' is 0x4C and 'i' is 0x69 — and
+  // in en_US.UTF-8 it comes after it, because that collation does not put a
+  // capital before a small letter. The same files, in a different order, are
+  // a different list.
+  //
+  // WHY IT MATTERS: the build writes the list and the check compares against
+  // it, and the two do not have to run in the same locale. A build run from a
+  // login shell — which has LANG set — writes the list in one order, and a
+  // check run from a plain non-interactive shell — which has no LANG at all
+  // and collates in C — reads it in another. The two lists held the same
+  // files with the same hashes, and the comparison said they were different.
+  //
+  // And the answer it gives is "stale": the bundle is reported behind the
+  // source when it is not, the verdict says unhealthy, and the owner's link
+  // is rebuilt over and over for nothing. That is the very false alarm the
+  // content comparison was written to end, arriving through a new door.
+  const localeRoot = makeBundleFixture(join(work, 'bundle-locale'));
+  mkdirSync(join(localeRoot, 'src', 'components', 'icons'), { recursive: true });
+  writeFileSync(
+    join(localeRoot, 'src', 'components', 'LogMealModal.tsx'),
+    'export const Modal = 1;\n',
+  );
+  writeFileSync(
+    join(localeRoot, 'src', 'components', 'icons', 'AppIcons.tsx'),
+    'export const Icons = 1;\n',
+  );
+  // The build ran in a shell with a UTF-8 locale; the check runs in a plain
+  // one, which collates in C.
+  sh(
+    `bundle_manifest_lines "${localeRoot}" > "${join(localeRoot, 'dist', '.build-inputs')}"`,
+    { LC_ALL: 'en_US.UTF-8' },
+  );
+  check(
+    'a list written under one collation is read the same under another',
+    bundleState(localeRoot) === 'current',
+    `state=${bundleState(localeRoot)}`,
+  );
+  // And the other way round: the list written in C, read by a UTF-8 shell.
+  sh(
+    `bundle_manifest_lines "${localeRoot}" > "${join(localeRoot, 'dist', '.build-inputs')}"`,
+    { LC_ALL: 'C' },
+  );
+  check(
+    'a list written under one collation is read the same under another, the other way round',
+    bundleState(localeRoot, { LC_ALL: 'en_US.UTF-8' }) === 'current',
+    `state=${bundleState(localeRoot, { LC_ALL: 'en_US.UTF-8' })}`,
   );
 
   // A list the build left behind that cannot be read.
