@@ -101,6 +101,14 @@ function buildTree(dir, value) {
     join(libDir, 'bridge-stale.sh'),
     `#!/bin/bash\n# A stand-in for the bridge's rule library.\nRULE_VALUE="${value}"\n`,
   );
+  // The model-key rule is a library the supervisor loads, so the fixture
+  // tree needs a stand-in for it too — the watched set is checked against
+  // what watchdog.sh loads, and a loaded library that is not in the tree is
+  // a rule the supervisor cannot run.
+  writeFileSync(
+    join(libDir, 'model-key.sh'),
+    `#!/bin/bash\n# A stand-in for the model-key rule library.\nMODEL_RULE_VALUE="${value}"\n`,
+  );
   return { script: join(dir, 'watchdog.sh'), libDir };
 }
 

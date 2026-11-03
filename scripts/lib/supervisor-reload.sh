@@ -86,6 +86,7 @@ supervisor_script_sum() {
 # loaded but not watched is a rule that cannot be changed while the app runs.
 SUPERVISOR_RULE_LIBS=(
   "scripts/lib/bridge-stale.sh"
+  "scripts/lib/model-key.sh"
   "scripts/lib/supervisor-reload.sh"
 )
 

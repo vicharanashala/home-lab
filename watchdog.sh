@@ -70,10 +70,30 @@ LMS_BIN="$HOME/.lmstudio/bin/lms"
 # See scripts/lib/supervisor-reload.sh for why it is there at all.
 . "$ROOT/scripts/lib/supervisor-reload.sh"
 
+# The rule that decides whether the model key is still good.
+# See scripts/lib/model-key.sh.
+. "$ROOT/scripts/lib/model-key.sh"
+
 # Only one supervisor may restart the bridge at a time. launchd has left more
 # than one copy of this script running over the years, and every copy runs
 # this loop.
 RESTART_LOCK="/tmp/hh_bridge_restart.lock"
+
+# How often to ask the model provider whether it still accepts our key, in
+# rounds of the loop. The loop is 20 seconds, so 90 rounds is half an hour.
+#
+# WHY NOT EVERY ROUND: the check costs a real API call, and asking every
+# twenty seconds is both noisy and wasteful for a question whose answer
+# changes once a month.
+#
+# WHY IT MATTERS AT ALL: the app can be perfectly healthy and completely
+# mute at the same time. The provider rejecting the key is invisible to
+# every other check here — the bridge is up, the port answers, the
+# supervisor is happy — and the owner finds out by asking House Bot a
+# question and getting nothing back.
+MODEL_CHECK_EVERY=90
+MODEL_STATE_FILE="/tmp/hh_model_key.state"
+MODEL_ROUND=0
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
@@ -273,6 +293,27 @@ while true; do
     if [ -x "$TTS_PY" ] && [ -f "$TTS_SERVER" ]; then
       log "voice daemon down — starting (model load ~10s)"
       start_voice
+    fi
+  fi
+
+  # ── Model key ────────────────────────────────────────────────────────────
+  # A rejected key makes House Bot mute while everything else is green.
+  # Say so once, when it changes — not every round, and not silently.
+  MODEL_ROUND=$(( MODEL_ROUND + 1 ))
+  if [ "$MODEL_ROUND" -ge "$MODEL_CHECK_EVERY" ]; then
+    MODEL_ROUND=0
+    model_state="$(model_key_state "$BRIDGE_DIR/.env")"
+    model_prev="$(cat "$MODEL_STATE_FILE" 2>/dev/null || true)"
+    if [ "$model_state" != "$model_prev" ]; then
+      printf '%s' "$model_state" > "$MODEL_STATE_FILE"
+      case "$model_state" in
+        broken)
+          log "MiniMax is rejecting the API key — House Bot is mute until MINIMAX_ACCESS_TOKEN in bridge/shift/.env is replaced"
+          ;;
+        ok)
+          log "MiniMax is accepting the API key again — House Bot can answer"
+          ;;
+      esac
     fi
   fi
 
