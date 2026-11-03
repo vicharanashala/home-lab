@@ -302,6 +302,36 @@ export function HouseBotPage() {
   // a kitchen that talks back.
   const [speakReplies, setSpeakReplies] = useState(false);
 
+  /**
+   * Whether House Bot can actually answer right now, and which model answers.
+   *
+   * WHY THIS IS NOT A CONSTANT: the header used to say "online" in green,
+   * in code, for ever. When the cloud key died, every reply failed and the
+   * badge still said online — so the app looked healthy while it was mute,
+   * which is the worst kind of broken. It now asks the bridge which engine
+   * answered and says that.
+   */
+  const [engine, setEngine] = useState<'cloud' | 'local' | 'none' | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/housebot/health`, {
+          headers: bridgeHeaders(),
+        });
+        if (!r.ok) { if (alive) setEngine('none'); return; }
+        const j = await r.json();
+        if (alive) setEngine(j?.engine === 'cloud' || j?.engine === 'local' ? j.engine : 'none');
+      } catch {
+        if (alive) setEngine('none');
+      }
+    };
+    void check();
+    const t = window.setInterval(check, 30_000);
+    return () => { alive = false; window.clearInterval(t); };
+  }, []);
+
   // Speak the newest bot reply once it has finished streaming. Keyed off the
   // message timestamp rather than the stream handler so it works for every
   // path that can produce a reply (streaming, the recipe generator, web
@@ -979,8 +1009,39 @@ export function HouseBotPage() {
             <span className="hb-gradient-text" style={{ fontSize: 16, fontWeight: 700, letterSpacing: 0.2 }}>
               House Bot
             </span>
-            <span style={{ fontSize: 10, color: '#86efac', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 600 }}>
-              ● online
+            <span
+              style={{
+                fontSize: 10,
+                letterSpacing: 1,
+                textTransform: 'uppercase',
+                fontWeight: 600,
+                // While the check is still in flight the state is unknown, and
+              // unknown is not the same as fine — saying "online" before the
+              // answer arrives is the very lie this badge was added to stop.
+              color:
+                engine === null ? '#94a3b8'
+                : engine === 'none' ? '#fca5a5'
+                : engine === 'local' ? '#fcd34d'
+                : '#86efac',
+              }}
+              title={
+                engine === null
+                  ? 'Checking which model can answer'
+                  : engine === 'none'
+                    ? 'House Bot has no model to answer with right now'
+                    : engine === 'local'
+                      ? 'The cloud model is unavailable — a model on this Mac is answering'
+                      : 'The cloud model is answering'
+              }
+            >
+              ●{' '}
+              {engine === null
+                ? 'checking'
+                : engine === 'none'
+                  ? 'offline'
+                  : engine === 'local'
+                    ? 'local model'
+                    : 'online'}
             </span>
           </div>
         </div>

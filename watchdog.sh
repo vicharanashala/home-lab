@@ -51,6 +51,13 @@ NODE_BIN="/Users/adhyathmika/local/node-v24.16.0-darwin-arm64/bin/node"
 TTS_PY="$HOME/tools/python/bin/python3.12"
 TTS_SERVER="$HOME/tools/tts/speak_server.py"
 
+# The local model that answers when the cloud key cannot. LM Studio serves it
+# on 1234 and speaks the same Anthropic-style /v1/messages shape the bridge
+# already uses, so nothing about the request changes.
+LOCAL_LLM_PORT=1234
+LOCAL_LLM_MODEL="ministral-3-8b-instruct-2512"
+LMS_BIN="$HOME/.lmstudio/bin/lms"
+
 # The rule that decides whether the bridge is running the code on disk. It
 # lives in its own file because this script is a loop that never returns, and
 # a rule that decides whether the app restarts has to be able to be tested.
@@ -266,6 +273,26 @@ while true; do
     if [ -x "$TTS_PY" ] && [ -f "$TTS_SERVER" ]; then
       log "voice daemon down — starting (model load ~10s)"
       start_voice
+    fi
+  fi
+
+  # ── Local model server ───────────────────────────────────────────────────
+  # The cloud key can die — it did: MiniMax answered 401 and House Bot went
+  # silent while everything else was healthy. The local model is what keeps
+  # the kitchen answering when it does, so it is supervised exactly like the
+  # voice daemon: the server does not come back by itself after a reboot, and
+  # a server that is up but has no model loaded is just as useless as one that
+  # is not running.
+  local_models="$(curl -s -m 3 "http://127.0.0.1:$LOCAL_LLM_PORT/v1/models" 2>/dev/null || true)"
+  if ! printf '%s' "$local_models" | grep -q '"id"'; then
+    if [ -x "$LMS_BIN" ]; then
+      if [ -z "$local_models" ]; then
+        log "local model server down — starting"
+        "$LMS_BIN" server start >/dev/null 2>&1
+      else
+        log "local model server up but no model loaded — loading $LOCAL_LLM_MODEL"
+        "$LMS_BIN" load "$LOCAL_LLM_MODEL" >/dev/null 2>&1
+      fi
     fi
   fi
 

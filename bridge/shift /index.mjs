@@ -2693,6 +2693,156 @@ function minimaxConfigured() {
   return Boolean(MINIMAX_ACCESS_TOKEN && MINIMAX_CHAT_URL);
 }
 
+// ─── Local model fallback ───────────────────────────────────────────────
+//
+// OFF BY DEFAULT, AND THAT IS THE POINT.
+//
+// House Bot runs on MiniMax. When MiniMax cannot answer, the honest
+// thing is to say so — the header shows "offline" and the user is told
+// the key needs replacing. Quietly substituting a different model is how
+// an app ends up answering with something nobody chose.
+//
+// This is here for the day it is wanted deliberately: set
+// LOCAL_LLM_FALLBACK=1 in bridge/shift /.env and a model on this Mac
+// answers instead. LM Studio's server speaks the same Anthropic-style
+// /v1/messages shape, so the body, the headers and the answer parsing are
+// all the same — only the URL and the bearer token differ.
+//
+// The local model has a smaller context, so the recipe list in the
+// prompt is trimmed for it. A prompt that does not fit is worse than a
+// short one: the model answers anyway, badly.
+const LOCAL_LLM_URL = process.env.LOCAL_LLM_URL || 'http://127.0.0.1:1234/v1/messages';
+const LOCAL_LLM_MODEL = process.env.LOCAL_LLM_MODEL || 'ministral-3-8b-instruct-2512';
+const LOCAL_LLM_TIMEOUT_MS = Number(process.env.LOCAL_LLM_TIMEOUT_MS || 180_000);
+// House Bot runs on MiniMax. The local model is a deliberate choice, not a
+// silent substitution, so it stays off unless it is asked for by name.
+const LOCAL_LLM_FALLBACK = /^(1|true|yes|on)$/i.test(String(process.env.LOCAL_LLM_FALLBACK ?? ''));
+// Which engine answered the last question: 'cloud' or 'local'. The header in
+// the app reads this, so the badge can stop claiming to be online while every
+// reply is failing.
+let lastModelEngine = null;
+// How many recipes the model is told about. The cloud model has room for
+// hundreds; the local one needs a shorter list to fit its context at all.
+const RECIPES_IN_PROMPT = Number(process.env.RECIPES_IN_PROMPT || 200);
+const LOCAL_RECIPES_IN_PROMPT = Number(process.env.LOCAL_RECIPES_IN_PROMPT || 80);
+
+function localHeaders() {
+  return {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
+}
+
+/**
+ * The conversation history, in a shape every model can read.
+ *
+ * Three rules, all of them learned the hard way — the local model's chat
+ * template refuses anything else, and the cloud model merely tolerates it:
+ *
+ *   1. It starts with the user. The client's history begins with the bot's
+ *      greeting, so the model saw an assistant turn before any user turn.
+ *   2. No empty turns. The bot's bubble is empty while it streams.
+ *   3. No repeated user turn. The client appends the message being asked to
+ *      the history it sends, and the bridge sends the message again — so the
+ *      question arrived twice, as two user turns in a row, and the template
+ *      refused the pair.
+ *
+ * A model conversation is strictly system, user, assistant, user, assistant.
+ * This is what puts the history back into that shape.
+ */
+function usableHistory(history, currentMessage) {
+  const raw = Array.isArray(history) ? history.slice(-10) : [];
+  let turns = raw
+    .map((h) => ({
+      role: h?.role === 'assistant' ? 'assistant' : 'user',
+      content: String(h?.content ?? ''),
+    }))
+    .filter((t) => t.content.trim().length > 0);
+
+  // Rule 3: the message being asked is already the last turn.
+  const current = String(currentMessage ?? '').trim();
+  if (current && turns.length) {
+    const last = turns[turns.length - 1];
+    if (last.role === 'user' && last.content.trim() === current) turns = turns.slice(0, -1);
+  }
+
+  // Rule 1: a conversation starts with the user.
+  const firstUser = turns.findIndex((t) => t.role === 'user');
+  if (firstUser === -1) return [];
+  turns = turns.slice(firstUser);
+
+  // Rule 1 again, now that the greeting is gone: if the history still opens
+  // with an assistant turn, drop it — it was a greeting, not an answer.
+  while (turns.length && turns[0].role === 'assistant') turns = turns.slice(1);
+
+  return turns;
+}
+
+/**
+ * What the person is told when the model key is rejected.
+ *
+ * A rejected key is the one failure the owner can fix in a minute, and
+ * "the model could not answer (HTTP 401)" does not say which line to
+ * change. So it says: which provider, which file, which variable.
+ *
+ * The key is NOT printed. It is not printed into the log, and it is not
+ * printed into the browser.
+ */
+function modelKeyMessage(status) {
+  if (status === 401 || status === 403) {
+    return (
+      'MiniMax rejected the API key. Replace MINIMAX_ACCESS_TOKEN in ' +
+      'bridge/shift/.env with a current key and restart the bridge.'
+    );
+  }
+  return null;
+}
+
+/**
+ * Is the local model server up and holding a model?
+ *
+ * Cheap on purpose: this is polled by the app's header, so it must not cost
+ * a model call. It asks the server what it has, which is a listing, not an
+ * inference.
+ */
+async function localModelReady() {
+  try {
+    const r = await fetch('http://127.0.0.1:1234/v1/models', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return false;
+    const j = await r.json();
+    return Array.isArray(j?.data) && j.data.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// GET /api/housebot/health — which model can actually answer right now.
+//
+// WHY THIS EXISTS: the header in the app said "online" in green, in code, for
+// ever. When the cloud key died every reply failed and the badge still said
+// online, so the app looked healthy while it was mute. The badge now reads
+// what actually answered.
+app.get('/api/housebot/health', async (req, res) => {
+  // The local model only counts when it is switched on. A model that is
+  // running but that House Bot is not allowed to ask is not a model the
+  // app can answer with, and the badge must not imply otherwise.
+  const local = LOCAL_LLM_FALLBACK ? await localModelReady() : false;
+  const engine = lastModelEngine || (local ? 'local' : 'none');
+  res.json({
+    ok: true,
+    engine,
+    // "cloud" is whether the cloud model answered; "cloudConfigured" is
+    // whether there is a key at all. A rejected key is configured and dead,
+    // and the two must not be confused.
+    cloud: lastModelEngine === 'cloud',
+    cloudConfigured: minimaxConfigured(),
+    local,
+    model: engine === 'cloud' ? HOUSEBOT_MODEL : engine === 'local' ? LOCAL_LLM_MODEL : null,
+  });
+});
+
 // ─── House Bot persistent memory ────────────────────────────────────────
 //
 // After each conversation, we ask the LLM to write a 200-word summary of
@@ -3419,6 +3569,210 @@ async function streamMiniMaxChat({ model, messages, signal, options, onToken, im
   }
 }
 
+// ─── The local model ────────────────────────────────────────────────────
+//
+// The same two shapes as the cloud calls, pointed at the local server.
+// A local model has no key, so the bearer header is simply left off.
+
+async function callLocalChat({ model, messages, signal, options, image }) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), LOCAL_LLM_TIMEOUT_MS);
+  if (signal) signal.addEventListener('abort', () => ctl.abort());
+  try {
+    const r = await fetch(LOCAL_LLM_URL, {
+      method: 'POST',
+      headers: localHeaders(),
+      body: JSON.stringify({
+        model: model || LOCAL_LLM_MODEL,
+        max_tokens: options?.max_tokens ?? HOUSEBOT_MAX_TOKENS,
+        temperature: options?.temperature ?? 0.6,
+        stream: false,
+        messages: withImage(messages, image),
+      }),
+      signal: ctl.signal,
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      return { ok: false, status: r.status, error: txt };
+    }
+    const j = await r.json();
+    const content = (Array.isArray(j.content) ? j.content : [])
+      .filter((b) => b && b.type === 'text')
+      .map((b) => b.text || '')
+      .join('');
+    return {
+      ok: true,
+      content,
+      eval_count: j.usage?.output_tokens || 0,
+      stop_reason: j.stop_reason,
+      engine: 'local',
+    };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function streamLocalChat({ model, messages, signal, options, onToken, image }) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), LOCAL_LLM_TIMEOUT_MS);
+  if (signal) signal.addEventListener('abort', () => ctl.abort());
+  try {
+    const r = await fetch(LOCAL_LLM_URL, {
+      method: 'POST',
+      headers: localHeaders(),
+      body: JSON.stringify({
+        model: model || LOCAL_LLM_MODEL,
+        max_tokens: options?.max_tokens ?? HOUSEBOT_MAX_TOKENS,
+        temperature: options?.temperature ?? 0.6,
+        stream: true,
+        messages: withImage(messages, image),
+      }),
+      signal: ctl.signal,
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      return { ok: false, status: r.status, error: txt };
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let evalCount = 0;
+    let streamError = null;
+
+    const handleLine = (line) => {
+      const t = line.trim();
+      if (!t.startsWith('data:')) return;
+      const payload = t.slice(5).trim();
+      if (!payload || payload === '[DONE]') return;
+      let j;
+      try {
+        j = JSON.parse(payload);
+      } catch {
+        return; // keep-alive or partial frame
+      }
+      if (j.type === 'content_block_delta' && typeof j.delta?.text === 'string') {
+        onToken(j.delta.text);
+      } else if (j.type === 'message_delta') {
+        evalCount = j.usage?.output_tokens || evalCount;
+      } else if (j.type === 'error') {
+        streamError = j.error?.message || 'local_stream_error';
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() ?? '';
+      for (const line of lines) handleLine(line);
+      if (streamError) break;
+    }
+    if (buf.trim()) handleLine(buf);
+
+    if (streamError) return { ok: false, error: streamError };
+    return { ok: true, eval_count: evalCount, engine: 'local' };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Is this failure one the local model could plausibly survive?
+ *
+ * A dead key, a dead network, a rate limit and a provider outage are all
+ * things the local model does not have. A malformed request is NOT one of
+ * them: the request itself is wrong, and the local model would either fail
+ * the same way or — worse — answer without the image that was broken, and
+ * the user would be told a picture had been understood when it had not.
+ *
+ * So: the fallback covers "the cloud could not answer", and never "the
+ * question was invalid".
+ */
+function localCanCover(failure) {
+  const status = failure?.status;
+  if (status === undefined || status === null) return true; // network error, abort
+  if (status === 401 || status === 403) return true; // the key is dead
+  if (status === 408 || status === 429) return true; // timeout, rate limit
+  if (status >= 500) return true; // provider outage
+  return false; // 400 and the rest: the request is wrong
+}
+
+/**
+ * Ask the cloud model, and the local one if the cloud cannot answer.
+ *
+ * WHY THE CLOUD ERROR IS THE ONE REPORTED WHEN BOTH FAIL: the cloud is
+ * what the app is built around, and its error is the diagnosis ("auth
+ * failed" means the key needs replacing). The local model is the safety
+ * net, not the explanation.
+ */
+async function callChatWithFallback(args) {
+  const primary = await callMiniMaxChat(args);
+  if (primary.ok) { lastModelEngine = 'cloud'; return primary; }
+  if (!LOCAL_LLM_FALLBACK) {
+    lastModelEngine = null;
+    return primary;
+  }
+  if (!localCanCover(primary)) {
+    console.warn(`[housebot] the request itself was rejected (${primary.status}), so the local model is not asked`);
+    lastModelEngine = null;
+    return primary;
+  }
+  console.warn(`[housebot] cloud model unavailable (${primary.status ?? primary.error}), trying the local model`);
+  const local = await callLocalChat({
+    ...args,
+    model: args.fallbackModel || LOCAL_LLM_MODEL,
+    messages: args.fallbackMessages || args.messages,
+  });
+  if (local.ok) {
+    console.warn('[housebot] answered by the local model');
+    lastModelEngine = 'local';
+    return local;
+  }
+  // WHY THIS IS LOGGED: the local failure was invisible, so a broken
+  // fallback looked exactly like a broken cloud model — the user was told
+  // "401" when the truth was "the local model refused the prompt".
+  console.error(
+    `[housebot] the local model could not answer either: ${local.status ?? ''} ${String(local.error || '').slice(0, 300)}`,
+  );
+  lastModelEngine = null;
+  return primary;
+}
+
+async function streamChatWithFallback(args) {
+  const primary = await streamMiniMaxChat(args);
+  if (primary.ok) { lastModelEngine = 'cloud'; return primary; }
+  if (!LOCAL_LLM_FALLBACK) {
+    lastModelEngine = null;
+    return primary;
+  }
+  if (!localCanCover(primary)) {
+    console.warn(`[housebot] the request itself was rejected (${primary.status}), so the local model is not asked`);
+    lastModelEngine = null;
+    return primary;
+  }
+  console.warn(`[housebot] cloud model unavailable (${primary.status ?? primary.error}), trying the local model`);
+  const local = await streamLocalChat({
+    ...args,
+    model: args.fallbackModel || LOCAL_LLM_MODEL,
+    messages: args.fallbackMessages || args.messages,
+  });
+  if (local.ok) {
+    console.warn('[housebot] answered by the local model');
+    lastModelEngine = 'local';
+    return local;
+  }
+  console.error(
+    `[housebot] the local model could not answer either: ${local.status ?? ''} ${String(local.error || '').slice(0, 300)}`,
+  );
+  lastModelEngine = null;
+  return primary;
+}
+
 // MiniMax has no "list models" endpoint, so status is an active 1-token
 // probe. Cached briefly because the chat routes call this on every message.
 let _statusCache = null;
@@ -4102,9 +4456,12 @@ app.post('/api/housebot/chat', async (req, res) => {
     // be answered.
     .filter((s) => s.expires && s.expires >= today && s.expires <= addDays(today, soonWindow));
 
-  const recipesBlock = recipes.length
+  // WHY A LIMIT AND NOT A FIXED 200: the cloud model has a big context, the
+  // local one does not. A prompt that does not fit is not refused — it is
+  // answered badly — so the local model gets a shorter list.
+  const recipesBlockFor = (limit) => (recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
-      recipes.slice(0, 200).map((r) => {
+      recipes.slice(0, limit).map((r) => {
         // WHY THE RULE AND NOT A TEMPLATE: the ingredient's name is what the
         // block is for, and it is read by `recipeIngredientLine` — the same
         // helper both routes use, so the two cannot disagree.
@@ -4113,7 +4470,9 @@ app.post('/api/housebot/chat', async (req, res) => {
           : '';
         return `  - [${r.id}] ${r.emoji || ''} ${r.name} (${r.mealType || ''}, serves ${r.baseServings || 2})${ing ? `: ${ing}` : ''}`;
       }).join('\n')
-    : null;
+    : null);
+  const recipesBlock = recipesBlockFor(RECIPES_IN_PROMPT);
+  const localRecipesBlock = recipesBlockFor(LOCAL_RECIPES_IN_PROMPT);
 
   // Optional: fetch live web context for non-Indian / niche recipe queries.
   let webBlock = null;
@@ -4146,15 +4505,40 @@ app.post('/api/housebot/chat', async (req, res) => {
   const sysMsg = `${HOUSEBOT_SYSTEM_PROMPT}\n\n--- LIVE CONTEXT (${today}) ---\n${contextBlock}${visionHint}`;
 
   // Cap history to last 10 turns to fit small-model context windows.
-  const hist = Array.isArray(history) ? history.slice(-10) : [];
+  // WHY THE HISTORY IS CUT AT THE FIRST USER TURN: the client sends the
+  // bot's greeting as the first history entry, so the model was shown an
+  // assistant turn BEFORE any user turn. The cloud model tolerated it; the
+  // local model's chat template refuses it outright — "After the optional
+  // system message, content must be provided" — and the whole reply died.
+  // A conversation starts with the user, so the greeting is dropped.
+  //
+  // WHY EMPTY TURNS ARE DROPPED TOO: the bot's bubble exists with empty
+  // text while it is streaming, and an empty turn breaks the same template.
+  const hist = usableHistory(history, message);
   const messages = [
     { role: 'system', content: sysMsg },
-    ...hist.map((h) => ({ role: h?.role === 'assistant' ? 'assistant' : 'user', content: String(h?.content || '') })),
+    ...hist.map((h) => ({ role: h.role, content: h.content })),
     { role: 'user', content: message },
   ];
 
+  // The same prompt with the shorter recipe list, for the local model.
+  const localMessages = recipesBlock
+    ? messages.map((m, i) =>
+        i === 0 ? { ...m, content: m.content.replace(recipesBlock, localRecipesBlock) } : m,
+      )
+    : messages;
+
   const t0 = Date.now();
-  const r = await callMiniMaxChat({ model: HOUSEBOT_MODEL, messages, image });
+  console.log(
+    `[housebot] prompt: ${messages.reduce((n, m) => n + String(m.content || '').length, 0)} chars ` +
+    `(${recipes.length} recipes, local list ${LOCAL_RECIPES_IN_PROMPT})`,
+  );
+  const r = await callChatWithFallback({
+    model: HOUSEBOT_MODEL,
+    messages,
+    fallbackMessages: localMessages,
+    image,
+  });
   const ms = Date.now() - t0;
 
   if (!r.ok) {
@@ -4165,7 +4549,7 @@ app.post('/api/housebot/chat', async (req, res) => {
       // used to be sent to the browser, request id and all. The envelope
       // is the provider's paperwork; the sentence inside it is the
       // diagnosis. The whole body still goes to the log.
-      detail: modelFailureMessage(r),
+      detail: modelKeyMessage(r.status) ?? modelFailureMessage(r),
     });
   }
 
@@ -4175,6 +4559,10 @@ app.post('/api/housebot/chat', async (req, res) => {
     ok: true,
     reply: replyText,
     model: HOUSEBOT_MODEL,
+    // Which engine actually answered. The cloud model is the default, but
+    // when the key is dead the local one takes over, and the app should say
+    // so rather than claim a cloud model answered.
+    engine: r.engine || 'cloud',
     ms,
     eval_count: r.eval_count,
     actions,
@@ -4230,18 +4618,44 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
+  // WHY THE HEARTBEAT: the model can take ten seconds to answer, and a proxy
+  // in the middle — Tailscale Serve here — closes a connection that goes
+  // quiet. The browser then reports "network error" half-way through a reply
+  // that was perfectly fine, and the answer never arrives. A comment line is
+  // ignored by the client and counts as traffic to the proxy, so the stream
+  // stays open while the model thinks.
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      /* connection closed mid-stream */
+    }
+  }, 4000);
+
+  // Frames sent, and whether the client was still there. A stream that
+  // stops mid-way is the hardest failure to see from the outside, and the
+  // owner reads this log when the app misbehaves — so the count is written
+  // down rather than inferred.
+  let framesSent = 0;
   const send = (obj) => {
     try {
       res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      framesSent += 1;
     } catch {
       /* connection closed mid-stream */
     }
   };
 
-  // Track whether the request has been closed by the client so we can
-  // bail out of the (potentially long) upstream work and not leak state.
+  // Track whether the client has gone away, so we can bail out of the
+  // (potentially long) upstream work and not leak state.
+  //
+  // WHY res.on('close') AND NOT req.on('close'): in modern Node the request
+  // emits 'close' as soon as its BODY has been read — long before the
+  // response is finished. Reading that as "the client hung up" meant the
+  // bridge believed every stream had been abandoned, and it refused to send
+  // the error frame that would have explained the failure.
   let clientClosed = false;
-  req.on('close', () => {
+  res.on('close', () => {
     clientClosed = true;
   });
 
@@ -4280,9 +4694,12 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
     // be answered.
     .filter((s) => s.expires && s.expires >= today && s.expires <= addDays(today, soonWindow));
 
-  const recipesBlock = recipes.length
+  // WHY A LIMIT AND NOT A FIXED 200: the cloud model has a big context, the
+  // local one does not. A prompt that does not fit is not refused — it is
+  // answered badly — so the local model gets a shorter list.
+  const recipesBlockFor = (limit) => (recipes.length
     ? `RECIPES (${recipes.length} available — pick from this list, don't invent new ones):\n` +
-      recipes.slice(0, 200).map((r) => {
+      recipes.slice(0, limit).map((r) => {
         // WHY THE RULE AND NOT A TEMPLATE: the ingredient's name is what the
         // block is for, and it is read by `recipeIngredientLine` — the same
         // helper both routes use, so the two cannot disagree.
@@ -4291,7 +4708,9 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
           : '';
         return `  - [${r.id}] ${r.emoji || ''} ${r.name} (${r.mealType || ''}, serves ${r.baseServings || 2})${ing ? `: ${ing}` : ''}`;
       }).join('\n')
-    : null;
+    : null);
+  const recipesBlock = recipesBlockFor(RECIPES_IN_PROMPT);
+  const localRecipesBlock = recipesBlockFor(LOCAL_RECIPES_IN_PROMPT);
 
   // Optional: fetch live web context for non-Indian / niche recipe queries.
   let webBlock = null;
@@ -4323,13 +4742,31 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   const visionHint = visionHintFor(image);
   const sysMsg = `${HOUSEBOT_SYSTEM_PROMPT}\n\n--- LIVE CONTEXT (${today}) ---\n${contextBlock}${visionHint}`;
 
-  const hist = Array.isArray(history) ? history.slice(-10) : [];
+  // WHY THE HISTORY IS CUT AT THE FIRST USER TURN: the client sends the
+  // bot's greeting as the first history entry, so the model was shown an
+  // assistant turn BEFORE any user turn. The cloud model tolerated it; the
+  // local model's chat template refuses it outright — "After the optional
+  // system message, content must be provided" — and the whole reply died.
+  // A conversation starts with the user, so the greeting is dropped.
+  //
+  // WHY EMPTY TURNS ARE DROPPED TOO: the bot's bubble exists with empty
+  // text while it is streaming, and an empty turn breaks the same template.
+  const hist = usableHistory(history, message);
   const messages = [
     { role: 'system', content: sysMsg },
-    ...hist.map((h) => ({ role: h?.role === 'assistant' ? 'assistant' : 'user', content: String(h?.content || '') })),
+    ...hist.map((h) => ({ role: h.role, content: h.content })),
     { role: 'user', content: message },
   ];
 
+  // The same prompt with the shorter recipe list, for the local model.
+  const localMessages = recipesBlock
+    ? messages.map((m, i) =>
+        i === 0 ? { ...m, content: m.content.replace(recipesBlock, localRecipesBlock) } : m,
+      )
+    : messages;
+
+  const requestBytes = String(req.headers['content-length'] || '?');
+  const historyTurns = Array.isArray(history) ? history.length : 0;
   send({ type: 'start', model: HOUSEBOT_MODEL });
 
   // raw is everything the model produced; `emitted` tracks how much of the
@@ -4338,9 +4775,10 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
   let raw = '';
   let emitted = 0;
   const t0 = Date.now();
-  const r = await streamMiniMaxChat({
+  const r = await streamChatWithFallback({
     model: HOUSEBOT_MODEL,
     messages,
+    fallbackMessages: localMessages,
     image,
     signal: req.signal,
     options: { temperature: 0.6 },
@@ -4364,7 +4802,7 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
     // the log, which is where a failure is diagnosed from; before this, the
     // streaming route sent the body to the browser and logged nothing, so
     // a House Bot that failed left no trace on the machine.
-    send({ type: 'error', error: modelFailureMessage(r) });
+    send({ type: 'error', error: modelKeyMessage(r.status) ?? modelFailureMessage(r) });
   } else {
     for (const action of actions) send({ type: 'action', action });
     send({
@@ -4386,8 +4824,14 @@ app.post('/api/housebot/chat/stream', async (req, res) => {
       unreadable,
     });
   }
+  clearInterval(heartbeat);
+  console.log(
+    `[housebot/stream] done: ${framesSent} frames, ${requestBytes} bytes, ` +
+    `${historyTurns} history turns, clientClosed=${clientClosed}`,
+  );
   res.end();
   } catch (err) {
+    clearInterval(heartbeat);
     // SSE headers are already flushed, so we can't change status. Emit
     // an SSE error event so the frontend can surface a real message
     // instead of hanging on an empty stream.
